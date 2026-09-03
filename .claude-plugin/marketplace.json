@@ -1,0 +1,23 @@
+{
+  "name": "medtrics",
+  "owner": {
+    "name": "Shubham Jha",
+    "email": "shubham@medtricslab.com"
+  },
+  "metadata": {
+    "description": "Medtrics internal Claude Code plugins.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "medtrics-release-notes",
+      "source": "./",
+      "description": "Slack release-notes for Medtrics. /release-slack and /oracle-release post one combined internal message per deploy (root index + per-ticket cards) and archive every release to Mem, the only archive. Optional Mem dev directory and PR overrides.",
+      "version": "0.20.0",
+      "author": {
+        "name": "Shubham Jha",
+        "email": "shubham@medtricslab.com"
+      }
+    }
+  ]
+}
