@@ -1,0 +1,29 @@
+{
+  "name": "medtrics-release-notes",
+  "version": "0.20.0",
+  "description": "Slack release-notes for Medtrics. /release-slack and /oracle-release post one combined internal message per deploy (root index + per-ticket cards) and archive every release to Mem, the only archive. Optional Mem dev directory and PR overrides.",
+  "author": {
+    "name": "Shubham Jha",
+    "email": "shubham@medtricslab.com"
+  },
+  "keywords": [
+    "medtrics",
+    "release-notes",
+    "exec-voice",
+    "storyteller",
+    "internal-storyteller",
+    "copy-audit",
+    "ip-guard",
+    "slack",
+    "dream-team",
+    "client-comms",
+    "internal-comms",
+    "oracle",
+    "github",
+    "engineering-to-client",
+    "dev-directory",
+    "mem",
+    "pr-overrides",
+    "release-archive"
+  ]
+}
