@@ -7,7 +7,11 @@ release-archive scan keeps medtrics tickets only and drops MR-NNNN; todo /
 pending skip done statuses (partial only without --retry-partial); writes
 create vs update-with-version and keep 'Published as'; seed-legacy marks
 drafted and matched tickets; kb2.csv import with loose column names; prior
-matching ranks by overlap and never matches a ticket to itself.
+matching ranks by overlap and never matches a ticket to itself; the KB queue —
+queue note round-trip, enqueue (features only, no MR-*, ledger-done skipped,
+already-pending drafted but not re-queued, drained-but-failed re-queued,
+client title/summary with fallback), drain (pending only, carries version),
+queue-summaries read back by kb_inputs, and pending unioning the queue.
 """
 
 import contextlib
@@ -21,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import kb_fixtures  # noqa: F401  (puts scripts/kb on sys.path)
 
+import kb_inputs
 import kb_ledger as L
 
 
@@ -163,6 +168,171 @@ class Match(unittest.TestCase):
         res = L.match(issues, catalogue, ledger)["M1-1"]
         self.assertEqual([r["id"] for r in res], ["CX-780"])
         self.assertIn("CX-780", L.prior_line(res))
+
+
+def queue_note(ticket, status="pending", queued="2026-10-20", nid="q1", version=2, **kw):
+    rec = {"ticket": ticket, "status": status, "source": "release-slack",
+           "released": "2026-10-20", "title": f"Title {ticket}", "queued": queued, **kw}
+    return {"id": nid, "version": version, "content": L.render_queue_note(rec)}
+
+
+def _cli(*argv):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = L.main(list(argv))
+    lines = buf.getvalue().splitlines()
+    return code, lines[0], json.loads(lines[lines.index("---KB_LEDGER_RESULT---") + 1])
+
+
+ISSUES = [{"identifier": "M1-1", "title": "Raw one", "task_type": "feature"},
+          {"identifier": "M1-2", "title": "Raw two", "task_type": "critical_feature"},
+          {"identifier": "M1-3", "title": "A bug", "task_type": "bug"},
+          {"identifier": "MR-6567", "title": "Single MR", "task_type": "feature"},
+          {"identifier": "M1-4", "title": "Done already", "task_type": "feature"},
+          {"identifier": "M1-5", "title": "Pending already", "task_type": "feature"},
+          {"identifier": "M1-6", "title": "Failed before", "task_type": "feature"}]
+SUMMARIES = ("IDENTIFIER: M1-1\nTITLE: Summary one\nCLIENT_TITLE: Client one\n"
+             "EXEC_SUMMARY: Admins can now do one.\n---\nIDENTIFIER: M1-2\nTITLE: Summary two\n")
+
+
+class Queue(unittest.TestCase):
+    def test_round_trip(self):
+        rec = {"ticket": "M1-1520", "status": "pending", "source": "release-slack",
+               "released": "2026-10-27", "root_ts": "1761571234.000100",
+               "title": "Migrate schedules", "client_title": "Land schedules unpublished",
+               "client_summary": "Admins can now\nland them.", "queued": "2026-10-27"}
+        text = L.render_queue_note(rec)
+        self.assertTrue(text.startswith("KB queue: M1-1520 · Land schedules unpublished\n"))
+        self.assertIn("**Drained by:** —", text)
+        back = L.parse_queue_note({"id": "x", "version": 4, "content": text})
+        self.assertEqual(back["client_summary"], "Admins can now land them.")
+        for k in ("ticket", "status", "source", "released", "root_ts", "title", "client_title"):
+            self.assertEqual(back[k], rec[k])
+        self.assertEqual((back["note_id"], back["version"], back["drained"]), ("x", 4, ""))
+
+    def test_foreign_notes_ignored(self):
+        self.assertIsNone(L.parse_queue_note(ledger_note("M1-1", "drafted")))
+        self.assertIsNone(L.parse_ledger_note(queue_note("M1-1")))
+        self.assertIsNone(L.parse_queue_note("Release: 2026-10-01 · medtrics"))
+        self.assertEqual(list(L.queue_index([ledger_note("M1-9", "drafted"), queue_note("m1-1")])),
+                         ["M1-1"])
+
+    def test_index_prefers_pending_then_newest(self):
+        idx = L.queue_index([queue_note("M1-1", "pending", "2026-10-01", nid="a"),
+                             queue_note("M1-1", "drained", "2026-10-09", nid="b"),
+                             queue_note("M1-2", "drained", "2026-10-01", nid="c"),
+                             queue_note("M1-2", "drained", "2026-10-09", nid="d")])
+        self.assertEqual((idx["M1-1"]["note_id"], idx["M1-2"]["note_id"]), ("a", "d"))
+
+
+class Enqueue(unittest.TestCase):
+    LEDGER = L.ledger_index([ledger_note("M1-4", "drafted", nid="l4"),
+                             ledger_note("M1-6", "failed", nid="l6")])
+    QUEUE = L.queue_index([queue_note("M1-5", "pending", nid="q5"),
+                           queue_note("M1-6", "drained", nid="q6")])
+
+    def _run(self):
+        import release_archive as RA
+        return L.enqueue_records(ISSUES, RA.parse_summaries(SUMMARIES), self.LEDGER,
+                                 self.QUEUE, "release-slack", "2026-10-26", "17.1", "2026-10-27")
+
+    def test_rules(self):
+        recs, ids = self._run()
+        self.assertEqual(ids, ["M1-1", "M1-2", "M1-5", "M1-6"])
+        self.assertEqual([r["ticket"] for r in recs], ["M1-1", "M1-2", "M1-6"])
+        self.assertTrue(all(r["status"] == "pending" and r["queued"] == "2026-10-27"
+                            and r["released"] == "2026-10-26" and r["root_ts"] == "17.1"
+                            for r in recs))
+
+    def test_client_fields_and_fallback(self):
+        recs = {r["ticket"]: r for r in self._run()[0]}
+        self.assertEqual((recs["M1-1"]["client_title"], recs["M1-1"]["client_summary"]),
+                         ("Client one", "Admins can now do one."))
+        self.assertEqual((recs["M1-2"]["title"], recs["M1-2"]["client_title"],
+                          recs["M1-2"]["client_summary"]), ("Summary two", "Summary two", ""))
+        self.assertEqual((recs["M1-6"]["title"], recs["M1-6"]["client_title"]),
+                         ("Failed before", "Failed before"))
+
+    def test_cli(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "data.json").write_text(json.dumps({"issues": ISSUES}))
+            (d / "ledger.json").write_text(json.dumps({"notes": [ledger_note("M1-4", "drafted")]}))
+            (d / "queue.json").write_text(json.dumps([queue_note("M1-5")]))
+            code, line, res = _cli("enqueue", "--data", str(d / "data.json"),
+                                   "--summaries", str(d / "missing.txt"),
+                                   "--source", "release-slack", "--date", "2026-10-26",
+                                   "--ledger-notes", str(d / "ledger.json"),
+                                   "--queue-notes", str(d / "queue.json"),
+                                   "--out", str(d / "w.json"))
+            self.assertEqual(code, 0)
+            self.assertEqual(line, "M1-1,M1-2,M1-5,M1-6")
+            self.assertEqual((res["ok"], res["queued"], res["already_queued"], res["skipped"]),
+                             (True, 3, 1, 3))
+            w = json.loads((d / "w.json").read_text())
+            self.assertEqual({x["action"] for x in w} | {x["collection"] for x in w},
+                             {"create", "queue"})
+            self.assertTrue(w[0]["title"].startswith("KB queue: M1-1 · Raw one"))
+            self.assertEqual(w[0]["content"].splitlines()[0], w[0]["title"])
+            code, _, res = _cli("enqueue", "--data", str(d / "data.json"), "--source", "x",
+                                "--date", "26-10-2026", "--out", str(d / "w2.json"))
+            self.assertEqual((code, res["ok"]), (1, False))
+
+
+class Drain(unittest.TestCase):
+    def test_only_pending_with_version(self):
+        notes = [queue_note("M1-1", "pending", nid="a", version=5),
+                 queue_note("M1-2", "drained", nid="b"),
+                 queue_note("M1-3", "pending", nid="c")]
+        with tempfile.TemporaryDirectory() as d:
+            q, out = Path(d) / "q.json", Path(d) / "w.json"
+            q.write_text(json.dumps({"notes": notes}))
+            code, _, res = _cli("drain", "--tickets", "M1-1,M1-2,M1-9", "--queue-notes", str(q),
+                                "--run-id", "kb-20261027-0930", "--date", "2026-10-27",
+                                "--out", str(out))
+            w = json.loads(out.read_text())
+        self.assertEqual((code, res["drained"]), (0, 1))
+        self.assertEqual((w[0]["action"], w[0]["collection"], w[0]["note_id"], w[0]["version"]),
+                         ("update", "queue", "a", 5))
+        back = L.parse_queue_note(w[0]["content"])
+        self.assertEqual((back["status"], back["drained_by"], back["drained"], back["title"]),
+                         ("drained", "kb-20261027-0930", "2026-10-27", "Title M1-1"))
+
+
+class QueueSummaries(unittest.TestCase):
+    def test_read_back_by_kb_inputs(self):
+        notes = [queue_note("M1-1", client_title="Client one", client_summary="Admins can now do one."),
+                 queue_note("M1-2", nid="q2"),
+                 queue_note("M1-3", "drained", nid="q3")]
+        with tempfile.TemporaryDirectory() as d:
+            q, out = Path(d) / "q.json", Path(d) / "sums.txt"
+            q.write_text(json.dumps(notes))
+            code, _, res = _cli("queue-summaries", "--queue-notes", str(q), "--out", str(out))
+            sums = kb_inputs.load_summaries(str(out))
+            self.assertEqual((code, res["tickets"], sorted(sums)), (0, 2, ["M1-1", "M1-2"]))
+            self.assertEqual((sums["M1-1"]["CLIENT_TITLE"], sums["M1-1"]["EXEC_SUMMARY"]),
+                             ("Client one", "Admins can now do one."))
+            _cli("queue-summaries", "--queue-notes", str(q), "--tickets", "M1-2", "--out", str(out))
+            self.assertEqual(list(kb_inputs.load_summaries(str(out))), ["M1-2"])
+
+
+class PendingQueue(unittest.TestCase):
+    def test_union_dedup(self):
+        archive = [archive_note("2026-10-01", "medtrics", ["M1-1", "M1-2", "M1-3"])]
+        ledger = [ledger_note("M1-2", "drafted", nid="l2"), ledger_note("M1-5", "drafted", nid="l5")]
+        queue = [queue_note("M1-4", nid="a"), queue_note("M1-1", nid="b"),
+                 queue_note("M1-5", nid="c"), queue_note("M1-6", "drained", nid="d")]
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            for name, notes in (("a", archive), ("l", ledger), ("q", queue)):
+                (d / f"{name}.json").write_text(json.dumps(notes))
+            code, line, res = _cli("pending", "--archive-notes", str(d / "a.json"),
+                                   "--ledger-notes", str(d / "l.json"),
+                                   "--queue-notes", str(d / "q.json"))
+            _, line_no_q, _ = _cli("pending", "--archive-notes", str(d / "a.json"),
+                                   "--ledger-notes", str(d / "l.json"))
+        self.assertEqual((code, line, res["tickets"]), (0, "M1-1,M1-3,M1-4", 3))
+        self.assertEqual(line_no_q, "M1-1,M1-3")
 
 
 if __name__ == "__main__":

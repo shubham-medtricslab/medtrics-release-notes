@@ -1,6 +1,6 @@
 ---
 name: kb-ledger
-description: Mem-backed history for /kb-articles — the KB Article Ledger (one note per legacy feature ticket recording the article drafted for it, plus one note per run), the KB Catalogue (published Intercom articles, seeded once from the FAQ Content Planner export) and, from v2, the KB Queue. Covers collection resolution, the dumps scripts read, the writes they compute, the one-time seeds, and failure handling. Mem is required for /kb-articles; the .docx/PDF files are deliverables in the outputs folder, never stored in Mem.
+description: Mem-backed history for /kb-articles — the KB Article Ledger (one note per legacy feature ticket recording the article drafted for it, plus one note per run), the KB Catalogue (published Intercom articles, seeded once from the FAQ Content Planner export) and the KB Queue (feature tickets waiting for an article, filled by /release-slack --kb). Covers collection resolution, the dumps scripts read, the writes they compute, the one-time seeds, and failure handling. Mem is required for /kb-articles; the .docx/PDF files are deliverables in the outputs folder, never stored in Mem.
 ---
 
 # KB Ledger (Mem)
@@ -26,7 +26,7 @@ what would be skipped).
 |---|---|---|---|
 | Ledger | `MEM_KB_LEDGER_COLLECTION` | `KB Article Ledger` | `KB: <ticket> · <title>` per ticket; `KB run: <date> · <run_id>` per run |
 | Catalogue | `MEM_KB_CATALOGUE_COLLECTION` | `KB Catalogue` | `KB article: <id> · <title>` per published Intercom article |
-| Queue (v2) | `MEM_KB_QUEUE_COLLECTION` | `KB Queue` | not used by v1 |
+| Queue | `MEM_KB_QUEUE_COLLECTION` | `KB Queue` | `KB queue: <ticket> · <client title>` per waiting ticket |
 
 `kb_ledger.py resolve` prints the resolved names (process env > `.env` > default)
 and each collection's description. Resolve each one exactly like the
@@ -45,6 +45,7 @@ each collection, following `next_page` to the end, and save the merged
 |---|---|
 | Ledger | `/tmp/kb/<run>/ledger_notes.json` |
 | Catalogue | `/tmp/kb/<run>/catalogue_notes.json` |
+| Queue | `/tmp/kb/<run>/queue_notes.json` |
 | Release archive (only for `since` / `pending`) | `/tmp/kb/<run>/archive_notes.json` — the `release-archive` collection |
 
 A collection that does not exist yet is an empty dump (write `{"notes": []}`).
@@ -80,6 +81,40 @@ deletes or re-renders them, but the next run will draft that ticket again.
 
 A person fills `Published as:` by hand once the article is live in Intercom
 (and may set `Status: published`). The scripts preserve `Published as` on update.
+
+## The queue
+
+`/release-slack --kb` fills it; `/kb-articles` empties it.
+
+1. **Enqueue** (`/release-slack` Step 9c, after the post and its archive note):
+   `kb_ledger.py enqueue` reads the release's data and summaries files and emits
+   one `create` per feature ticket that has no article yet, carrying the client
+   title and summary the release wrote. A ticket already pending is not queued
+   twice; MR-NNNN ids and non-features never are. Its first stdout line is the
+   ids to draft now.
+2. **Draft now or later.** `/release-slack` hands those ids straight to
+   `/kb-articles <ids> --from-release`, which asks y/n. On "n" (or if the
+   run fails) they stay `pending`; `/kb-articles pending` picks them up later and
+   reuses their stored client copy (`kb_ledger.py queue-summaries`).
+3. **Drain.** After a run, `kb_ledger.py drain` marks the queue notes of every
+   drafted ticket `drained` (with the run id). Failed tickets stay pending.
+   Queue notes are never deleted.
+
+Queue note:
+
+    KB queue: M1-1520 · Land migrated schedules as unpublished
+
+    **Ticket:** M1-1520
+    **Status:** pending            (pending | drained)
+    **Source:** release-slack
+    **Released:** 2026-10-27
+    **Root ts:** 1730000000.123456
+    **Title:** Curriculum migration — option to land migrated session schedules as Unpublished
+    **Client title:** Land migrated schedules as unpublished
+    **Client summary:** Administrators can now …
+    **Queued:** 2026-10-27
+    **Drained by:** —
+    **Drained:** —
 
 ## One-time seeds
 

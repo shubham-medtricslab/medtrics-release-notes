@@ -73,6 +73,18 @@ class Select(unittest.TestCase):
                                     retry_partial=True)
         self.assertEqual(len(kept), 1)
 
+    def test_filter_cli_ids_limits_release_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "data.json").write_text(json.dumps(
+                {"issues": [issue("M1-1"), issue("M1-2"), issue("M1-3", "bug")]}))
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                SEL.main(["filter", "--data", f"{d}/data.json", "--ids", "m1-2,M1-3",
+                          "--out", f"{d}/f.json"])
+            out = json.loads(Path(d, "f.json").read_text())
+            self.assertEqual([i["identifier"] for i in out["issues"]], ["M1-2"])
+            self.assertEqual(out["skipped"], [{"ticket": "M1-3", "reason": "type: bug"}])
+
     def test_place_order(self):
         s, how = SEL.place_issue(issue("M1-10"), ROUTES)
         self.assertEqual((s["surface"], how), ("Forms > Assignments", "known"))

@@ -353,7 +353,17 @@ Run note: `KB run: 2026-10-27 · kb-20261027-0930` — mode, counts, per-agent u
 - PDF verify passes (or only warns on font substitution); the M1-1399 visual check is recorded.
 - Model pins verified.
 
-### v2 (0.22.0) — `--kb` only enqueues
+### v2 (0.22.0) — `--kb` enqueues, then offers to draft in the same chat
+
+**Revised by the owner on 2026-10-26** (supersedes the enqueue-only design below):
+`--kb` is on `/release-slack` only (`/notes` is unchanged). After the post and its
+archive note, Step 9c enqueues the release's feature tickets and hands exactly
+those to `/kb-articles tickets <ids> --from-release` in the same chat, which reuses
+`/tmp/release_slack_data.json` + `/tmp/release_slack_summaries.txt`, shows its plan
+and asks y/n. "n" leaves them queued for `/kb-articles pending`. Drafted tickets'
+queue notes are marked drained.
+
+Original v2 text, kept for history:
 - **`/release-slack --kb`:** new **Step 9c**, after the 9b archive once the post is complete. `kb_queue enqueue` with `--summaries /tmp/release_slack_summaries.txt` (CLIENT_TITLE, EXEC_SUMMARY, INTERNAL_SUMMARY), `--data` (for `task_type`), `--source release-slack --date … --ts …`. Filters to features, skips ledger/queue duplicates, creates `KB queue:` notes. Never blocks, never generates; on failure prints one line (the `pending` archive scan catches it anyway).
 - **`/notes --kb`:** after Step 4, enqueue from `/tmp/release_notes_data.json` (+ summaries when present) with `Released: no` — status lanes are pre-release. Mem stays optional for `/notes`: no Mem → warn and skip. **Default (flagged):** v3 drains a `Released: no` entry only once its ID appears in a release archive note.
 - **Acceptance:** enqueue spawns zero agents and zero model calls; duplicate enqueue is a no-op; non-features never enqueued; `/kb-articles pending` drains the queue using the queued summaries, with the input-token drop measured against v1 on the same tickets.

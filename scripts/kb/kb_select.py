@@ -215,7 +215,13 @@ def group(placements, routes, max_group=MAX_GROUP, sessions=None):
 def cmd_filter(a):
     data = _load(a.data)
     idx = _load(a.ledger_index) if a.ledger_index and Path(a.ledger_index).exists() else {}
-    kept, skipped = filter_issues(data.get("issues") or [], idx, a.force, a.retry_partial)
+    issues = data.get("issues") or []
+    if a.ids:
+        # The release hand-off reuses the release's data file, which holds every
+        # ticket of the release; draft only the ids asked for.
+        want = {t.strip().upper() for t in a.ids.split(",") if t.strip()}
+        issues = [i for i in issues if i["identifier"].upper() in want]
+    kept, skipped = filter_issues(issues, idx, a.force, a.retry_partial)
     _write(a.out, {**data, "issues": kept, "skipped": skipped})
     n_type = sum(1 for s in skipped if s["reason"].startswith("type"))
     print(f"kept {len(kept)} features · skipped: {n_type} (type) · {len(skipped) - n_type} (ledger)")
@@ -281,6 +287,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("filter"); s.add_argument("--data", required=True)
     s.add_argument("--ledger-index"); s.add_argument("--out", required=True)
+    s.add_argument("--ids", help="comma-separated: keep only these tickets")
     s.add_argument("--force", action="store_true"); s.add_argument("--retry-partial", action="store_true")
     s = sub.add_parser("place"); s.add_argument("--data", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--out", required=True)

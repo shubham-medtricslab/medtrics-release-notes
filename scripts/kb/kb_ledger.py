@@ -4,8 +4,10 @@ kb_ledger.py — deterministic half of the KB-article Mem ledger.
 
 /kb-articles keeps its history in Mem: one ledger note per ticket (which
 article was drafted for it, from which run, what screenshots it carries, which
-earlier article it follows) plus one run note per run, and a catalogue of the
-articles already published to Intercom. Mem is only reachable through the Mem
+earlier article it follows) plus one run note per run, a catalogue of the
+articles already published to Intercom, and a queue of released features
+still waiting for an article (enqueued by `/release-slack --kb`, drained once
+a run drafts them; queue notes are never deleted). Mem is only reachable through the Mem
 MCP (Claude-side), so this script never talks to Mem itself. Like
 release_archive.py and dev_directory.py, it renders and parses the notes and
 computes the writes; the orchestrator performs the Mem calls.
@@ -13,18 +15,25 @@ computes the writes; the orchestrator performs the Mem calls.
   resolve         Print the three collection names (process env > .env > default).
   index           Ledger dump (+ optional queue dump) -> {ticket: status}.
   since           Release-archive dump -> legacy ticket ids released on/after a date.
-  pending         Release-archive dump minus the ledger -> released, not yet drafted.
+  pending         Release-archive dump (+ optional pending queue) minus the ledger
+                  -> released or queued, not yet drafted.
   todo            A ticket list minus what the ledger already covers — run BEFORE
                   the gather so a done ticket never costs a GitLab call.
   match           Gathered data + catalogue/ledger dumps -> top prior articles per ticket.
   writes          A finished run (run.json from kb_package.py) -> the Mem writes.
   seed-legacy     The hand-run pipeline's tickets.json + article drafts -> ledger writes.
   seed-catalogue  A FAQ Content Planner export (kb2.csv) -> catalogue writes.
+  enqueue         A posted release's data + summaries -> queue create-writes for
+                  its features; prints the ticket ids to draft now.
+  drain           Tickets a run drafted + queue dump -> queue update-writes
+                  marking their pending notes drained.
+  queue-summaries Queue dump -> a release-format summaries file of the pending
+                  entries (client title + summary) for kb_inputs.py --summaries.
 
 A "dump" is the orchestrator's saved `list_notes` response for a collection
 (`{"notes": [{id, version, content}, ...]}`, a bare list, or a missing file
 for an empty collection). A "writes" file is a JSON list of
-`{"action": "create"|"update", "collection": "ledger"|"catalogue",
+`{"action": "create"|"update", "collection": "ledger"|"catalogue"|"queue",
 "note_id", "version", "title", "content"}` for the orchestrator to perform.
 
 Every subcommand prints a machine-readable block last:
@@ -53,6 +62,22 @@ Ledger note schema (first line = Mem note title):
     **Files:** CX-DRAFT_How to ….docx, .pdf, .md
     **Tokens:** ~6,900 (writer, apportioned) + 0 (retries)
     **Published as:** —
+
+Queue note schema (one per enqueue; Status flips pending -> drained in place):
+
+    KB queue: M1-1520 · Land migrated session schedules as unpublished
+
+    **Ticket:** M1-1520
+    **Status:** pending
+    **Source:** release-slack
+    **Released:** 2026-10-27
+    **Root ts:** 1761571234.000100
+    **Title:** Migrate session schedules as unpublished
+    **Client title:** Land migrated session schedules as unpublished
+    **Client summary:** Administrators can now …
+    **Queued:** 2026-10-27
+    **Drained by:** —
+    **Drained:** —
 """
 
 import argparse
@@ -87,6 +112,7 @@ COLLECTIONS = {
 LEDGER_PREFIX = "KB: "
 RUN_PREFIX = "KB run: "
 CATALOGUE_PREFIX = "KB article: "
+QUEUE_PREFIX = "KB queue: "
 SEP = " · "
 NONE = "—"
 
@@ -96,6 +122,7 @@ STATUSES = ("drafted", "partial", "failed", "published", "legacy-draft", "matche
 # is skipped too: re-drafting it weekly re-spends tokens for shots the demo
 # still cannot show. --retry-partial brings it back once the demo can.
 DONE = ("drafted", "partial", "published", "legacy-draft", "matched")
+QUEUE_STATUSES = ("pending", "drained")
 
 FIELD_RE = re.compile(r"^\*\*(?P<key>[^*]+?):\*\*\s*(?P<value>.*)$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -108,6 +135,12 @@ LEDGER_FIELDS = [
     ("Screenshots", "screenshots"), ("Tenant", "tenant"),
     ("Prior article", "prior"), ("Files", "files"), ("Tokens", "tokens"),
     ("Published as", "published_as"),
+]
+QUEUE_FIELDS = [
+    ("Ticket", "ticket"), ("Status", "status"), ("Source", "source"),
+    ("Released", "released"), ("Root ts", "root_ts"), ("Title", "title"),
+    ("Client title", "client_title"), ("Client summary", "client_summary"),
+    ("Queued", "queued"), ("Drained by", "drained_by"), ("Drained", "drained"),
 ]
 CATALOGUE_FIELDS = [
     ("Article id", "id"), ("Title", "title"), ("Module", "module"),
@@ -194,6 +227,51 @@ def parse_catalogue_note(note):
         return None
     rec = _fields(lines[1:], CATALOGUE_FIELDS)
     return rec if rec["id"] and rec["title"] else None
+
+
+def _oneline(s):
+    """A note field is one line: collapse wrapped summaries."""
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
+def queue_title(rec):
+    t = _oneline(rec.get("client_title") or rec.get("title"))
+    return f"{QUEUE_PREFIX}{rec['ticket']}" + (f"{SEP}{t}" if t else "")
+
+
+def render_queue_note(rec):
+    return _render(queue_title(rec), QUEUE_FIELDS,
+                   {k: _oneline(rec.get(k)) for _, k in QUEUE_FIELDS})
+
+
+def parse_queue_note(note):
+    content = note if isinstance(note, str) else (note.get("content") or "")
+    lines = content.splitlines()
+    if not lines or not lines[0].strip().startswith(QUEUE_PREFIX):
+        return None
+    rec = _fields(lines[1:], QUEUE_FIELDS)
+    if not rec["ticket"]:
+        return None
+    if isinstance(note, dict):
+        rec["note_id"] = note.get("id") or note.get("note_id") or ""
+        rec["version"] = note.get("version")
+    return rec
+
+
+def queue_index(notes):
+    """{TICKET: record}; with several notes for a ticket a pending one wins,
+    then the newest `Queued`."""
+    idx = {}
+    for n in notes:
+        rec = parse_queue_note(n)
+        if not rec:
+            continue
+        key = rec["ticket"].upper()
+        have = idx.get(key)
+        rank = (rec.get("status") == "pending", rec.get("queued", ""))
+        if have is None or rank >= (have.get("status") == "pending", have.get("queued", "")):
+            idx[key] = rec
+    return idx
 
 
 def render_run_note(run):
@@ -319,6 +397,72 @@ def ledger_writes(records, ledger, force=False):
     return writes
 
 
+def _summary_map(summaries):
+    """{IDENTIFIER (upper): block} from a dict or a list of parsed blocks."""
+    blocks = summaries.values() if isinstance(summaries, dict) else (summaries or [])
+    return {b["IDENTIFIER"].strip().upper(): b for b in blocks
+            if isinstance(b, dict) and (b.get("IDENTIFIER") or "").strip()}
+
+
+def enqueue_records(issues, summaries, ledger_index, queue_index, source, date, ts, today):
+    """(records to create, ticket ids to draft now) for a posted release.
+    Features only, no MR-NNNN; a ticket the ledger has done is dropped; one
+    already pending is drafted but not queued twice; one drained earlier but
+    not done (e.g. failed) is queued again."""
+    sums = _summary_map(summaries)
+    recs, ids, seen = [], [], set()
+    for issue in issues or []:
+        tid = (issue.get("identifier") or "").strip()
+        key = tid.upper()
+        if not tid or key in seen or key.startswith("MR-") \
+                or issue.get("task_type") not in FEATURE_TYPES:
+            continue
+        seen.add(key)
+        if (ledger_index.get(key) or {}).get("status") in DONE:
+            continue
+        ids.append(tid)
+        if (queue_index.get(key) or {}).get("status") == "pending":
+            continue
+        block = sums.get(key) or {}
+        title = block.get("TITLE") or issue.get("title") or ""
+        recs.append({"ticket": tid, "status": "pending", "source": source,
+                     "released": date, "root_ts": ts or "", "title": title,
+                     "client_title": block.get("CLIENT_TITLE") or title,
+                     "client_summary": block.get("EXEC_SUMMARY") or "",
+                     "queued": today, "drained_by": "", "drained": ""})
+    return recs, ids
+
+
+def drain_writes(tickets, queue_notes, run_id, date):
+    """update-writes flipping every pending queue note of `tickets` to drained."""
+    want = {t.strip().upper() for t in tickets if t.strip()}
+    writes = []
+    for n in queue_notes:
+        rec = parse_queue_note(n)
+        if not rec or rec["ticket"].upper() not in want or rec.get("status") != "pending" \
+                or not rec.get("note_id"):
+            continue
+        rec = {**rec, "status": "drained", "drained_by": run_id, "drained": date}
+        writes.append({"action": "update", "collection": "queue",
+                       "note_id": rec["note_id"], "version": rec.get("version"),
+                       "title": queue_title(rec), "content": render_queue_note(rec)})
+    return writes
+
+
+def queue_summaries_text(queue, tickets=None):
+    """Pending queue entries as release summary blocks (kb_inputs --summaries)."""
+    want = {t.strip().upper() for t in tickets if t.strip()} if tickets else None
+    blocks = []
+    for key, rec in queue.items():
+        if rec.get("status") != "pending" or (want is not None and key not in want):
+            continue
+        blocks.append("\n".join([f"IDENTIFIER: {rec['ticket']}",
+                                 f"TITLE: {_oneline(rec.get('title'))}",
+                                 f"CLIENT_TITLE: {_oneline(rec.get('client_title'))}",
+                                 f"EXEC_SUMMARY: {_oneline(rec.get('client_summary'))}"]))
+    return ("\n---\n".join(blocks) + "\n") if blocks else "", len(blocks)
+
+
 def _ids_in(article):
     return set(re.findall(r"\b(?:M1|M2|GEN)-\d+\b|\b[0-9a-f]{8}\b", json.dumps(article)))
 
@@ -421,10 +565,18 @@ def cmd_since(a):
 def cmd_pending(a):
     ledger = ledger_index(load_dump(a.ledger_notes))
     skip = DONE if not a.retry_partial else tuple(s for s in DONE if s != "partial")
-    rel = [(t, d) for t, d in released_tickets(load_dump(a.archive_notes))
+    rel = [t for t, _ in released_tickets(load_dump(a.archive_notes))
            if ledger.get(t.upper(), {}).get("status") not in skip]
-    print(",".join(t for t, _ in rel))
-    emit({"ok": True, "action": "pending", "tickets": len(rel)})
+    seen = {t.upper() for t in rel}
+    queued = []
+    for key, rec in queue_index(load_dump(a.queue_notes)).items():
+        if rec.get("status") == "pending" and key not in seen \
+                and ledger.get(key, {}).get("status") not in skip:
+            seen.add(key)
+            queued.append(rec["ticket"])
+    print(",".join(rel + queued))
+    emit({"ok": True, "action": "pending", "tickets": len(rel) + len(queued),
+          "released": len(rel), "queued": len(queued)})
     return 0
 
 
@@ -499,6 +651,50 @@ def cmd_seed_catalogue(a):
     return 0
 
 
+def cmd_enqueue(a):
+    try:
+        date = _valid_date(a.date)
+    except ValueError as e:
+        emit({"ok": False, "action": "enqueue", "error": str(e)})
+        return 1
+    issues = json.loads(Path(a.data).read_text()).get("issues") or []
+    sums = RA.parse_summaries(Path(a.summaries).read_text()) \
+        if a.summaries and Path(a.summaries).exists() else []
+    queue = queue_index(load_dump(a.queue_notes))
+    recs, ids = enqueue_records(issues, sums, ledger_index(load_dump(a.ledger_notes)),
+                                queue, a.source, date, a.ts, _dt.date.today().isoformat())
+    _write_json(a.out, [{"action": "create", "collection": "queue",
+                         "title": queue_title(r), "content": render_queue_note(r)} for r in recs])
+    print(",".join(ids))
+    emit({"ok": True, "action": "enqueue", "queued": len(recs),
+          "already_queued": len(ids) - len(recs), "tickets": ids,
+          "skipped": len(issues) - len(ids)})
+    return 0
+
+
+def cmd_drain(a):
+    try:
+        date = _valid_date(a.date)
+    except ValueError as e:
+        emit({"ok": False, "action": "drain", "error": str(e)})
+        return 1
+    ids = [t.strip() for t in a.tickets.split(",") if t.strip()]
+    writes = drain_writes(ids, load_dump(a.queue_notes), a.run_id, date)
+    _write_json(a.out, writes)
+    print(f"drain: {len(writes)} queue notes drained · {len(ids)} tickets asked")
+    emit({"ok": True, "action": "drain", "drained": len(writes), "tickets": len(ids)})
+    return 0
+
+
+def cmd_queue_summaries(a):
+    ids = [t for t in (a.tickets or "").split(",") if t.strip()] or None
+    text, n = queue_summaries_text(queue_index(load_dump(a.queue_notes)), ids)
+    Path(a.out).write_text(text)
+    print(f"queue-summaries: {n} pending tickets with a client summary block")
+    emit({"ok": True, "action": "queue-summaries", "tickets": n})
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -510,6 +706,7 @@ def main(argv=None):
     s.add_argument("--date", required=True)
     s = sub.add_parser("pending"); s.add_argument("--archive-notes", required=True)
     s.add_argument("--ledger-notes", required=True)
+    s.add_argument("--queue-notes")
     s.add_argument("--retry-partial", action="store_true")
     s = sub.add_parser("todo"); s.add_argument("--ids", required=True)
     s.add_argument("--ledger-notes", required=True)
@@ -526,12 +723,23 @@ def main(argv=None):
     s.add_argument("--out", required=True)
     s = sub.add_parser("seed-catalogue"); s.add_argument("--csv", required=True)
     s.add_argument("--catalogue-notes"); s.add_argument("--out", required=True)
+    s = sub.add_parser("enqueue"); s.add_argument("--data", required=True)
+    s.add_argument("--summaries"); s.add_argument("--source", required=True)
+    s.add_argument("--date", required=True); s.add_argument("--ts")
+    s.add_argument("--ledger-notes"); s.add_argument("--queue-notes")
+    s.add_argument("--out", required=True)
+    s = sub.add_parser("drain"); s.add_argument("--tickets", required=True)
+    s.add_argument("--queue-notes", required=True); s.add_argument("--run-id", required=True)
+    s.add_argument("--date", required=True); s.add_argument("--out", required=True)
+    s = sub.add_parser("queue-summaries"); s.add_argument("--queue-notes", required=True)
+    s.add_argument("--tickets"); s.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     try:
         return {"resolve": cmd_resolve, "index": cmd_index, "since": cmd_since,
                 "pending": cmd_pending, "todo": cmd_todo, "match": cmd_match, "writes": cmd_writes,
                 "seed-legacy": cmd_seed_legacy,
-                "seed-catalogue": cmd_seed_catalogue}[a.cmd](a)
+                "seed-catalogue": cmd_seed_catalogue, "enqueue": cmd_enqueue,
+                "drain": cmd_drain, "queue-summaries": cmd_queue_summaries}[a.cmd](a)
     except (OSError, json.JSONDecodeError) as e:
         emit({"ok": False, "action": a.cmd, "error": str(e)})
         return 1

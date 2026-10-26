@@ -1,5 +1,5 @@
 ---
-description: Post ONE combined internal release message to #dream-team — a compact root-post index plus threaded per-ticket cards that carry BOTH a client-portable exec-voice lede AND the internal technical detail (ticket IDs, developer @-mentions, client institution names, Optimus URLs). Replaces the former split /internal-notes + /release-slack commands. Internal-only; the team ports the exec-voice lede to clients themselves.
+description: Post ONE combined internal release message to #dream-team — a compact root-post index plus threaded per-ticket cards that carry BOTH a client-portable exec-voice lede AND the internal technical detail (ticket IDs, developer @-mentions, client institution names, Optimus URLs). Replaces the former split /internal-notes + /release-slack commands. Internal-only; the team ports the exec-voice lede to clients themselves. Optional `--kb` queues the release's feature tickets for KB articles after the post.
 ---
 
 # Release Slack Announcement (combined internal post)
@@ -21,9 +21,13 @@ This command never posts to Slack without explicit user confirmation in the same
 /release-slack tickets M1-986,M1-1039,M1-1118    # explicit ticket list (paste from Optimus Plan Deploy view)
 /release-slack mr 6567                            # summarize a single GitLab MR
 /release-slack dry-run                            # print what would be gathered/posted, then exit without posting
+/release-slack --kb                               # status mode, then queue + offer KB articles after the post (Step 9c)
+/release-slack tickets M1-986,M1-1039 --kb        # explicit ticket list, then queue + offer KB articles
 ```
 
 You may combine the mode with `dry-run`, e.g. `/release-slack tickets M1-986 dry-run`.
+
+`--kb` is opt-in and combines with any mode and with `dry-run`. It changes nothing about the release itself — gathering, analyzers, composition, lint, preview, posting and the Step 9b archive run exactly as without it, and it never delays or blocks the post. It only adds Step 9c, after the archive.
 
 ## Pipeline overview
 
@@ -47,6 +51,9 @@ You may combine the mode with `dry-run`, e.g. `/release-slack tickets M1-986 dry
    9b. once the post is complete (this session, or the resume run that finishes it): archive ONE Mem
        note for this release session — trace header + the posted root and replies verbatim
        (release-archive skill → release_archive.py record; Mem is the only archive, nothing on disk)
+   9c. only with --kb, after 9b: resolve the KB Queue + KB Article Ledger collections → kb_ledger.py
+       enqueue (this release's feature tickets) → write queue notes → hand off to /kb-articles
+       `<ids> --from-release`, which asks y/n before drafting (never a release failure)
 ```
 
 The Slack shape is **root-post-as-index**: one compact top-level message (numbered `ID · title` lines under `*Enhancements &amp; New Features*` / `*Bug Fixes*`, plus a `Clients to notify:` line), with all long-form detail in thread replies. **Never post a second top-level message** — if content exceeds a cap, it spills into additional thread replies deterministically.
@@ -57,6 +64,7 @@ There is **no IP guard and no separate customer-facing markdown** in this pipeli
 
 - Slack root post + thread replies to the channel resolved from `SLACK_CHANNEL_INTERNAL` (default `#dream-team`, channel id `C1BCUHXT9`). Posted only after the user confirms.
 - **One Mem note for the release session** in the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`; `release-archive` skill) — date, channel, root ts, permalink, the posted ticket list, **and the posted root + every thread reply verbatim**. This is the **only** archive of the post: nothing is written to `.claude/outputs/` or anywhere else on disk. Written once the post is complete (this session, or the resume run that finishes it).
+- **With `--kb` only:** one queue note per newly queued feature ticket in the collection named by `MEM_KB_QUEUE_COLLECTION` (default `KB Queue`). KB article drafts are produced only if the user answers `y` at the `/kb-articles` plan preview — those drafts, files and ledger notes belong to `/kb-articles`, not to this command.
 - Working files only in `/tmp/` — the per-ticket summary blocks (`/tmp/release_slack_summaries.txt`) and the composed root / reply files (`/tmp/release_slack_root.txt`, `/tmp/release_slack_reply_NN.txt`); the archive step reads them.
 
 Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
@@ -72,6 +80,8 @@ Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
 | `SLACK_CHANNEL_INTERNAL` | channel id (`C1BCUHXT9`) or `#dream-team` | Yes |
 | `SLACK_BOT_TOKEN` | `xoxb-...` token with `chat:write` + `channels:read` scopes (`groups:read` if the channel is private) | Yes |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | Name of the Mem collection that receives the archive note for every posted release (`release-archive` skill). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. The key is optional — the **Mem MCP connection is not** (see Step 1) | optional |
+| `MEM_KB_QUEUE_COLLECTION` | `--kb` only: name of the Mem collection that holds feature tickets waiting for a KB article (`kb-ledger` skill). Created under that exact name if absent; defaults to `KB Queue` | optional |
+| `MEM_KB_LEDGER_COLLECTION` | `--kb` only: name of the KB Article Ledger collection, read so tickets that already have an article are not queued (`kb-ledger` skill). Defaults to `KB Article Ledger` | optional |
 
 `SLACK_CHANNEL_RELEASE` is **no longer used** by this command — there is no client-channel post. If any required key is missing, abort early with a clear "Missing required env keys: [...]" message — do NOT proceed to any data gathering, file generation, or Slack call. The **Mem MCP must be connected** as well: it is the only archive of every release, so its absence is a hard stop at Step 1, not a degraded run.
 
@@ -434,6 +444,54 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 4. **Write it:** `create_note({content, collection_ids: [<resolved collection uuid>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
 5. **If the write cannot happen** (collection unresolvable or ambiguous, or `create_note` fails once and again on one immediate retry): print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body from step 3 in a fenced block. Then finish. Never write the note to disk and never re-post to Slack.
 
+### Step 9c — Queue and offer KB articles (only with `--kb`)
+
+Runs only when `--kb` was passed, and only **after** the post is complete AND Step 9b has run — the archive note written, or its manual-paste fallback printed. On a resume run (Step 9b's gate), it runs after the resume run's archive step. It never runs before or instead of the post or the archive, and nothing in it can surface as a release failure: the Slack post and the archive are authoritative. Any failure here — Mem, script, hand-off — is reported in chat in one line and the command finishes.
+
+Follow the `kb-ledger` skill for every Mem call.
+
+1. **Resolve the collections and dump them.** `mkdir -p /tmp/kb`, then:
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_ledger.py resolve
+   ```
+
+   It prints the resolved KB Queue and KB Article Ledger names (`MEM_KB_QUEUE_COLLECTION` / `MEM_KB_LEDGER_COLLECTION`, defaults `KB Queue` / `KB Article Ledger`) and each collection's description. Resolve each by name exactly as the `kb-ledger` skill describes — paginated `list_collections` following `next_page`, case-insensitive exact title match, prefer exact case then the oldest `created_at`, `create_collection` under the exact name when none matches. Then `list_notes({collection_id, include_note_content: true, limit: 100})` each one, following `next_page` to the end, and save the merged `{"notes": [{id, version, content}, …]}` verbatim to `/tmp/kb/release_ledger_notes.json` and `/tmp/kb/release_queue_notes.json` (a just-created collection is `{"notes": []}`). If a collection is ambiguous or a Mem call fails, print `KB: could not read the KB collections (<reason>) — nothing queued; run /kb-articles <ids> by hand later.` and finish.
+
+2. **Enqueue this release's feature tickets.**
+
+   ```bash
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_ledger.py enqueue \
+       --data /tmp/release_slack_data.json \
+       --summaries /tmp/release_slack_summaries.txt \
+       --source release-slack \
+       --date <the same YYYY-MM-DD value used in the Slack root header> \
+       --ts <root ts> \
+       --ledger-notes /tmp/kb/release_ledger_notes.json \
+       --queue-notes /tmp/kb/release_queue_notes.json \
+       --out /tmp/kb/release_queue_writes.json
+   ```
+
+   The first line of stdout is the comma-joined ticket ids to draft now (it may be empty). The `---KB_LEDGER_RESULT---` block carries `queued`, `already_queued`, `tickets` and `skipped`. In `mr <iid>` mode, `MR-NNNN` identifiers are never queued — they appear under `skipped`; say `KB: MR-NNNN identifiers are never queued for KB articles.` If the script exits 1, surface its stderr in one line and finish.
+
+   Perform each write in `/tmp/kb/release_queue_writes.json` in order: `create_note({content, collection_ids: [<queue uuid>]})`. A failed queue write is retried once; if it fails again, report it in one line (`KB: queue write failed for <ticket> (<reason>).`) and carry on with the rest. A queue failure never affects the post.
+
+3. **Nothing to draft.** If the first stdout line is empty — no feature tickets in this release, or every one already has an article — print `KB: no feature tickets to draft from this release (<queued> queued, <already_queued> already queued, <skipped count> skipped).` and finish.
+
+4. **Hand off to `/kb-articles`.** Otherwise print `KB: queued <queued> feature tickets (<already_queued> already queued). Handing off to /kb-articles for: <ids>.` and continue, in this same chat, with the `/kb-articles` flow (`commands/kb-articles.md`) in its **release hand-off mode**, for exactly these tickets and nothing else on the queue:
+
+   ```
+   /kb-articles <ids> --from-release
+   ```
+
+   `--from-release` tells `/kb-articles` to reuse `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` instead of gathering again — no second Optimus or GitLab call. `/kb-articles` runs its own preflight, shows its plan preview and **asks the user y/n**. Never pass `--yes` from here.
+
+   - On `n`: print `KB: not drafted — <ids> stay on the KB Queue; /kb-articles pending will draft them later.` and finish.
+   - On `y`: `/kb-articles` drafts, packages, writes its ledger notes and marks the queue entries drained. That is `/kb-articles`' job, not this step's — do not write ledger or queue updates here.
+   - If the hand-off fails mid-run, report where it stopped in one line; the tickets stay queued for `/kb-articles pending`. The release is not re-run, re-posted or re-archived.
+
+**`dry-run` with `--kb`:** after the normal dry-run output, resolve and dump the two collections as in step 1 (read-only — create nothing; a missing collection is `{"notes": []}`), then run only the `enqueue` script with `--out /tmp/kb/release_queue_writes_dryrun.json`. No analyzer has run in a dry-run, so omit `--summaries` and `--ts` (the count then comes from the gathered tickets and can include one the analyzer would later drop). Do **not** perform the Mem writes and do not hand off. Print `KB: would queue N feature tickets: <ids>` (or `KB: would queue 0 feature tickets.`).
+
 ## Failure modes and behavior
 
 | Condition | Behavior |
@@ -454,6 +512,10 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 | Release archive (Step 9b): collection unresolvable or ambiguous, or `create_note` fails after one immediate retry | Print the full rendered note in chat for a manual paste into the named collection (an ambiguous name also lists every candidate id). Never a disk write, never a re-post — the Slack post already succeeded and is authoritative |
 | Replies still outstanding after a partial failure | No archive yet; the resume run that posts the last reply archives the whole release |
 | User declines at preview | No Slack call; summaries + drafts remain on disk |
+| KB (Step 9c, `--kb`): a queue `create_note` fails after one immediate retry | One line naming the ticket and reason; carry on with the other writes. Never a release failure — the post and archive stand |
+| KB (Step 9c, `--kb`): `kb_ledger.py enqueue` exits 1 | Surface its stderr in one line; nothing queued, no hand-off. The post and archive stand |
+| KB (Step 9c, `--kb`): user answers `n` at the `/kb-articles` plan preview | Say the tickets stay queued and `/kb-articles pending` will draft them later; finish |
+| KB (Step 9c, `--kb`): the `/kb-articles` hand-off fails mid-run | Report where it stopped in one line; the tickets stay queued for `/kb-articles pending`. No re-post, no re-archive |
 
 ## Things this command does NOT do
 
@@ -465,6 +527,8 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 - Does not write to `.env` or to the plugin directory.
 - Does not blind-retry failed posts (`slack_upload.py` retries rate limits internally; a failed or unverified write is surfaced, never re-posted automatically).
 - Does not auto-schedule itself.
+- Does nothing KB-related without `--kb` — no KB collection reads, no queue notes, no hand-off.
+- Does not draft KB articles without the user's `y` at the `/kb-articles` plan preview, and never passes `--yes` to it.
 
 ## Coding Standards
 
@@ -478,4 +542,5 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 - **Formatting validation is handled by `slack_lint.py`.** Do NOT skip the lint gate — it runs over the root AND every reply before the human preview.
 - **Slack delivery is handled by `slack_upload.py`.** Do NOT use the Slack MCP for the post itself; the bundled script handles channel resolution, `chat.postMessage`, and `--thread-ts` replies. One invocation per message: root first, then each reply with the captured `ts`. Never post a second top-level message.
 - **Output filename uses today's date computed via `date +%Y-%m-%d`** — never hardcoded.
+- **`--kb` is strictly post-archive and failure-isolated.** Step 9c runs only after Step 9b; queue notes are computed by `kb_ledger.py enqueue` (never hand-composed) and written by resolved collection UUID per the `kb-ledger` skill; drafting, ledger notes and draining the queue belong to `/kb-articles`. Never let a Step 9c failure surface as a release failure.
 - **Channel resolution is exact-match only.** If `SLACK_CHANNEL_INTERNAL` is a name that matches multiple channels, the script will error — surface it and stop.

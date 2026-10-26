@@ -7,12 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-26
+
+### Added
+- **`/release-slack --kb`** — after the post and its Mem archive note (new
+  Step 9c), the release's feature tickets go on the Mem **KB Queue** with the
+  client title and summary the release wrote, and the same chat hands exactly
+  those tickets to `/kb-articles <ids> --from-release`. It reuses
+  `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` (no
+  second Optimus/GitLab fetch), shows its plan and asks y/n. "n" leaves them
+  queued. `--kb` never delays or fails the release; `dry-run --kb` only reports
+  what would be queued. `/notes` is unchanged.
+- `kb_ledger.py`: the queue — `enqueue`, `drain`, `queue-summaries`, and
+  `pending --queue-notes` (queue ∪ released-without-article). Queue notes are
+  marked `drained` after a run, never deleted.
+- `kb_select.py filter --ids` so the hand-off drafts only the ids asked for.
+
+### Changed
+- `/kb-articles` takes a bare ticket list: `/kb-articles M1-1520,M1-1256`
+  (no `tickets` keyword); `since <date>` and `pending` are unchanged.
+- Prose retries run round 1 on Haiku and round 2 on Sonnet; first drafts stay
+  on Sonnet.
+
 ## [0.21.0] - 2026-10-26
 
 ### Added
 - **`/kb-articles`** — one Intercom KB article draft (.docx + PDF + Intercom
   markdown) per shipped legacy **feature** ticket, in the Medtrics KB format
-  (`medtrics-kb-article/1.1`). Modes `tickets <ids>`, `since <date>` (from the
+  (`medtrics-kb-article/1.1`). Modes `<ids>` (a bare comma-separated list), `since <date>` (from the
   Mem release archive) and `pending`; flags `dry-run`, `--force`,
   `--retry-partial`, `--no-capture`, `--yes`. Plan: `KB-PLAN.md` (v1).
 - **`scripts/kb/`** — the KB format standard brought into the plugin

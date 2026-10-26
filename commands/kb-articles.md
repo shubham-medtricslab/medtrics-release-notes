@@ -18,10 +18,10 @@ can't place) and `kb-writer` (Sonnet, one call per writer group, all in parallel
 ## Usage
 
 ```
-/kb-articles tickets M1-1520,M1-1256        # these tickets (non-features are skipped)
+/kb-articles M1-1520,M1-1256                # these tickets (non-features are skipped)
 /kb-articles since 2026-10-01                # legacy tickets released on/after a date (from the Mem release archive)
-/kb-articles pending                         # every released legacy feature with no article yet
-/kb-articles tickets M1-1520 dry-run         # show the plan and exit — no agents, no capture, no files
+/kb-articles pending                         # everything on the KB queue + every released legacy feature with no article yet
+/kb-articles M1-1520 dry-run                 # show the plan and exit — no agents, no capture, no files
 ```
 
 Flags (combine with any mode):
@@ -33,12 +33,20 @@ Flags (combine with any mode):
 | `--retry-partial` | Re-draft `partial` tickets (drafts that had missing screenshots) |
 | `--no-capture` | Skip the browser; every article is drafted with missing-screenshot markers |
 | `--yes` | Don't wait for confirmation at the plan preview |
+| `--from-release` | Set only by `/release-slack --kb` (Step 9c) with an id list: reuse that release's `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` instead of gathering again, and mark the tickets' queue notes drained afterwards |
+
+**Two ways in.** Run it yourself (an id list, `since`, `pending`), or let
+`/release-slack --kb` hand off to it in the same chat right after a release is
+posted: that release's feature tickets are put on the KB queue and this command
+starts in `--from-release` mode, shows its plan and asks y/n. Say no and they
+stay queued for a later `/kb-articles pending`.
 
 ## Pipeline overview
 
 ```
 0  preflight     kb_doctor.py + Mem probe (hard stop) + .env keys
-1  select        ledger dump → ids (argv | release archive) → gather (features only) → kb_select filter
+1  select        ledger + queue dumps → ids (argv | release archive | queue) → gather (features only,
+                 skipped with --from-release) → kb_select filter
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
 3  prepare       kb_capture check · kb_select group · kb_ledger match · kb_inputs
 4  preview       plan + estimate → confirm (or stop on dry-run)
@@ -46,7 +54,7 @@ Flags (combine with any mode):
 6  write         kb_spec bundle → [kb-writer, Sonnet, all groups in ONE message] → prose/<ticket>.json
 7  assemble      kb_spec assemble (annotate, evidence, gates) → prose retries, ≤2, single article
 8  package       kb_usage report → kb_package (docx + md + ONE soffice batch → PDF + verify, summary, zip)
-9  record        kb_ledger writes → Mem create/update
+9  record        kb_ledger writes → Mem create/update · kb_ledger drain → queue notes marked drained
 10 report        summary in chat + output path
 ```
 
@@ -57,7 +65,7 @@ Flags (combine with any mode):
   audit table — kept out of the article); `RUN-SUMMARY.md`; and a zip of the lot.
   `<root>` is `$KB_OUTPUT_DIR`, else `/mnt/user-data/outputs` (Cowork), else
   `.claude/outputs/kb/`.
-- Mem: one ledger note per ticket and one run note (`kb-ledger` skill).
+- Mem: one ledger note per ticket and one run note; queue notes of drafted tickets marked `drained` (`kb-ledger` skill).
 - Working files only under `/tmp/kb/<run_id>/`.
 
 Every article is a **draft**. The publish render needs a person to confirm every
@@ -73,6 +81,7 @@ produces it.
 | `GITLAB_URL` | GitLab base URL | optional |
 | `MEM_KB_LEDGER_COLLECTION` | ledger collection name (default `KB Article Ledger`) | optional |
 | `MEM_KB_CATALOGUE_COLLECTION` | catalogue collection name (default `KB Catalogue`) | optional |
+| `MEM_KB_QUEUE_COLLECTION` | queue collection name (default `KB Queue`) | optional |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | release archive, read by `since` / `pending` | optional |
 | `KB_SESSION_DIR` | where the demo sessions are saved (default `.kb-sessions`) | optional |
 | `KB_OUTPUT_DIR` | output root override | optional |
@@ -109,9 +118,11 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    no Playwright means `--no-capture` is implied; no tesseract means draft-only
    anchors; no LibreOffice means no PDF this run. Show any `WARN` line (e.g.
    `CLAUDE_CODE_SUBAGENT_MODEL` overriding the pinned models).
-4. **Collections** — `python3 $K/kb_ledger.py resolve`, then resolve the ledger
-   and catalogue collections (and, for `since`/`pending`, the release archive)
-   by name per the `kb-ledger` skill, and save the three dumps under `$RUN/`.
+4. **Collections** — `python3 $K/kb_ledger.py resolve`, then resolve the ledger,
+   catalogue and queue collections (and, for `since`/`pending`, the release
+   archive) by name per the `kb-ledger` skill, and save the dumps under `$RUN/`
+   (`ledger_notes.json`, `catalogue_notes.json`, `queue_notes.json`,
+   `archive_notes.json`).
 
 ### Step 1 — Select
 
@@ -120,9 +131,13 @@ python3 $K/kb_ledger.py index --ledger-notes $RUN/ledger_notes.json --out $RUN/l
 ```
 
 Ticket ids:
-- `tickets <ids>` → as given.
+- an id list (`M1-1520,M1-1256`, comma-separated, no keyword) → as given. Anything
+  that is not `pending` or `since <date>` is read as the id list.
 - `since <date>` → `python3 $K/kb_ledger.py since --archive-notes $RUN/archive_notes.json --date <date>`
-- `pending` → `python3 $K/kb_ledger.py pending --archive-notes $RUN/archive_notes.json --ledger-notes $RUN/ledger_notes.json [--retry-partial]`
+- `pending` → `python3 $K/kb_ledger.py pending --archive-notes $RUN/archive_notes.json --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json [--retry-partial]`
+  (the queue first-class, the release archive as the safety net), then
+  `python3 $K/kb_ledger.py queue-summaries --queue-notes $RUN/queue_notes.json --out $RUN/summaries.txt`
+  so queued tickets reuse the client title and summary their release wrote.
 
 Then drop what the ledger already covers **before** the gather — a done ticket
 must never cost a GitLab call (`pending` already did this):
@@ -134,11 +149,26 @@ python3 $K/kb_ledger.py todo --ids <ids> --ledger-notes $RUN/ledger_notes.json [
 No ids left → print `Nothing to draft — every
 ticket already has an article.` and go to Step 10.
 
+**`--from-release`:** do not gather. The release already fetched these tickets
+and wrote their client copy:
+
+```bash
+cp /tmp/release_slack_data.json $RUN/data.json
+cp /tmp/release_slack_summaries.txt $RUN/summaries.txt
+```
+
+Otherwise:
+
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids> \
     --include-description --task-types feature,critical_feature --output $RUN/data.json
+```
+
+Then, either way:
+
+```bash
 python3 $K/kb_select.py filter --data $RUN/data.json --ledger-index $RUN/ledger_index.json \
-    --out $RUN/filtered.json [--force] [--retry-partial]
+    --ids <ids> --out $RUN/filtered.json [--force] [--retry-partial]
 ```
 
 ### Step 2 — Place
@@ -163,10 +193,10 @@ python3 $K/kb_select.py classifier-merge --placed $RUN/placed.json \
 ```bash
 python3 $K/kb_capture.py check --out $RUN/sessions.json          # skip with --no-capture / no Playwright
 python3 $K/kb_select.py group --placed $RUN/placed.json --sessions $RUN/sessions.json \
-    --run-id $RUN_ID --date $TODAY --mode <mode> --out $RUN/groups.json
+    --run-id $RUN_ID --date $TODAY --mode <ids|since|pending> --out $RUN/groups.json
 python3 $K/kb_ledger.py match --data $RUN/filtered.json --catalogue-notes $RUN/catalogue_notes.json \
     --ledger-notes $RUN/ledger_notes.json --out $RUN/priors.json
-python3 $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json
+python3 $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json [--summaries $RUN/summaries.txt]
 ```
 
 ### Step 4 — Preview
@@ -205,7 +235,9 @@ python3 $K/kb_spec.py bundle --groups $RUN/groups.json --inputs $RUN/inputs.json
 
 Spawn one Task per writer group, **all in a single message** so they run in
 parallel: `subagent_type: "medtrics-release-notes:kb-writer"`, `model: "sonnet"`
-(a second pin on top of the agent's own), prompt:
+(a second pin on top of the agent's own; `sonnet` resolves to the current Sonnet,
+5.5 at the time of writing — first drafts stay on it because they carry the
+client voice), prompt:
 
 `Group file: $RUN/writer_<group_id>.md. Output folder: $RUN/prose/. Write one JSON file per ticket as instructed.`
 
@@ -243,6 +275,11 @@ usage with `--scope retry:<ticket>`, then re-run `assemble` with
 `--tickets <those ids>`. At most **two** retry rounds; tickets still failing are
 passed to Step 8 as `--failed-after-retry`.
 
+A retry only fixes what a gate named (a title phrase, a missing bold label, a
+banned word), so round 1 runs on the cheaper model — `model: "haiku"` on the Task
+call — and only round 2 falls back to `model: "sonnet"`. Log each with the model
+it actually used.
+
 ### Step 8 — Package
 
 ```bash
@@ -266,6 +303,17 @@ Perform the writes per the `kb-ledger` skill (create / update by version; one
 retry; manual-paste fallback). Failed tickets get a `failed` note so the next run
 retries them.
 
+Then mark the queue entries of every ticket this run drafted (`drafted` or
+`partial` in `run.json`) as drained — failed tickets stay queued:
+
+```bash
+python3 $K/kb_ledger.py drain --tickets <drafted ids> --queue-notes $RUN/queue_notes.json \
+    --run-id $RUN_ID --date $TODAY --out $RUN/queue_drain.json
+```
+
+Perform those `update_note` writes the same way. A ticket that was never queued
+(a manual id-list run) simply has nothing to drain.
+
 ### Step 10 — Report
 
 Print the output folder and zip path, the counts line from `kb_package`, the
@@ -286,6 +334,9 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Writer returns nothing for a ticket | `failed` in summary and ledger; retried next run |
 | Gates still refuse after two retries | `failed`; no file written for it |
 | Ledger write fails | One retry, then print the note for a manual paste |
+| Queue drain write fails | One retry, then say so; the next `pending` sees the ledger note and skips the ticket anyway |
+| `--from-release` files missing (`/tmp/release_slack_*` gone) | Fall back to the normal gather for the same ids |
+| User says no at the preview of a release hand-off | Nothing drafted; the tickets stay on the queue for `/kb-articles pending` |
 
 ## Things this command does NOT do
 

@@ -39,7 +39,8 @@ Caps enforced by the lint gate: root ≤ 2,500 chars, each reply ≤ 3,900 chars
 | `/notes` | Both note types (deploy / integration) as markdown files in parallel. | Paper-trail backup or when you need both documents at once. |
 | `/deploy-notes` | Client-facing release notes markdown only. | Non-Slack delivery (paste into email, help center). |
 | `/integration-notes` | Integration-partner markdown only. | Separate partner channel. |
-| `/kb-articles` | One Intercom **KB article draft** (.docx + PDF + markdown) per shipped legacy **feature** ticket, in the Medtrics KB format. Grouped by persona × surface; screenshots captured live on the demo tenant and ringed by script; prose by a pinned Sonnet writer per group; every article checked by the format gates G1–G7; history in Mem so no ticket is drafted twice. See [KB articles](#kb-articles). | Manually, e.g. weekly: `/kb-articles since <date>` or `pending`. |
+| `/release-slack --kb` | The normal release post, then — in the same chat — the release's feature tickets go on the KB queue and `/kb-articles` offers to draft them (plan preview, y/n). Saying no leaves them queued. | After a deploy, when the release's features need KB articles. |
+| `/kb-articles` | One Intercom **KB article draft** (.docx + PDF + markdown) per shipped legacy **feature** ticket, in the Medtrics KB format. Grouped by persona × surface; screenshots captured live on the demo tenant and ringed by script; prose by a pinned Sonnet writer per group; every article checked by the format gates G1–G7; history in Mem so no ticket is drafted twice. See [KB articles](#kb-articles). | `/kb-articles M1-1520,M1-1256` for specific features; `pending` for everything queued or released without an article. |
 
 > `/client-copy` was removed in 0.17.0 — the `engineering-to-client` skill now runs inside both release pipelines. Pasting ticket blocks and asking for the client-facing version still triggers the skill on its own.
 
@@ -57,7 +58,7 @@ The plugin ships with eleven skills, all packaged inside the plugin so installin
 | `medtrics-release-notes:oracle-storyteller` | **Parked (unused since 0.12.0).** Formerly composed the separated `/oracle-release` design (a "safe to forward" client block + internal index, root assembled by `scripts/assemble_oracle_root.py`). Left in the repo in case that design is wanted again; `/oracle-release` now uses `internal-storyteller`. |
 | `medtrics-release-notes:copy-audit` | Sentence-level polish pass that runs between storyteller and ip-guard. Strips AI-sounding language, bloated verbs (`serves as`, `boasts a`, `helps to`), dead openings (`Furthermore`, `Moreover`), negative-parallelism patterns (`Not X. Y.`), decorative metaphor verbs (`mapped`, `surfaced`, `unpacked`), and engagement bait. Customer-facing only. |
 | `medtrics-release-notes:ip-guard` | Deterministic safety net that scans customer-facing output — the deploy markdown AND the composed Slack root + replies — for internal-system names, code-artifact jargon, MR identifiers, file paths, and architecture mechanism vocabulary. Blocks delivery on violation. Iterates with the storyteller + copy-audit up to 3 times to remediate. **Not** run against the internal-storyteller output — internal vocabulary is expected there. |
-| `medtrics-release-notes:kb-ledger` | Mem history for `/kb-articles`: the `KB Article Ledger` (one note per legacy feature ticket — article title, run, screenshots, tenant tally, prior article, files, tokens; plus one note per run) and the `KB Catalogue` (published Intercom articles, seeded once from the FAQ Content Planner export). Required by `/kb-articles`. Rendering, parsing, matching and the one-time seeds are `scripts/kb/kb_ledger.py`. |
+| `medtrics-release-notes:kb-ledger` | Mem history for `/kb-articles`: the `KB Article Ledger` (one note per legacy feature ticket — article title, run, screenshots, tenant tally, prior article, files, tokens; plus one note per run), the `KB Queue` (features waiting for an article, filled by `/release-slack --kb`, drained by `/kb-articles`) and the `KB Catalogue` (published Intercom articles, seeded once from the FAQ Content Planner export). Required by `/kb-articles`. Rendering, parsing, matching and the one-time seeds are `scripts/kb/kb_ledger.py`. |
 | `medtrics-release-notes:kb-capture` | Live screenshot capture on `demo.medtrics.sg` with Playwright: a **person** signs in once per persona (`kb_capture.py login`), the saved session is reused headless, one visit per surface, rings placed from the page's own element box, OCR-verified when tesseract is present. Covers session expiry (stop, keep shots, `resume.json`) and mapping surfaces in `scripts/kb/kb_routes.json`. |
 | `medtrics-release-notes:engineering-to-client` | Owns the client-copy voice rules. **Pipeline mode:** both release commands run it once over the analyzer blocks (after the analyzers, before composition / the Oracle IP guard) to write each card's client-facing title, finalize its `For clients:` paragraph (1–3 sentences, no jargon, no client names), confirm the `Clients:` value verbatim (`TBC` = platform-wide), and add a `CLIENT_FLAG` on any named-client item that is still unresolved. **Standalone mode:** paste engineering ticket blocks and get back only the plain-English client description per item. Never invents a capability, fix, or client code. |
 
@@ -84,7 +85,7 @@ The plugin reads Optimus + GitLab over HTTP (no git access needed). It only work
 | `SLACK_CHANNEL_INTERNAL` | `/release-slack` | channel id `C1BCUHXT9` (= `#dream-team`) — the combined post's destination |
 | `SLACK_CHANNEL_RELEASE` | no longer used | retired in 0.11.0 when the client-channel post was folded into the combined `#dream-team` message; safe to leave in `.env` |
 | `SLACK_BOT_TOKEN` | `/release-slack` | `xoxb-...` bot token. **NOT** a user token (`xoxp-`). The bot must be invited to `#dream-team`. |
-| `MEM_KB_LEDGER_COLLECTION` / `MEM_KB_CATALOGUE_COLLECTION` | optional | `/kb-articles` Mem collection names (defaults `KB Article Ledger` / `KB Catalogue`) |
+| `MEM_KB_LEDGER_COLLECTION` / `MEM_KB_CATALOGUE_COLLECTION` / `MEM_KB_QUEUE_COLLECTION` | optional | `/kb-articles` and `/release-slack --kb` Mem collection names (defaults `KB Article Ledger` / `KB Catalogue` / `KB Queue`) |
 | `KB_SESSION_DIR` / `KB_OUTPUT_DIR` / `KB_FONT` | optional | `/kb-articles`: where demo sessions are saved (default `.kb-sessions/`, gitignored), the output root override, and the badge font |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | optional | Name of the Mem collection that receives the archive note for every posted release (see [Mem release archive](#mem-release-archive)). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. Shared by `/release-slack` and `/oracle-release`. The key is optional; the **Mem MCP connection is required** by both release commands |
 
@@ -321,6 +322,8 @@ There is none on disk. The posted root + replies are archived as one Mem note (s
 
 **Before the first run** (once): sign in per persona (`python3 scripts/kb/kb_capture.py login --persona admin|faculty|learner`, a person at a screen — Claude never types passwords), seed the ledger from the October hand-run backlog (`kb_ledger.py seed-legacy`), and, when the FAQ Content Planner export is available, the catalogue (`kb_ledger.py seed-catalogue --csv kb2.csv`). `python3 scripts/kb/kb_doctor.py` shows what this machine can do: python-docx and Pillow are required; Playwright (screenshots), tesseract (OCR-verified anchors), LibreOffice (PDF) and pypdf (PDF checks) each degrade gracefully when absent.
 
+**From a release.** `/release-slack --kb` posts the release as usual, then puts its feature tickets on the KB queue and hands them to `/kb-articles` in the same chat, reusing the release's ticket data and client summaries (no second Optimus/GitLab fetch). You see the plan and answer y/n; on no, they wait on the queue for `/kb-articles pending`.
+
 **Drafts only.** Publishing needs a person to confirm each screenshot is free of tenant data (`tenant_confirmed_by`), then `build_kb_doc.py publish`.
 
 ## Output paths
@@ -348,7 +351,7 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.21.0**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.0**.
 
 ## Repository layout
 
