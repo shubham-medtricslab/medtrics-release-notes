@@ -53,6 +53,10 @@ class BuildPluginTestCase(unittest.TestCase):
         (self.root / "commands" / "hello.md").write_text("# hello\n")
         (self.root / "scripts").mkdir()
         (self.root / "scripts" / "noop.py").write_text("print('ok')\n")
+        (self.root / "scripts" / "kb").mkdir()
+        (self.root / "scripts" / "kb" / "kb_format.py").write_text("X = 1\n")
+        (self.root / "agents").mkdir()
+        (self.root / "agents" / "kb-writer.md").write_text("---\n")
 
     def _build(self):
         return build_plugin.build(self.root, self.out_dir)
@@ -146,6 +150,28 @@ class BuildPluginTestCase(unittest.TestCase):
         self.assertNotIn("PR-MATCHER-PLAN.md", names)
         self.assertIn("skills/pr-overrides/SKILL.md", names)
         self.assertIn("scripts/pr_overrides.py", names)
+
+    # --- KB pipeline: working area and sessions never ship; the code does ---
+
+    def test_kb_working_area_and_sessions_excluded_but_kb_code_ships(self):
+        (self.root / "extra" / "kb-pipeline").mkdir(parents=True)
+        (self.root / "extra" / "kb_format.py").write_text("X = 0\n")
+        (self.root / "extra" / "kb-pipeline" / "README.md").write_text("# hand\n")
+        (self.root / ".kb-sessions").mkdir()
+        (self.root / ".kb-sessions" / "admin.json").write_text("{}\n")
+        (self.root / "KB-PLAN.md").write_text("# plan\n")
+
+        names = self._zip_names(self._build())
+
+        self.assertFalse(any(n.startswith(("extra/", ".kb-sessions/")) for n in names))
+        self.assertNotIn("KB-PLAN.md", names)
+        self.assertIn("scripts/kb/kb_format.py", names)
+        self.assertIn("agents/kb-writer.md", names)
+
+    def test_missing_kb_writer_agent_fails_the_build(self):
+        (self.root / "agents" / "kb-writer.md").unlink()
+        with self.assertRaises(build_plugin.BuildError):
+            self._build()
 
 
 if __name__ == "__main__":

@@ -39,12 +39,13 @@ Caps enforced by the lint gate: root ≤ 2,500 chars, each reply ≤ 3,900 chars
 | `/notes` | Both note types (deploy / integration) as markdown files in parallel. | Paper-trail backup or when you need both documents at once. |
 | `/deploy-notes` | Client-facing release notes markdown only. | Non-Slack delivery (paste into email, help center). |
 | `/integration-notes` | Integration-partner markdown only. | Separate partner channel. |
+| `/kb-articles` | One Intercom **KB article draft** (.docx + PDF + markdown) per shipped legacy **feature** ticket, in the Medtrics KB format. Grouped by persona × surface; screenshots captured live on the demo tenant and ringed by script; prose by a pinned Sonnet writer per group; every article checked by the format gates G1–G7; history in Mem so no ticket is drafted twice. See [KB articles](#kb-articles). | Manually, e.g. weekly: `/kb-articles since <date>` or `pending`. |
 
 > `/client-copy` was removed in 0.17.0 — the `engineering-to-client` skill now runs inside both release pipelines. Pasting ticket blocks and asking for the client-facing version still triggers the skill on its own.
 
 ## Bundled skills
 
-The plugin ships with nine skills, all packaged inside the plugin so installing it gives you the full pipeline in one shot:
+The plugin ships with eleven skills, all packaged inside the plugin so installing it gives you the full pipeline in one shot:
 
 | Skill | Purpose |
 |---|---|
@@ -56,6 +57,8 @@ The plugin ships with nine skills, all packaged inside the plugin so installing 
 | `medtrics-release-notes:oracle-storyteller` | **Parked (unused since 0.12.0).** Formerly composed the separated `/oracle-release` design (a "safe to forward" client block + internal index, root assembled by `scripts/assemble_oracle_root.py`). Left in the repo in case that design is wanted again; `/oracle-release` now uses `internal-storyteller`. |
 | `medtrics-release-notes:copy-audit` | Sentence-level polish pass that runs between storyteller and ip-guard. Strips AI-sounding language, bloated verbs (`serves as`, `boasts a`, `helps to`), dead openings (`Furthermore`, `Moreover`), negative-parallelism patterns (`Not X. Y.`), decorative metaphor verbs (`mapped`, `surfaced`, `unpacked`), and engagement bait. Customer-facing only. |
 | `medtrics-release-notes:ip-guard` | Deterministic safety net that scans customer-facing output — the deploy markdown AND the composed Slack root + replies — for internal-system names, code-artifact jargon, MR identifiers, file paths, and architecture mechanism vocabulary. Blocks delivery on violation. Iterates with the storyteller + copy-audit up to 3 times to remediate. **Not** run against the internal-storyteller output — internal vocabulary is expected there. |
+| `medtrics-release-notes:kb-ledger` | Mem history for `/kb-articles`: the `KB Article Ledger` (one note per legacy feature ticket — article title, run, screenshots, tenant tally, prior article, files, tokens; plus one note per run) and the `KB Catalogue` (published Intercom articles, seeded once from the FAQ Content Planner export). Required by `/kb-articles`. Rendering, parsing, matching and the one-time seeds are `scripts/kb/kb_ledger.py`. |
+| `medtrics-release-notes:kb-capture` | Live screenshot capture on `demo.medtrics.sg` with Playwright: a **person** signs in once per persona (`kb_capture.py login`), the saved session is reused headless, one visit per surface, rings placed from the page's own element box, OCR-verified when tesseract is present. Covers session expiry (stop, keep shots, `resume.json`) and mapping surfaces in `scripts/kb/kb_routes.json`. |
 | `medtrics-release-notes:engineering-to-client` | Owns the client-copy voice rules. **Pipeline mode:** both release commands run it once over the analyzer blocks (after the analyzers, before composition / the Oracle IP guard) to write each card's client-facing title, finalize its `For clients:` paragraph (1–3 sentences, no jargon, no client names), confirm the `Clients:` value verbatim (`TBC` = platform-wide), and add a `CLIENT_FLAG` on any named-client item that is still unresolved. **Standalone mode:** paste engineering ticket blocks and get back only the plain-English client description per item. Never invents a capability, fix, or client code. |
 
 Two deterministic scripts back the pipeline gates: `scripts/ip_guard.py` (confidentiality) and `scripts/slack_lint.py` (mrkdwn correctness — bare `<@U…>` mentions, labeled links, no `**bold**`/`#`/fences, escaped `&` `<` `>`, blank line before section headers, and the root/reply char caps). Both run before the human preview, with a fix-and-relint loop (max 3 iterations).
@@ -81,6 +84,8 @@ The plugin reads Optimus + GitLab over HTTP (no git access needed). It only work
 | `SLACK_CHANNEL_INTERNAL` | `/release-slack` | channel id `C1BCUHXT9` (= `#dream-team`) — the combined post's destination |
 | `SLACK_CHANNEL_RELEASE` | no longer used | retired in 0.11.0 when the client-channel post was folded into the combined `#dream-team` message; safe to leave in `.env` |
 | `SLACK_BOT_TOKEN` | `/release-slack` | `xoxb-...` bot token. **NOT** a user token (`xoxp-`). The bot must be invited to `#dream-team`. |
+| `MEM_KB_LEDGER_COLLECTION` / `MEM_KB_CATALOGUE_COLLECTION` | optional | `/kb-articles` Mem collection names (defaults `KB Article Ledger` / `KB Catalogue`) |
+| `KB_SESSION_DIR` / `KB_OUTPUT_DIR` / `KB_FONT` | optional | `/kb-articles`: where demo sessions are saved (default `.kb-sessions/`, gitignored), the output root override, and the badge font |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | optional | Name of the Mem collection that receives the archive note for every posted release (see [Mem release archive](#mem-release-archive)). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. Shared by `/release-slack` and `/oracle-release`. The key is optional; the **Mem MCP connection is required** by both release commands |
 
 ## Slack bot setup (one-time, ~10 minutes)
@@ -298,6 +303,26 @@ Two things to know:
 
 There is none on disk. The posted root + replies are archived as one Mem note (see [Mem release archive](#mem-release-archive)); the only local files are the `/tmp/oracle_*` working files. The classic track (`gather_notes_data_optimus.py`, GitLab, `/release-slack`) is untouched by all of this.
 
+## KB articles
+
+`/kb-articles` drafts one KB article per shipped legacy feature ticket for the Intercom help centre, in the format defined by `scripts/kb/kb_format.py` (measured from the approved M1-1399 reference) and enforced by the gates in `scripts/kb/kb_validate.py`:
+
+| Gate | Refuses when |
+|---|---|
+| G1 schema | a required key is missing or the wrong shape |
+| G2 anatomy | a section can't be filled, the title isn't a task phrase (How to / What / Where / Using / Understanding, ≤ 90 chars), a screenshot has no caption, a consideration has no bold lead-in |
+| G3 evidence | a screenshot is unanchored, its label scored below 0.82, or the ringed label isn't the one the step prints in bold; `dom_box` anchors (no OCR) pass in a draft only |
+| G4 tenant | a frame was never screened; on publish, any frame that isn't CLEAR and human-confirmed |
+| G5 assets | a referenced image is not on disk |
+| G6 voice | client copy carries an internal term, MR reference, HTTP status, file path or lane key |
+| G7 mode | a draft has no provenance; a publish carries draft chrome or a missing screenshot |
+
+**How a run stays cheap.** Non-features and tickets the ledger already covers are dropped before any GitLab call. Tickets are placed on a surface by rule (backlog map, URL prefix in the diff, template path, module); only leftovers go to one batched Haiku call. Writers see trimmed inputs (description, acceptance criteria, UI strings added in the diff, routes) and shot *labels*, never images or full diffs; their fixed rules live in the agent body so every call shares the cached prefix. Evidence problems are fixed by script; only prose-gate failures go back to the writer, one article at a time, at most twice. One capture visit per surface, one LibreOffice call for all PDFs.
+
+**Before the first run** (once): sign in per persona (`python3 scripts/kb/kb_capture.py login --persona admin|faculty|learner`, a person at a screen — Claude never types passwords), seed the ledger from the October hand-run backlog (`kb_ledger.py seed-legacy`), and, when the FAQ Content Planner export is available, the catalogue (`kb_ledger.py seed-catalogue --csv kb2.csv`). `python3 scripts/kb/kb_doctor.py` shows what this machine can do: python-docx and Pillow are required; Playwright (screenshots), tesseract (OCR-verified anchors), LibreOffice (PDF) and pypdf (PDF checks) each degrade gracefully when absent.
+
+**Drafts only.** Publishing needs a person to confirm each screenshot is free of tenant data (`tenant_confirmed_by`), then `build_kb_doc.py publish`.
+
 ## Output paths
 
 Only the markdown-document commands write to disk, under `.claude/outputs/notes/` in your host repo:
@@ -310,6 +335,8 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
     └── integration-notes-2026-05-19.md
 ~~~
 
+`/kb-articles` writes its drafts to `$KB_OUTPUT_DIR`, else `/mnt/user-data/outputs` (Cowork), else `.claude/outputs/kb/`, under `kb-articles/<run_id>/` (per-ticket folders, `_provenance/`, `RUN-SUMMARY.md`, a zip).
+
 `/release-slack` and `/oracle-release` write **nothing** here. Their archive is the Mem note described in [Mem release archive](#mem-release-archive); their working files (`/tmp/release_slack_*`, `/tmp/oracle_*`) live in `/tmp/` only. (Versions before 0.20.0 also wrote `release-slack/` and `oracle/` transcript copies; those directories are no longer produced and any existing files in them can be deleted.)
 
 ## Install (Cowork)
@@ -321,23 +348,25 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.19.0**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.21.0**.
 
 ## Repository layout
 
 ```
 medtrics-release-notes/
 ├── .claude-plugin/plugin.json
-├── commands/             # /release-slack, /oracle-release, /deploy-notes, /integration-notes, /notes
-├── skills/               # storyteller, internal-storyteller, oracle-storyteller, copy-audit, ip-guard, engineering-to-client, dev-directory, pr-overrides, release-archive
+├── agents/               # kb-writer (Sonnet), kb-classifier (Haiku)
+├── commands/             # /release-slack, /oracle-release, /deploy-notes, /integration-notes, /notes, /kb-articles
+├── skills/               # storyteller, internal-storyteller, oracle-storyteller, copy-audit, ip-guard, engineering-to-client, dev-directory, pr-overrides, release-archive, kb-ledger, kb-capture
 ├── scripts/              # gather, prompts, slack resolve users, dev directory (Mem), pr overrides (Mem), release archive (Mem), slack upload (+ permalink), slack lint, ip guard, build
+│   └── kb/               # KB format, gates, renderer, capture, selection, assembly, PDF, packaging, ledger
 ├── tests/                # stdlib unittest suite (not shipped in .plugin)
 ├── CHANGELOG.md
 ├── LICENSE
 └── README.md
 ```
 
-All scripts are stdlib-only — no runtime dependencies. Run the test suite with:
+The release scripts are stdlib-only. `scripts/kb/` needs python-docx and Pillow, and optionally Playwright, tesseract, LibreOffice and pypdf (`scripts/kb/kb_doctor.py` lists them); tests that need them skip when they are missing. Run the test suite with:
 
 ```
 python3 -m unittest discover tests

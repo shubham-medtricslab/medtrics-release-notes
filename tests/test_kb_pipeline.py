@@ -1,0 +1,365 @@
+"""Tests for the /kb-articles pipeline scripts in scripts/kb/ — selection,
+placement, grouping, trimmed inputs, capture helpers, the tenant screen,
+annotation, spec assembly, rendering, packaging, PDF checks and usage
+apportioning. Hermetic: no browser, no Mem, no network. Tests that need
+python-docx, pypdf or Pillow skip when the module is missing.
+
+Pins: non-features and ledger-done tickets dropped before any agent; placement
+order (known ticket > URL prefix > unique module); multi-persona tickets get a
+capture visit per persona but one writer group; groups split at the cap;
+acceptance criteria split out and UI strings taken from ADDED lines only;
+expiry detection and resume plans; DOM box -> image box; dom_box only when
+OCR is absent and the DOM text matches exactly; the demo allowlist; the
+annotation ring is orange and the watermark red; an unverified shot becomes a
+missing-shot marker; label_as_written inferred from bold; prose failures split
+from evidence failures; the draft render carries no provenance by default.
+"""
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from kb_fixtures import golden, has_module, write_assets
+
+import kb_capture as C
+import kb_inputs as I
+import kb_select as SEL
+import kb_spec as SP
+import kb_usage as U
+import kb_validate as V
+import qa_gif_to_shots as Q
+
+ROUTES = {
+    "demo": {"base_url": "https://demo", "domain": "medtrics.sg", "login_path": "/accounts/login/",
+             "allow_strings": ["Medtrics Medical Center"], "home": {}},
+    "personas": {"admin": {"portal": "Administration portal", "audience": "Program Administrator"},
+                 "faculty": {"portal": "Personal portal", "audience": "Faculty"},
+                 "external": {"portal": "Link", "audience": "External", "no_session": True}},
+    "uncapturable_statuses": ["No demo data"],
+    "surfaces": [
+        {"surface": "Forms > Assignments", "persona": "admin", "also_personas": ["faculty"],
+         "url": "/forms/evaluation/assignments/", "recipe": [],
+         "match": {"modules": ["Evaluations & Forms"], "url_prefixes": ["/forms/evaluation/assignments/"],
+                   "template_globs": []}, "known_tickets": {"M1-10": "Captured"}},
+        {"surface": "Gradebook > Charts", "persona": "admin", "url": "/gradebook/grouped/", "recipe": [],
+         "match": {"modules": ["Gradebook"], "url_prefixes": ["/gradebook/grouped/"],
+                   "template_globs": ["src/templates/gradebook/*.html"]},
+         "known_tickets": {"M1-20": "No demo data"}},
+        {"surface": "Faculty > Notes", "persona": "faculty", "url": "", "recipe": [],
+         "match": {"modules": ["Notes"], "url_prefixes": [], "template_globs": []},
+         "known_tickets": {}},
+    ],
+}
+
+
+def issue(tid, ttype="feature", module="", diffs=(), description=""):
+    return {"identifier": tid, "title": f"Title {tid}", "task_type": ttype, "module": module,
+            "description": description,
+            "mrs": [{"diffs": [{"new_path": p, "diff": d} for p, d in diffs]}]}
+
+
+class Select(unittest.TestCase):
+    def test_filter_type_then_ledger(self):
+        kept, skipped = SEL.filter_issues(
+            [issue("M1-1", "bug"), issue("M1-2"), issue("M1-3", "critical_feature"), issue("M1-4")],
+            {"M1-2": {"status": "drafted"}, "M1-4": {"status": "partial"}})
+        self.assertEqual([i["identifier"] for i in kept], ["M1-3"])
+        self.assertEqual({s["ticket"]: s["reason"] for s in skipped},
+                         {"M1-1": "type: bug", "M1-2": "ledger: drafted", "M1-4": "ledger: partial"})
+        kept, _ = SEL.filter_issues([issue("M1-4")], {"M1-4": {"status": "partial"}},
+                                    retry_partial=True)
+        self.assertEqual(len(kept), 1)
+
+    def test_place_order(self):
+        s, how = SEL.place_issue(issue("M1-10"), ROUTES)
+        self.assertEqual((s["surface"], how), ("Forms > Assignments", "known"))
+        s, how = SEL.place_issue(issue("M1-30", diffs=[("src/x/urls.py", "+ path('gradebook/grouped/')")]),
+                                 ROUTES)
+        self.assertEqual((s["surface"], how), ("Gradebook > Charts", "url"))
+        s, how = SEL.place_issue(issue("M1-31", diffs=[("src/templates/gradebook/a.html", "+x")]), ROUTES)
+        self.assertEqual(how, "template")
+        s, how = SEL.place_issue(issue("M1-32", module="Notes"), ROUTES)
+        self.assertEqual((s["surface"], how), ("Faculty > Notes", "module"))
+        self.assertEqual(SEL.place_issue(issue("M1-33", module="Nope"), ROUTES), (None, None))
+
+    def test_capturability(self):
+        p = SEL._placement(issue("M1-20"), ROUTES["surfaces"][1], "known", ROUTES)
+        self.assertFalse(p["capturable"])
+        self.assertEqual(p["reason"], "no demo data")
+        p = SEL._placement(issue("M1-32"), ROUTES["surfaces"][2], "module", ROUTES)
+        self.assertEqual(p["reason"], "surface not mapped to a demo URL")
+
+    def test_group_multi_persona_and_cap(self):
+        s = ROUTES["surfaces"][0]
+        placements = [SEL._placement(issue(f"M1-{n}"), s, "rule", ROUTES) for n in range(100, 111)]
+        capture, writers, uncap = SEL.group(placements, ROUTES, max_group=8,
+                                            sessions={"admin": "valid"})
+        self.assertEqual([(c["persona"], len(c["tickets"])) for c in capture],
+                         [("admin", 11), ("faculty", 11)])
+        self.assertEqual([len(w["tickets"]) for w in writers], [8, 3])
+        self.assertTrue(all(w["persona"] == "admin" for w in writers))
+        self.assertEqual(capture[0]["session"], "valid")
+        self.assertEqual(uncap, [])
+
+    def test_classifier_bundle_and_merge(self):
+        text = SEL.classifier_bundle([issue("M1-40", description="x" * 900)], ROUTES)
+        self.assertIn("admin · Forms > Assignments", text)
+        self.assertIn("=== M1-40 ===", text)
+        placed = {"placements": [], "unplaced": ["M1-40", "M1-41", "M1-42"]}
+        answer = [{"ticket": "M1-40", "persona": "admin", "surface": "Gradebook > Charts", "has_ui": True},
+                  {"ticket": "M1-41", "has_ui": False},
+                  {"ticket": "M1-42", "persona": "admin", "surface": "Invented"}]
+        by_id = {t: issue(t) for t in ("M1-40", "M1-41", "M1-42")}
+        out = SEL.merge_classifier(placed, answer, ROUTES, by_id)
+        self.assertEqual(out["unplaced"], ["M1-42"])
+        self.assertEqual({p["ticket"]: p["capturable"] for p in out["placements"]},
+                         {"M1-40": True, "M1-41": False})
+
+
+class Inputs(unittest.TestCase):
+    def test_split_ac_quoted_and_added_strings(self):
+        desc = 'Add a "Filter to Selected" toggle.\n\nAcceptance criteria:\n- Shows "N selected"'
+        diff = ("+<button>Filter to Selected</button>\n"
+                "-<button>Old Label</button>\n"
+                "+    label=_('Show archived')\n"
+                "+ path('forms/picker/', view)\n")
+        i = issue("M1-1", description=desc,
+                  diffs=[("src/templates/x.html", diff), ("src/apps/forms/urls.py", "+ path('forms/picker/', v)")])
+        rec = I.build_input(i)
+        self.assertIn("Filter to Selected", rec["description"])
+        self.assertNotIn("Acceptance", rec["description"])
+        self.assertIn("N selected", rec["acceptance_criteria"])
+        self.assertIn("Filter to Selected", rec["ui_strings"])
+        self.assertIn("Show archived", rec["ui_strings"])
+        self.assertNotIn("Old Label", rec["ui_strings"])
+        self.assertEqual(rec["routes"], ["forms/picker/"])
+        self.assertEqual(rec["labels"][0], "Filter to Selected")
+
+    def test_cap_and_summary_reuse(self):
+        rec = I.build_input(issue("M1-1", description="word " * 5000), cap=1000)
+        self.assertLess(len(rec["description"]), 700)
+        rec = I.build_input(issue("M1-1", description="word " * 5000),
+                            {"CLIENT_TITLE": "T", "EXEC_SUMMARY": "S"}, cap=1000)
+        self.assertEqual(rec["client_summary"], "S")
+        self.assertLess(len(rec["description"]), 400)
+
+    def test_tests_and_migrations_ignored(self):
+        i = issue("M1-1", diffs=[("src/apps/x/tests/test_a.py", "+label='Nope'"),
+                                 ("src/apps/x/migrations/0001.py", "+verbose_name='Nope'")])
+        self.assertEqual(I.ui_strings(i), [])
+
+
+class Capture(unittest.TestCase):
+    def test_login_detection(self):
+        self.assertTrue(C.is_login_page("https://d/accounts/login/?next=/", False, "/accounts/login/"))
+        self.assertTrue(C.is_login_page("https://d/x", True, "/accounts/login/"))
+        self.assertFalse(C.is_login_page("https://d/administration/", False, "/accounts/login/"))
+
+    def test_box_scale(self):
+        self.assertEqual(C.to_image_box({"x": 10, "y": 20.4, "width": 100, "height": 30}, 2),
+                         (20, 41, 200, 60))
+
+    def test_resume_plan(self):
+        plan = {"run_id": "r", "capture_plan": [{"persona": "admin", "surface": "A"},
+                                                {"persona": "admin", "surface": "B"}]}
+        self.assertEqual([c["surface"] for c in C.resume_plan(plan, {("admin", "A")})["capture_plan"]],
+                         ["B"])
+
+    def test_evidence(self):
+        ev = C.shot_evidence("Save", "Save", (1, 2, 3, 4), None, False, "CLEAR", None)
+        self.assertEqual((ev["anchor"], ev["label_score"], ev["tenant"]), ("dom_box", 1.0, "CLEAR"))
+        self.assertIsNone(C.shot_evidence("Save", "Save draft", (1, 2, 3, 4), None, False, "CLEAR", None))
+        self.assertIsNone(C.shot_evidence("Save", "Save", (1, 2, 3, 4), None, True, "CLEAR", None))
+        ev = C.shot_evidence("Save", "Save", (1, 2, 3, 4), {"verdict": "FUZZY", "score": 0.9},
+                             False, "CLEAR", "REVIEW")
+        self.assertEqual((ev["anchor"], ev["tenant"]), ("label_box", "REVIEW"))
+        self.assertIsNone(C.shot_evidence("Save", "Save", (1, 2, 3, 4),
+                                          {"verdict": "MISS", "score": 0.4}, False, "CLEAR", None))
+
+
+class Screen(unittest.TestCase):
+    def test_allowlist(self):
+        raw = "Welcome to Medtrics Medical Center"
+        self.assertEqual(Q.screen_text(raw)["verdict"], "REVIEW")
+        self.assertEqual(Q.screen_text(raw, allow_strings=["medtrics medical center"])["verdict"], "CLEAR")
+
+    def test_block_and_course_codes(self):
+        self.assertEqual(Q.screen_text("x@kfshrc.edu.sa", "medtrics.sg")["verdict"], "BLOCK")
+        r = Q.screen_text("Course MCAP5010 starts")
+        self.assertEqual(r["verdict"], "REVIEW")
+        self.assertEqual(r["findings"][0]["kind"], "course_codes")
+
+    def test_worst(self):
+        self.assertEqual(Q.worst("CLEAR", "REVIEW"), "REVIEW")
+        self.assertEqual(Q.worst("BLOCK", "CLEAR"), "BLOCK")
+
+
+@unittest.skipUnless(has_module("PIL"), "Pillow not installed")
+class Annotate(unittest.TestCase):
+    def test_ring_badge_watermark(self):
+        import qa_annotate as A
+        from PIL import Image
+        im = Image.new("RGB", (1440, 900), "white")
+        out = A.annotate(im, A.anchor_from_box((700, 400, 120, 30)), number=3)
+        ring_x = 700 + 60 - (120 // 2 + 28)
+        self.assertEqual(out.getpixel((ring_x + 1, 415)), A.ACCENT)
+        self.assertNotEqual(A.ACCENT, A.RED)
+        wm = A.watermark(out.copy())
+        self.assertEqual(wm.getpixel((2, 2)), A.RED)
+        self.assertEqual(out.size, (1440, 900))   # no caption bar on the KB path
+
+    def test_sidebar_snap(self):
+        import qa_annotate as A
+        from PIL import Image
+        im = Image.new("RGB", (1440, 900), "white")
+        out = A.annotate(im, A.anchor_from_box((100, 400, 120, 30)), number=1)
+        # inside the badge disc, right of the glyph
+        self.assertEqual(out.getpixel((int(0.045 * 1440) + 12, 415)), A.ACCENT)
+
+    def test_font_is_scalable(self):
+        import qa_annotate as A
+        from PIL import ImageFont
+        self.assertIsInstance(A._font(20), ImageFont.FreeTypeFont)
+
+
+def prose(ticket="M1-1", shot="s1"):
+    g = golden()
+    return {"ticket": ticket, "title": g["title"], "steps_heading": "Steps",
+            "overview": g["overview"],
+            "steps": [{"text": "Click **Filter to Selected**.", "shot": shot, "caption": "The toggle"},
+                      {"text": "Click **Save**.", "shot": "missing"}],
+            "considerations": g["considerations"], "conclusion": g["conclusion"], "notes": []}
+
+
+class Spec(unittest.TestCase):
+    META = {"ticket": "M1-1", "audience": "Program Administrator", "portal": "Administration portal"}
+
+    def shot(self, frame="f.png", **kw):
+        s = {"shot_id": "s1", "ticket": "M1-1", "verified": True, "frame": frame,
+             "anchor": "dom_box", "label": "Filter to Selected", "label_score": 1.0,
+             "dom_box": [10, 10, 50, 20], "tenant": "CLEAR", "surface": "Forms"}
+        s.update(kw)
+        return s
+
+    def test_label_as_written(self):
+        self.assertEqual(SP.label_as_written("Badge reads **N selected**.", "2 selected"), "N selected")
+        self.assertIsNone(SP.label_as_written("Click **Save**.", "Save"))
+        self.assertIsNone(SP.label_as_written("Click **Other**.", "Save"))
+
+    def test_unverified_shot_becomes_missing(self):
+        spec = SP.build_spec(prose(shot="s9"), [self.shot()], self.META, "no demo data", ".",
+                             annotate=False)
+        self.assertEqual(spec["steps"][0]["missing_shot"], "screenshot s9 was not verified")
+        self.assertEqual(spec["steps"][1]["missing_shot"], "no demo data")
+
+    def test_split_failures(self):
+        fails = [V.Failure("G2", "title", "x"), V.Failure("G3", "step 1", "label 'x' is not printed in bold"),
+                 V.Failure("G3", "step 2", "label_score missing"), V.Failure("G5", "step 3", "image not found")]
+        evidence, prose_f = SP.split_failures(fails)
+        self.assertEqual([f.where for f in evidence], ["step 2", "step 3"])
+        self.assertEqual([f.gate for f in prose_f], ["G2", "G3"])
+
+    @unittest.skipUnless(has_module("PIL"), "Pillow not installed")
+    def test_assemble_annotates_and_passes(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            frame = Path(d) / "f.png"
+            Image.new("RGB", (2880, 1800), "white").save(frame)
+            spec, ok, prose_fails = SP.assemble_one(prose(), [self.shot(str(frame))], self.META,
+                                                    "no demo data", d)
+            self.assertTrue(ok, [str(f) for f in prose_fails])
+            self.assertTrue((Path(d) / "assets/M1-1/01.jpg").exists())
+            self.assertEqual(spec["steps"][0]["evidence"]["anchor"], "dom_box")
+            with Image.open(Path(d) / "assets/M1-1/01.jpg") as im:
+                self.assertEqual(im.width, 1200)
+
+    @unittest.skipUnless(has_module("PIL"), "Pillow not installed")
+    def test_evidence_failure_demoted_not_retried(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as d:
+            frame = Path(d) / "f.png"
+            Image.new("RGB", (1440, 900), "white").save(frame)
+            spec, ok, prose_fails = SP.assemble_one(prose(), [self.shot(str(frame), anchor="none")],
+                                                    self.META, None, d)
+            self.assertTrue(ok)
+            self.assertEqual(prose_fails, [])
+            self.assertIn("missing_shot", spec["steps"][0])
+
+    def test_writer_reply_parsing(self):
+        reply = ("noise\n---KB_SPECS_START---\n" + json.dumps({"ticket": "M1-1"}) + "\n" +
+                 json.dumps({"ticket": "M1-2"}) + "\n---KB_SPECS_END---\n")
+        self.assertEqual([o["ticket"] for o in SP.parse_writer_reply(reply)], ["M1-1", "M1-2"])
+
+    def test_bundle_lists_only_verified_shots(self):
+        g = {"group_id": "admin-01", "persona": "admin", "portal": "P", "audience": "A",
+             "tickets": ["M1-1", "M1-2"]}
+        text = SP.writer_bundle(g, {"M1-1": {"title": "T"}},
+                                {"M1-1": [self.shot(), self.shot(shot_id="s2", verified=False)]},
+                                {"M1-1": [{"id": "CX-1", "title": "How to X"}]},
+                                {"M1-2": "no demo data"})
+        self.assertIn("s1 · label", text)
+        self.assertNotIn("s2 ·", text)
+        self.assertIn("Prior articles (list only, do not merge): CX-1 How to X", text)
+        self.assertIn("none (no demo data)", text)
+
+
+@unittest.skipUnless(has_module("docx"), "python-docx not installed")
+class Render(unittest.TestCase):
+    def test_draft_has_no_provenance_by_default(self):
+        import build_kb_doc as B
+        from docx import Document
+        with tempfile.TemporaryDirectory() as d:
+            write_assets(d)
+            Path(d, "assets/01.jpg").unlink()
+            Path(d, "assets/02.jpg").unlink()
+            from PIL import Image
+            for n in ("01", "02"):
+                Image.new("RGB", (100, 60), "white").save(Path(d, f"assets/{n}.jpg"))
+            spec = golden()
+            spec["steps"][2]["missing_shot"] = "no demo data"
+            B.render(spec, Path(d, "a.docx"), "draft", root=d)
+            text = [p.text for p in Document(Path(d, "a.docx")).paragraphs]
+            self.assertNotIn("Provenance — strip before publishing", text)
+            self.assertIn("[Screenshot missing — no demo data]", text)
+            B.render(spec, Path(d, "b.docx"), "draft", root=d, provenance=True)
+            text = [p.text for p in Document(Path(d, "b.docx")).paragraphs]
+            self.assertIn("Provenance — strip before publishing", text)
+            B.render_provenance_md(spec, Path(d, "p.md"))
+            self.assertIn("| Step | Source |", Path(d, "p.md").read_text())
+
+
+@unittest.skipUnless(has_module("pypdf"), "pypdf not installed")
+class Pdf(unittest.TestCase):
+    def test_verify_reports_missing_text(self):
+        import kb_pdf as P
+        from pypdf import PdfWriter
+        with tempfile.TemporaryDirectory() as d:
+            w = PdfWriter()
+            w.add_blank_page(612, 792)
+            w.write(Path(d, "x.pdf"))
+            errs, _ = P.verify(Path(d, "x.pdf"), golden())
+            self.assertTrue(any("missing text" in e for e in errs))
+            self.assertTrue(any("images" in e for e in errs))
+            self.assertFalse(any("Letter" in e for e in errs))
+
+
+class Usage(unittest.TestCase):
+    def test_apportion(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "writer_admin-01.md").write_text(
+                "GROUP\n=== TICKET M1-1 ===\n" + "a" * 300 + "\n=== TICKET M1-2 ===\n" + "b" * 100)
+            groups = {"writer_groups": [{"group_id": "admin-01", "tickets": ["M1-1", "M1-2"]}]}
+            rows = [{"agent": "kb-writer", "scope": "admin-01", "model": "sonnet", "total_tokens": 4000},
+                    {"agent": "kb-writer", "scope": "retry:M1-2", "model": "sonnet", "total_tokens": 500},
+                    {"agent": "kb-classifier", "scope": "classify", "model": "haiku", "total_tokens": 200}]
+            per = U.apportion(rows, groups, d)
+            self.assertEqual(sum(per.values()), 4700)
+            self.assertGreater(per["M1-1"], per["M1-2"] - 500)
+            self.assertIsNone(U.cost(rows))
+
+
+if __name__ == "__main__":
+    unittest.main()

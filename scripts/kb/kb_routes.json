@@ -1,0 +1,1165 @@
+{
+ "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs.",
+ "demo": {
+  "base_url": "https://demo.medtrics.sg",
+  "domain": "medtrics.sg",
+  "login_path": "/accounts/login/",
+  "allow_strings": [
+   "Medtrics Medical Center",
+   "Medtrics",
+   "Geriatric",
+   "Internal Medicine",
+   "IM program"
+  ],
+  "home": {
+   "admin": "/administration/",
+   "faculty": "/",
+   "learner": "/"
+  }
+ },
+ "personas": {
+  "admin": {
+   "portal": "Administration portal",
+   "audience": "Program Administrator"
+  },
+  "faculty": {
+   "portal": "Personal portal",
+   "audience": "Faculty"
+  },
+  "learner": {
+   "portal": "Personal portal",
+   "audience": "Trainees"
+  },
+  "external": {
+   "portal": "External evaluator link",
+   "audience": "External evaluators",
+   "no_session": true
+  }
+ },
+ "uncapturable_statuses": [
+  "Needs SME",
+  "Needs setting enabled",
+  "No UI surface",
+  "No demo data"
+ ],
+ "surfaces": [
+  {
+   "surface": "Benefits > Account Requests",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/budgets/benefits/time-off/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Benefits & Time Off"
+    ],
+    "url_prefixes": [
+     "/budgets/benefits/time-off/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1397": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Benefits > Time Off",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/budgets/benefits/time-off/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Benefits & Time Off"
+    ],
+    "url_prefixes": [
+     "/budgets/benefits/time-off/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1245": "Partly captured",
+    "M1-1294": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Calendar > Institution events",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/administration/calendar/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Calendar"
+    ],
+    "url_prefixes": [
+     "/administration/calendar/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1446": "Needs admin pass"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Calendar > Schedule pickers",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/administration/calendar/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Calendar"
+    ],
+    "url_prefixes": [
+     "/administration/calendar/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "7ef9f192": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Cases > Templates",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/cases/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Case Logs"
+    ],
+    "url_prefixes": [
+     "/cases/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1336": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Curriculum > Courses and Sessions",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/vadministration/curriculum/courses/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [
+     "/vadministration/curriculum/courses/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1166": "Captured",
+    "M1-1387": "No demo data",
+    "M1-1346": "No demo data",
+    "M1-1310": "No demo data"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Curriculum > Distribution email",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/notifications/outbound/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [
+     "/notifications/outbound/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1555": "No UI surface"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Curriculum > Keywords",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/curriculum/ai_map/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [
+     "/curriculum/ai_map/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1384": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Curriculum > Map",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/curriculum/ai_map/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [
+     "/curriculum/ai_map/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1242": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Curriculum > Map export",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/reports/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Reports & Exports"
+    ],
+    "url_prefixes": [
+     "/reports/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1240": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Curriculum > Session roster report",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1385": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Curriculum > Session schedules",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "854f000c": "No demo data",
+    "M1-1221": "No demo data",
+    "M1-1065": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Curriculum > Setup > Migrate",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/administration/curriculum/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [
+     "/administration/curriculum/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1520": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Documents > Custom generation",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/administration/custom/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Documents & Resources"
+    ],
+    "url_prefixes": [
+     "/administration/custom/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1377": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Evaluations > Review and Sign",
+   "persona": "admin",
+   "also_personas": [
+    "faculty"
+   ],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "3aba78d8": "Needs admin pass",
+    "M1-1337": "Needs admin pass"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Evaluations > Summary PDF",
+   "persona": "admin",
+   "also_personas": [
+    "faculty"
+   ],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1308": "Ready to capture"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Form Builder > Step 1",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1413": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Form Builder > Step 3",
+   "persona": "admin",
+   "also_personas": [
+    "faculty"
+   ],
+   "url": "/forms/evaluation/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1154": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Form Builder > confidentiality",
+   "persona": "admin",
+   "also_personas": [
+    "faculty"
+   ],
+   "url": "/forms/evaluation/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1143": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Form Builder > questions",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "b56dfd07": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Form Builder > scoring",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/templates/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/templates/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1292": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Forms > Assignment rules",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/assignments/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/assignments/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1304": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Forms > Assignments",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/assignments/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/assignments/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1341": "Partly captured",
+    "M1-1296": "Captured",
+    "M1-1196": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Forms > Manual assignment",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/assignments/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/assignments/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1435": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Forms > Manual completion",
+   "persona": "admin",
+   "also_personas": [
+    "faculty"
+   ],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1402": "No demo data",
+    "M1-1228": "Needs admin pass"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Gradebook > Charts",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/gradebook/grouped/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Gradebook"
+    ],
+    "url_prefixes": [
+     "/gradebook/grouped/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1511": "No demo data",
+    "M1-1486": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Gradebook > Score types",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/gradebook/grouped/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Gradebook"
+    ],
+    "url_prefixes": [
+     "/gradebook/grouped/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1219": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Optimizer > Preference page",
+   "persona": "admin",
+   "also_personas": [
+    "learner"
+   ],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Optimizer"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1177": "No UI surface"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Performance > CCC",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/performance/competency/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Performance & Competency"
+    ],
+    "url_prefixes": [
+     "/performance/competency/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M2-242": "Partly captured",
+    "M1-1156": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Performance > Competency graphs",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/performance/competency/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Performance & Competency"
+    ],
+    "url_prefixes": [
+     "/performance/competency/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "191cea67": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Performance > Competency tab",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/performance/competency/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Performance & Competency"
+    ],
+    "url_prefixes": [
+     "/performance/competency/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "6ac6a213": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Portfolios",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Portfolios"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1445": "Partly captured",
+    "M1-1224": "No UI surface"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Programs > Permissions",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/institutions/sites/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Users & Permissions"
+    ],
+    "url_prefixes": [
+     "/institutions/sites/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1164": "Partly captured",
+    "019eb2f0": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Reports > CSV export",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/reports/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Reports & Exports"
+    ],
+    "url_prefixes": [
+     "/reports/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1392": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Reports > Curriculum Changes",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/reports/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Reports & Exports"
+    ],
+    "url_prefixes": [
+     "/reports/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1381": "No UI surface"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Reports > Engagement dashboard",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/reports/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Reports & Exports"
+    ],
+    "url_prefixes": [
+     "/reports/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1283": "Needs admin pass"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Reports > Evaluation reports",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/reports/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Reports & Exports"
+    ],
+    "url_prefixes": [
+     "/forms/evaluation/reports/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-989": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Resources > Folders",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/resources/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Documents & Resources"
+    ],
+    "url_prefixes": [
+     "/resources/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1351": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Rotations > Deactivation",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/rotations/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Schedules & Rotations"
+    ],
+    "url_prefixes": [
+     "/rotations/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1364": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Rotations > Supervisors",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/rotations/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Schedules & Rotations"
+    ],
+    "url_prefixes": [
+     "/rotations/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1209": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Schedules > Course Schedules",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Schedules & Rotations"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1255": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Schedules > Rotation requests",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Schedules & Rotations"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1267": "Captured",
+    "M1-1098": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Settings > Curriculum",
+   "persona": "admin",
+   "also_personas": [
+    "learner"
+   ],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Calendar",
+     "Curriculum & Sessions"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1352": "Partly captured",
+    "M1-1167": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Settings > Work-Hours",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/work-hours/violations/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Work Hours"
+    ],
+    "url_prefixes": [
+     "/work-hours/violations/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1382": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Users > Groups",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/users/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Users & Permissions"
+    ],
+    "url_prefixes": [
+     "/users/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1301": "Partly captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Users > list",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/users/",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Users & Permissions"
+    ],
+    "url_prefixes": [
+     "/users/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1107": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Work Hours > Log details",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Work Hours"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1173": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "External evaluator link",
+   "persona": "external",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "GEN-21668": "Needs SME"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Faculty > Case log review",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Case Logs"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1477": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Faculty > Evaluation form",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1225": "Ready to capture"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Faculty > Gradebook",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Gradebook"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1256": "No demo data"
+   },
+   "demo_status": "uncapturable"
+  },
+  {
+   "surface": "Faculty > My Evaluations",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1197": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Faculty > Notes",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Notes"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1415": "Ready to capture",
+    "M1-1405": "Captured",
+    "MED-6": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Faculty > Schedule list",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Schedules & Rotations"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1151": "Captured",
+    "M1-1133": "Captured",
+    "M1-1320": "Captured",
+    "M1-1198": "Captured",
+    "M1-1074": "Captured",
+    "M1-1078": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Faculty > Scholarly Activity",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Portfolios"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1125": "Captured"
+   },
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Settings > Evaluations",
+   "persona": "faculty",
+   "also_personas": [],
+   "url": "",
+   "recipe": [],
+   "match": {
+    "modules": [
+     "Evaluations & Forms"
+    ],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1210": "Needs setting enabled"
+   },
+   "demo_status": "uncapturable"
+  }
+ ]
+}

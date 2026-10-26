@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-26
+
+### Added
+- **`/kb-articles`** — one Intercom KB article draft (.docx + PDF + Intercom
+  markdown) per shipped legacy **feature** ticket, in the Medtrics KB format
+  (`medtrics-kb-article/1.1`). Modes `tickets <ids>`, `since <date>` (from the
+  Mem release archive) and `pending`; flags `dry-run`, `--force`,
+  `--retry-partial`, `--no-capture`, `--yes`. Plan: `KB-PLAN.md` (v1).
+- **`scripts/kb/`** — the KB format standard brought into the plugin
+  (`kb_format.py`, `kb_validate.py` gates G1–G7, `build_kb_doc.py`,
+  `qa_gif_to_shots.py`, `qa_annotate.py`) plus the pipeline: `kb_select.py`
+  (feature filter, rule placement, persona × surface grouping, ≤ 8 tickets per
+  writer group), `kb_inputs.py` (trimmed writer inputs: AC, added UI strings,
+  routes — never full diffs), `kb_capture.py` (Playwright on the demo tenant with
+  per-persona saved sessions a person signs in to; DOM box anchors; exit 3 +
+  `resume.json` on expiry), `kb_spec.py` (writer bundles, assembly, annotation,
+  evidence-vs-prose failure split, single-article retries), `kb_pdf.py` (one
+  LibreOffice batch + pypdf verification), `kb_package.py` (output folder,
+  `RUN-SUMMARY.md`, zip, `run.json`), `kb_ledger.py` (Mem ledger/catalogue notes,
+  `todo`/`since`/`pending`, prior-article matching, one-time seeds),
+  `kb_usage.py` (token apportioning), `kb_doctor.py` (dependency check), and
+  `kb_routes.json` (56 surfaces seeded from the October hand-run backlog).
+- **`agents/`** — the plugin's first agents, each with a pinned model:
+  `kb-writer` (Sonnet; Read + Write, used only on `/tmp/kb/**`) and
+  `kb-classifier` (Haiku; Read).
+- Skills **`kb-ledger`** and **`kb-capture`**.
+- `gather_notes_data_optimus.py`: `--task-types` drops other task types before
+  any GitLab lookup; each issue now carries `module` (additive).
+- Tests: `test_kb_validate.py` (one deliberate mutation per gate rule),
+  `test_kb_ledger.py`, `test_kb_pipeline.py`; `test_build_plugin.py` extended.
+
+### Changed (relative to the hand-run KB code in `extra/`)
+- Draft renders no longer print the provenance appendix unless `--provenance`
+  is passed; `build_kb_doc.py provenance` writes it as a sidecar.
+- New `dom_box` anchor, accepted in drafts only, for environments without
+  tesseract (G3 refuses it on publish). G7 refuses a publish with a missing
+  screenshot; drafts print `[Screenshot missing — <reason>]`.
+- Rings are orange per `kb_format.py` with no caption bar; red is only the
+  watermark. Badges near the left edge snap onto the sidebar. Fonts fall back
+  through `KB_FONT` → DejaVu → Arial → Pillow's scalable default.
+- Tenant screen: demo allowlist, DOM-text screening, worst-of merge; course
+  codes are now matched on the original-case text (they never matched before
+  because the OCR text was lowercased first).
+- `find_label_box` no longer needs pandas.
+
+### Build
+- `extra/`, `.kb-sessions/` and `KB-PLAN.md` are excluded from the bundle and
+  asserted absent; `scripts/kb/kb_format.py` and `agents/kb-writer.md` are
+  asserted present.
+
 ## [0.20.0] - 2026-09-03
 
 ### Changed

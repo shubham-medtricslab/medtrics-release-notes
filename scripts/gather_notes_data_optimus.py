@@ -329,6 +329,14 @@ def resolve_identifier(task):
     return task.get("task_identifier") or task.get("linear_identifier") or task["id"][:8]
 
 
+def _module_name(task):
+    """Optimus has exposed the module as a string or an object; '' when absent."""
+    m = task.get("module") or task.get("module_name") or ""
+    if isinstance(m, dict):
+        m = m.get("name") or m.get("title") or ""
+    return str(m)
+
+
 def task_to_issue(task, include_description=False):
     """Convert an Optimus task to the normalized issue format."""
     identifier = resolve_identifier(task)
@@ -377,6 +385,8 @@ def task_to_issue(task, include_description=False):
         "assignee_email": assignee_email,
         "assignee_id": assignee_id,
         "task_type": task.get("type") or task.get("task_type") or "",
+        # Product module (additive) — /kb-articles places tickets by it.
+        "module": _module_name(task),
         "mrs": [],
     }
 
@@ -510,6 +520,9 @@ def main():
     parser.add_argument("--include-description", action="store_true", help="Include Optimus task descriptions")
     parser.add_argument("--filter-integration", action="store_true", help="Filter diffs to integration-relevant files")
     parser.add_argument("--dry-run", action="store_true", help="Print summary and exit")
+    parser.add_argument("--task-types", default="",
+                        help="Comma-separated Optimus task types to keep (e.g. feature,critical_feature); "
+                             "others are dropped BEFORE any GitLab lookup")
     args = parser.parse_args()
 
     if args.mode in ("milestone", "mr", "tickets") and not args.parameter:
@@ -546,6 +559,12 @@ def main():
     except OptimusError as e:
         log(f"ERROR: Optimus gather failed: {e}")
         sys.exit(1)
+
+    if args.task_types and args.mode != "mr":
+        keep = {t.strip().lower() for t in args.task_types.split(",") if t.strip()}
+        before = len(issues)
+        issues = [i for i in issues if (i.get("task_type") or "").lower() in keep]
+        log(f"  --task-types kept {len(issues)} of {before} tasks")
 
     if args.mode == "mr":
         # MR mode: no Optimus query, create a synthetic issue from the MR
