@@ -50,8 +50,13 @@ def _write(path, obj):
 
 
 # ── filter ───────────────────────────────────────────────────────────────────
-def filter_issues(issues, ledger_index, force=False, retry_partial=False):
-    """(kept, skipped). Type first — a bug never costs a ledger lookup."""
+NO_CODE = "code missing: no merge request found"
+
+
+def filter_issues(issues, ledger_index, force=False, retry_partial=False, allow_no_code=False):
+    """(kept, skipped). Type first — a bug never costs a ledger lookup. A
+    feature with no merge request is skipped (not a stop): there is no shipped
+    change to describe yet, and the next run picks it up once the code lands."""
     done = set(L.DONE)
     if retry_partial:
         done.discard("partial")
@@ -64,6 +69,9 @@ def filter_issues(issues, ledger_index, force=False, retry_partial=False):
         st = (ledger_index.get(i["identifier"].upper()) or {}).get("status")
         if st in done and not force:
             skipped.append({"ticket": i["identifier"], "reason": f"ledger: {st}"})
+            continue
+        if not allow_no_code and not (i.get("mrs") or []):
+            skipped.append({"ticket": i["identifier"], "reason": NO_CODE})
             continue
         kept.append(i)
     return kept, skipped
@@ -216,15 +224,26 @@ def cmd_filter(a):
     data = _load(a.data)
     idx = _load(a.ledger_index) if a.ledger_index and Path(a.ledger_index).exists() else {}
     issues = data.get("issues") or []
+    pre = [{"ticket": d["identifier"], "reason": f"type: {d.get('task_type') or 'unknown'}"}
+           for d in data.get("dropped") or []]          # gather --task-types drops
     if a.ids:
         # The release hand-off reuses the release's data file, which holds every
-        # ticket of the release; draft only the ids asked for.
-        want = {t.strip().upper() for t in a.ids.split(",") if t.strip()}
-        issues = [i for i in issues if i["identifier"].upper() in want]
-    kept, skipped = filter_issues(issues, idx, a.force, a.retry_partial)
+        # ticket of the release; draft only the ids asked for. An id that came
+        # back from neither list was not found (gather's best-match fallback
+        # may have returned a different ticket — that one is not drafted).
+        want = [t.strip() for t in a.ids.split(",") if t.strip()]
+        wanted = {t.upper() for t in want}
+        issues = [i for i in issues if i["identifier"].upper() in wanted]
+        seen = {i["identifier"].upper() for i in issues} | {d["ticket"].upper() for d in pre}
+        pre = [d for d in pre if d["ticket"].upper() in wanted]
+        pre += [{"ticket": t, "reason": "not found in Optimus"} for t in want
+                if t.upper() not in seen]
+    kept, skipped = filter_issues(issues, idx, a.force, a.retry_partial, a.allow_no_code)
+    skipped = pre + skipped
     _write(a.out, {**data, "issues": kept, "skipped": skipped})
-    n_type = sum(1 for s in skipped if s["reason"].startswith("type"))
-    print(f"kept {len(kept)} features · skipped: {n_type} (type) · {len(skipped) - n_type} (ledger)")
+    n = {k: sum(1 for s in skipped if s["reason"].startswith(k))
+         for k in ("type", "ledger", "code missing", "not found")}
+    print(f"kept {len(kept)} features · skipped: " + " · ".join(f"{v} ({k})" for k, v in n.items() if v))
     emit({"ok": True, "action": "filter", "kept": len(kept), "skipped": len(skipped)})
     return 0
 
@@ -288,6 +307,8 @@ def main(argv=None):
     s = sub.add_parser("filter"); s.add_argument("--data", required=True)
     s.add_argument("--ledger-index"); s.add_argument("--out", required=True)
     s.add_argument("--ids", help="comma-separated: keep only these tickets")
+    s.add_argument("--allow-no-code", action="store_true",
+                   help="draft features that have no merge request too")
     s.add_argument("--force", action="store_true"); s.add_argument("--retry-partial", action="store_true")
     s = sub.add_parser("place"); s.add_argument("--data", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--out", required=True)

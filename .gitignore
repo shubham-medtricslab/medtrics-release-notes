@@ -12,3 +12,4 @@ node_modules/
 .claude/settings.local.json
 .kb-sessions/
 .kb-env/
+.env-kb-login

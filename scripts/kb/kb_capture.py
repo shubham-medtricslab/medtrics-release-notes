@@ -6,9 +6,12 @@ A human signs in ONCE per persona with `login`; the browser's storage state is
 saved and every later run reuses it headless. Nothing here ever types a
 password, and the command never runs `login` itself.
 
-  login   --persona admin|faculty|learner
-          Opens a visible browser at the demo sign-in page and waits for the
-          person to sign in, then saves <session-dir>/<persona>.json.
+  login   --persona admin|faculty|learner [--env-file [.env-kb-login]]
+          With --env-file: fills the sign-in form from the credentials file
+          (KB_<PERSONA>_EMAIL / KB_<PERSONA>_PASSWORD, or KB_EMAIL / KB_PASSWORD)
+          headless. Without it: a visible browser waits for a person to sign
+          in. Either way saves <session-dir>/<persona>.json. A person (or their
+          scheduler) runs this; /kb-articles never does.
   check   For each persona: valid | expired | missing (one cheap page load).
   run     --plan groups.json --inputs inputs.json
           Walks the capture plan persona by persona, surface by surface. One
@@ -183,25 +186,89 @@ def _find(page, label):
     return None, "", False
 
 
+LOGIN_FILE = ".env-kb-login"
+
+
+def read_login_file(path):
+    """KEY=value pairs from the credentials file; {} when it is missing.
+    Values are never printed."""
+    out = {}
+    p = Path(path)
+    if not p.exists():
+        return out
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip().removeprefix("export ").strip()
+        out[k] = v.strip().strip("'\"")
+    return out
+
+
+def creds_for(persona, kv):
+    """(email, password) for a persona: KB_<PERSONA>_EMAIL / _PASSWORD, else
+    the shared KB_EMAIL / KB_PASSWORD. (None, None) when either is missing."""
+    p = persona.upper()
+    email = kv.get(f"KB_{p}_EMAIL") or kv.get("KB_EMAIL")
+    password = kv.get(f"KB_{p}_PASSWORD") or kv.get("KB_PASSWORD")
+    return (email, password) if email and password else (None, None)
+
+
+def _fill_login(page, email, password):
+    """The sign-in form on the capture site: #user_email, #user_password,
+    optional #stay_logged, then the Sign In button."""
+    page.fill("#user_email", email)
+    page.fill("#user_password", password)
+    if page.locator("#stay_logged").count():
+        page.check("#stay_logged")
+    page.get_by_role("button", name="Sign In").click()
+
+
 def cmd_login(a):
+    """Save a persona's session. With --env-file the form is filled from the
+    credentials file (headless unless --headed); without it a visible browser
+    waits for a person to sign in. Run by a person or their scheduler —
+    /kb-articles never runs it."""
     routes = json.loads(Path(a.routes).read_text())
     demo = routes["demo"]
     d = session_dir(a.session_dir)
     d.mkdir(parents=True, exist_ok=True)
+    email = password = None
+    if a.env_file:
+        kv = read_login_file(a.env_file)
+        if not kv:
+            emit({"ok": False, "action": "login", "issue": "login_file_missing",
+                  "error": f"{a.env_file} not found or empty — add KB_{a.persona.upper()}_EMAIL "
+                           f"and KB_{a.persona.upper()}_PASSWORD (or KB_EMAIL / KB_PASSWORD)"})
+            return 1
+        email, password = creds_for(a.persona, kv)
+        if not email:
+            emit({"ok": False, "action": "login", "issue": "login_creds_missing",
+                  "error": f"no credentials for {a.persona} in {a.env_file}"})
+            return 1
     with _playwright()() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=bool(email) and not a.headed)
         ctx = browser.new_context(viewport=VIEWPORT)
         page = ctx.new_page()
         page.goto(demo["base_url"] + demo["login_path"])
-        print(f"Sign in as the {a.persona} capture account in the browser window. "
-              f"Waiting up to {LOGIN_WAIT_S // 60} minutes…")
+        if email:
+            _fill_login(page, email, password)
+            wait_s = 60
+        else:
+            print(f"Sign in as the {a.persona} capture account in the browser window. "
+                  f"Waiting up to {LOGIN_WAIT_S // 60} minutes…")
+            wait_s = LOGIN_WAIT_S
         t0 = time.time()
-        while time.time() - t0 < LOGIN_WAIT_S:
+        while time.time() - t0 < wait_s:
             page.wait_for_timeout(2000)
             if not _expired(page, demo["login_path"]):
                 break
         else:
-            emit({"ok": False, "action": "login", "error": "timed out waiting for sign-in"})
+            browser.close()
+            emit({"ok": False, "action": "login", "issue": "login_failed",
+                  "error": "still on the sign-in page — check the credentials"
+                           if email else "timed out waiting for sign-in"})
             return 1
         out = d / f"{a.persona}.json"
         ctx.storage_state(path=str(out))
@@ -351,6 +418,9 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("login"); s.add_argument("--persona", required=True,
                                                 choices=("admin", "faculty", "learner"))
+    s.add_argument("--env-file", nargs="?", const=LOGIN_FILE,
+                   help=f"fill the form from this credentials file (default {LOGIN_FILE})")
+    s.add_argument("--headed", action="store_true", help="show the browser even with --env-file")
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--session-dir")
     s = sub.add_parser("check"); s.add_argument("--routes", default=str(DEFAULT_ROUTES))
     s.add_argument("--session-dir"); s.add_argument("--out")

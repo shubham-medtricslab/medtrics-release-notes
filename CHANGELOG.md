@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-10-26
+
+### Added
+- **`/kb-articles --kb-queue <ids>`** — adds tickets straight to the KB Queue
+  (no capture, no agents, no GitLab) and prints one row per id: queued, already
+  queued, or why not. `/kb-articles pending` drafts them later. Backed by
+  `gather_notes_data_optimus.py --no-mrs` (Optimus only) and
+  `kb_ledger.py enqueue --ids`.
+- **Sign-in from `.env-kb-login`.** `kb_capture.py login --env-file` fills the
+  capture site's form (`KB_<PERSONA>_EMAIL` / `_PASSWORD`, or `KB_EMAIL` /
+  `KB_PASSWORD`) headless and saves the session. Run by a person or their
+  scheduler — never by `/kb-articles`. A missing file is reported as an issue at
+  Step 0 (`kb_doctor.py --setup`). The file is gitignored and never bundled.
+- **End-of-run table for every ticket the run was given** (in chat and at the
+  top of `RUN-SUMMARY.md`): done with its files and screenshot status, or not
+  done and why — code missing, not a feature, not found in Optimus, already has
+  an article, or the error (`kb_package.py --requested`).
+
+### Changed
+- Capture site is now `https://medtrics.medtricslab.com` (sign-in at
+  `/users/login/`); the surface paths in `kb_routes.json` are unchanged.
+- A feature with no merge request is skipped as "code missing" and the run
+  continues (`--allow-no-code` drafts it anyway); an id Optimus doesn't return is
+  listed as "not found in Optimus" instead of silently vanishing (including when
+  Optimus's search falls back to a different ticket).
+- `gather_notes_data_optimus.py --task-types` records the tickets it dropped
+  (`dropped` in the output) so callers can say why.
+
 ## [0.22.2] - 2026-10-26
 
 ### Fixed

@@ -21,6 +21,7 @@ can't place) and `kb-writer` (Sonnet, one call per writer group, all in parallel
 /kb-articles M1-1520,M1-1256                # these tickets (non-features are skipped)
 /kb-articles since 2026-10-01                # legacy tickets released on/after a date (from the Mem release archive)
 /kb-articles pending                         # everything on the KB queue + every released legacy feature with no article yet
+/kb-articles --kb-queue M1-1520,M1-1609      # only ADD these to the KB Queue; `pending` drafts them later
 /kb-articles M1-1520 dry-run                 # show the plan and exit — no agents, no capture, no files
 ```
 
@@ -33,6 +34,7 @@ Flags (combine with any mode):
 | `--retry-partial` | Re-draft `partial` tickets (drafts that had missing screenshots) |
 | `--no-capture` | Skip the browser; every article is drafted with missing-screenshot markers |
 | `--yes` | Don't wait for confirmation at the plan preview |
+| `--allow-no-code` | Also draft features that have no merge request (skipped by default as "code missing") |
 | `--from-release` | Set only by `/release-slack --kb` (Step 9c) with an id list: reuse that release's `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` instead of gathering again, and mark the tickets' queue notes drained afterwards |
 
 **Two ways in.** Run it yourself (an id list, `since`, `pending`), or let
@@ -40,6 +42,19 @@ Flags (combine with any mode):
 posted: that release's feature tickets are put on the KB queue and this command
 starts in `--from-release` mode, shows its plan and asks y/n. Say no and they
 stay queued for a later `/kb-articles pending`.
+
+## Queue only: `--kb-queue <ids>`
+
+Adds tickets to the KB Queue and stops — no capture, no agents, no files. It
+needs only Optimus (no GitLab) and Mem:
+
+1. Mem probe and the queue + ledger collections, as in Step 0 (no setup step).
+2. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids> --task-types feature,critical_feature --no-mrs --output $RUN/data.json`
+3. `python3 $K/kb_ledger.py enqueue --data $RUN/data.json --source manual --date $TODAY --ids <ids> --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json --out $RUN/queue_writes.json`
+4. Perform the `create_note` writes (kb-ledger skill), then show the table the
+   script printed — one row per id: queued, already queued, or why not (not a
+   feature, not found in Optimus, already has an article). `/kb-articles
+   pending` drafts them later.
 
 ## Pipeline overview
 
@@ -175,11 +190,13 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids>
     --include-description --task-types feature,critical_feature --output $RUN/data.json
 ```
 
-Then, either way:
+Then, either way (a feature with no merge request is **skipped, not a stop**
+— "code missing" — and so is an id Optimus doesn't return; both show in the
+end-of-run table):
 
 ```bash
 $KB_PY $K/kb_select.py filter --data $RUN/data.json --ledger-index $RUN/ledger_index.json \
-    --ids <ids> --out $RUN/filtered.json [--force] [--retry-partial]
+    --ids <ids> --out $RUN/filtered.json [--force] [--retry-partial] [--allow-no-code]
 ```
 
 ### Step 2 — Place
@@ -218,7 +235,10 @@ uncapturable list, prior-article hits, and an estimate — writer calls =
 number of groups, classifier calls = 0 or 1, input size from `kb_inputs`.
 
 For every persona whose session is `missing` or `expired`, print the line a
-person must run (never run it yourself):
+person (or their scheduler) must run — it signs in from `.env-kb-login`. Never
+run it yourself: Claude does not enter passwords:
+`<folder>/.kb-env/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona <p> --env-file .env-kb-login`
+Without the file, the same command minus `--env-file` opens a browser for a person to sign in:
 `<folder>/.kb-env/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona <p>`
 (on a machine with a screen; any Python with Playwright works too).
 Its tickets will be drafted without screenshots this run.
@@ -297,7 +317,7 @@ it actually used.
 ```bash
 $KB_PY $K/kb_usage.py report --run-dir $RUN --groups $RUN/groups.json
 $KB_PY $K/kb_package.py --run-dir $RUN --groups $RUN/groups.json --specs-dir $RUN/specs \
-    [--failed-after-retry <ids>]
+    --requested <every id the run was given> [--failed-after-retry <ids>]
 ```
 
 This renders every article (.docx + Intercom .md), converts all of them to PDF in
@@ -328,7 +348,10 @@ Perform those `update_note` writes the same way. A ticket that was never queued
 
 ### Step 10 — Report
 
-Print the output folder and zip path, the counts line from `kb_package`, the
+**Show the every-ticket table `kb_package` printed** — one row per ticket the run
+was given: done (with its files and whether screenshots are missing) or not
+done and why (code missing, not a feature, not found in Optimus, already has an
+article, or the error). Then the output folder and zip path, the counts line, the
 uncapturable and left-by-expiry lists, any `login` lines a person must run, the
 PDF warnings, and the token estimate. Offer the files for download.
 
@@ -347,6 +370,9 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Capture exits 3 mid-run | Continue with what was captured; summary lists the rest |
 | Writer returns nothing for a ticket | `failed` in summary and ledger; retried next run |
 | Gates still refuse after two retries | `failed`; no file written for it |
+| A ticket has no merge request | Skipped as "code missing"; the run continues; listed in the end table |
+| An id isn't returned by Optimus | Listed as "not found in Optimus"; the run continues |
+| `.env-kb-login` missing | Step 0 reports it as an issue; personas without a saved session get no screenshots |
 | Ledger write fails | One retry, then print the note for a manual paste |
 | Queue drain write fails | One retry, then say so; the next `pending` sees the ledger note and skips the ticket anyway |
 | `--from-release` files missing (`/tmp/release_slack_*` gone) | Fall back to the normal gather for the same ids |

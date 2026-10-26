@@ -335,5 +335,20 @@ class PendingQueue(unittest.TestCase):
         self.assertEqual(line_no_q, "M1-1,M1-3")
 
 
+class QueueReport(unittest.TestCase):
+    def test_rows_for_every_requested_id(self):
+        data = {"issues": [{"identifier": "M1-1", "task_type": "feature"},
+                           {"identifier": "M1-2", "task_type": "feature"},
+                           {"identifier": "M1-3", "task_type": "feature"}],
+                "dropped": [{"identifier": "M1-4", "task_type": "bug"}]}
+        ledger = {"M1-2": {"status": "drafted"}}
+        queue = {"M1-3": {"status": "pending"}}
+        recs = [{"ticket": "M1-1"}]
+        rows = {r["ticket"]: r["result"] for r in
+                L.enqueue_report(["M1-1", "M1-2", "M1-3", "M1-4", "M1-5"], data, ledger, queue, recs)}
+        self.assertEqual(rows, {"M1-1": "queued", "M1-2": "not queued", "M1-3": "already queued",
+                                "M1-4": "not queued", "M1-5": "not queued"})
+
+
 if __name__ == "__main__":
     unittest.main()

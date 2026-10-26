@@ -91,7 +91,8 @@ def _ticket_record(tid, spec, status, files, run_id, date, tokens, group):
     return rec
 
 
-def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=None):
+def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=None,
+            requested=()):
     run_id = groups["run_id"]
     date = date or groups.get("date") or _dt.date.today().isoformat()
     out = Path(out_root) / "kb-articles" / run_id
@@ -159,6 +160,7 @@ def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=No
         left = sorted({c["surface"] for c in json.loads(resume.read_text())["capture_plan"]})
     run = {"run_id": run_id, "date": date, "mode": groups.get("mode"), "totals": totals,
            "records": records, "left_by_expiry": left, "output": str(out),
+           "tickets": ticket_table(requested, rows, groups, out),
            "usage": [{"agent": u["agent"], "scope": u["scope"], "model": u["model"],
                       "total_tokens": u["total_tokens"]} for u in usage.get("rows", [])]}
     (Path(run_dir) / "run.json").write_text(json.dumps(run, indent=1, ensure_ascii=False))
@@ -172,6 +174,49 @@ def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=No
     return run, out, pdf_note
 
 
+DONE_STATUSES = ("drafted", "partial")
+
+
+def ticket_table(requested, rows, groups, out_dir):
+    """One row per ticket the run was given, in the order given: done or not,
+    the files, and why. Tickets the run was not given but drafted anyway
+    (e.g. from `pending`) are appended."""
+    by_row = {r["ticket"].upper(): r for r in rows}
+    skipped = {s["ticket"].upper(): s["reason"] for s in groups.get("skipped") or []}
+    uncap = {u["ticket"].upper(): u["reason"] for u in groups.get("uncapturable") or []}
+    order = list(requested) + [r["ticket"] for r in rows
+                               if r["ticket"].upper() not in {t.upper() for t in requested}]
+    table = []
+    for t in order:
+        r = by_row.get(t.upper())
+        if r and r["status"] in DONE_STATUSES:
+            files = "—"
+            if r["files"]:
+                stem = Path(r["files"][0]).stem
+                exts = [e for e in (".docx", ".pdf", ".md") if (Path(out_dir) / t / f"{stem}{e}").exists()]
+                files = f"{t}/{stem} ({', '.join(exts)})"
+            detail = ("all screenshots" if r["status"] == "drafted"
+                      else f"screenshots missing: {uncap.get(t.upper(), 'not captured')}")
+            table.append({"ticket": t, "done": "done", "files": files, "detail": detail})
+        elif r:
+            table.append({"ticket": t, "done": "not done", "files": "—",
+                          "detail": f"error: {r['reason'] or 'gates refused after retries'}"})
+        elif t.upper() in skipped:
+            reason = skipped[t.upper()]
+            done = "already done" if reason.startswith("ledger:") else "not done"
+            table.append({"ticket": t, "done": done, "files": "—", "detail": reason})
+        else:
+            table.append({"ticket": t, "done": "not done", "files": "—",
+                          "detail": "error: not reached (no writer output)"})
+    return table
+
+
+def table_md(table):
+    L_ = ["| Ticket | Result | Files | Details |", "|---|---|---|---|"]
+    L_ += [f"| {r['ticket']} | {r['done']} | {r['files']} | {r['detail']} |" for r in table]
+    return L_
+
+
 def summary_md(run, rows, groups, pdf_report, pdf_note, usage):
     t = run["totals"]
     L_ = [f"# KB articles — run {run['run_id']}", "",
@@ -179,6 +224,7 @@ def summary_md(run, rows, groups, pdf_report, pdf_note, usage):
           f"(screenshots missing) · {t['failed']} failed · {t['skipped']} skipped**", "",
           "Every file here is a **draft**. Publishing needs a person to check each screenshot "
           "for tenant data (`tenant_confirmed_by`).", "",
+          "## Every ticket", ""] + table_md(run["tickets"]) + ["",
           "## Articles", "", "| Ticket | Status | Title | Persona · surface | Shots | Tenant | Prior article |",
           "|---|---|---|---|---|---|---|"]
     for r, rec in zip(rows, run["records"]):
@@ -224,15 +270,20 @@ def main(argv=None):
     ap.add_argument("--specs-dir", required=True)
     ap.add_argument("--failed-after-retry", default="")
     ap.add_argument("--output-root")
+    ap.add_argument("--requested", default="",
+                    help="comma-separated ids the run was given, for the every-ticket table")
     a = ap.parse_args(argv)
     try:
         groups = json.loads(Path(a.groups).read_text())
         run, out, pdf_note = package(a.run_dir, groups, a.specs_dir,
                                      a.output_root or output_root(),
-                                     [t for t in a.failed_after_retry.split(",") if t])
+                                     [t for t in a.failed_after_retry.split(",") if t],
+                                     requested=[t.strip() for t in a.requested.split(",") if t.strip()])
     except (OSError, json.JSONDecodeError, KeyError) as e:
         emit({"ok": False, "error": f"{type(e).__name__}: {e}"})
         return 1
+    for line in table_md(run["tickets"]):
+        print(line)
     t = run["totals"]
     print(f"wrote {out} · {t['drafted']} drafted · {t['partial']} partial · {t['failed']} failed"
           + (f" · {pdf_note}" if pdf_note else ""))

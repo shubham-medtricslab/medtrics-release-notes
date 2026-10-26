@@ -522,6 +522,8 @@ def main():
     parser.add_argument("--include-description", action="store_true", help="Include Optimus task descriptions")
     parser.add_argument("--filter-integration", action="store_true", help="Filter diffs to integration-relevant files")
     parser.add_argument("--dry-run", action="store_true", help="Print summary and exit")
+    parser.add_argument("--no-mrs", action="store_true",
+                        help="Optimus only: skip the GitLab MR lookup and diffs")
     parser.add_argument("--task-types", default="",
                         help="Comma-separated Optimus task types to keep (e.g. feature,critical_feature); "
                              "others are dropped BEFORE any GitLab lookup")
@@ -565,6 +567,8 @@ def main():
     if args.task_types and args.mode != "mr":
         keep = {t.strip().lower() for t in args.task_types.split(",") if t.strip()}
         before = len(issues)
+        dropped = [{"identifier": i["identifier"], "task_type": i.get("task_type") or ""}
+                   for i in issues if (i.get("task_type") or "").lower() not in keep]
         issues = [i for i in issues if (i.get("task_type") or "").lower() in keep]
         log(f"  --task-types kept {len(issues)} of {before} tasks")
 
@@ -586,6 +590,19 @@ def main():
             "state": mr_data.get("state", ""),
             "mrs": [],
         })
+
+    # --- Optimus only (no GitLab): enough to classify and queue tickets ---
+    if args.no_mrs and args.mode != "mr":
+        for issue in issues:
+            issue["mrs"] = []
+        output = {"mode": args.mode, "parameter": args.parameter or "", "issues": issues}
+        if args.task_types:
+            output["dropped"] = dropped
+        with open(args.output, "w") as f:
+            json.dump(output, f, indent=2)
+        log(f"\nData written to {args.output} (Optimus only, no MR lookup)")
+        log(f"  {len(issues)} issues")
+        return
 
     # --- Find MRs for each issue ---
     def _mr_entry(mr):
@@ -673,6 +690,8 @@ def main():
         "parameter": args.parameter or "",
         "issues": issues,
     }
+    if args.task_types and args.mode != "mr":
+        output["dropped"] = dropped     # so callers can say why a ticket is absent
     with open(args.output, "w") as f:
         json.dump(output, f, indent=2)
     log(f"\nData written to {args.output}")

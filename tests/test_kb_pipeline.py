@@ -85,6 +85,26 @@ class Select(unittest.TestCase):
             self.assertEqual([i["identifier"] for i in out["issues"]], ["M1-2"])
             self.assertEqual(out["skipped"], [{"ticket": "M1-3", "reason": "type: bug"}])
 
+    def test_no_code_skipped_not_found_listed(self):
+        no_code = {"identifier": "M1-50", "title": "T", "task_type": "feature", "mrs": []}
+        kept, skipped = SEL.filter_issues([no_code, issue("M1-51")], {})
+        self.assertEqual([i["identifier"] for i in kept], ["M1-51"])
+        self.assertEqual(skipped, [{"ticket": "M1-50", "reason": SEL.NO_CODE}])
+        kept, _ = SEL.filter_issues([no_code], {}, allow_no_code=True)
+        self.assertEqual(len(kept), 1)
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "data.json").write_text(json.dumps(
+                {"issues": [issue("M1-51"), issue("M1-99")],
+                 "dropped": [{"identifier": "M1-52", "task_type": "bug"}]}))
+            import contextlib, io
+            with contextlib.redirect_stdout(io.StringIO()):
+                SEL.main(["filter", "--data", f"{d}/data.json", "--ids", "M1-51,M1-52,M1-53",
+                          "--out", f"{d}/f.json"])
+            out = json.loads(Path(d, "f.json").read_text())
+            self.assertEqual([i["identifier"] for i in out["issues"]], ["M1-51"])
+            self.assertEqual({s["ticket"]: s["reason"] for s in out["skipped"]},
+                             {"M1-52": "type: bug", "M1-53": "not found in Optimus"})
+
     def test_place_order(self):
         s, how = SEL.place_issue(issue("M1-10"), ROUTES)
         self.assertEqual((s["surface"], how), ("Forms > Assignments", "known"))
@@ -190,6 +210,25 @@ class Capture(unittest.TestCase):
         self.assertEqual((ev["anchor"], ev["tenant"]), ("label_box", "REVIEW"))
         self.assertIsNone(C.shot_evidence("Save", "Save", (1, 2, 3, 4),
                                           {"verdict": "MISS", "score": 0.4}, False, "CLEAR", None))
+
+
+class Login(unittest.TestCase):
+    def test_login_file_and_creds(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d, ".env-kb-login")
+            self.assertEqual(C.read_login_file(f), {})
+            f.write_text("# capture accounts\nKB_ADMIN_EMAIL=a@x.com\nexport KB_ADMIN_PASSWORD='p w'\n"
+                         "KB_EMAIL=s@x.com\nKB_PASSWORD=shared\n")
+            kv = C.read_login_file(f)
+            self.assertEqual(C.creds_for("admin", kv), ("a@x.com", "p w"))
+            self.assertEqual(C.creds_for("faculty", kv), ("s@x.com", "shared"))
+            self.assertEqual(C.creds_for("admin", {"KB_ADMIN_EMAIL": "a"}), (None, None))
+
+    def test_routes_point_at_capture_site(self):
+        import json as _j
+        r = _j.loads((Path(C.__file__).parent / "kb_routes.json").read_text())
+        self.assertEqual(r["demo"]["base_url"], "https://medtrics.medtricslab.com")
+        self.assertEqual(r["demo"]["login_path"], "/users/login/")
 
 
 class Screen(unittest.TestCase):
@@ -356,6 +395,30 @@ class Pdf(unittest.TestCase):
             self.assertTrue(any("missing text" in e for e in errs))
             self.assertTrue(any("images" in e for e in errs))
             self.assertFalse(any("Letter" in e for e in errs))
+
+
+class TicketTable(unittest.TestCase):
+    def test_every_requested_ticket_has_a_row(self):
+        import kb_package as PK
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, "M1-1").mkdir()
+            for e in (".docx", ".md"):
+                Path(d, "M1-1", f"CX-DRAFT_How to A{e}").write_text("x")
+            rows = [{"ticket": "M1-1", "status": "partial", "files": ["CX-DRAFT_How to A.docx"],
+                     "reason": ""},
+                    {"ticket": "M1-2", "status": "failed", "files": [], "reason": "G2 title"}]
+            groups = {"skipped": [{"ticket": "M1-3", "reason": SEL.NO_CODE},
+                                  {"ticket": "M1-4", "reason": "ledger: drafted"}],
+                      "uncapturable": [{"ticket": "M1-1", "reason": "no demo data"}]}
+            t = {r["ticket"]: r for r in PK.ticket_table(["M1-1", "M1-2", "M1-3", "M1-4", "M1-5"],
+                                                         rows, groups, d)}
+            self.assertEqual(t["M1-1"]["done"], "done")
+            self.assertEqual(t["M1-1"]["files"], "M1-1/CX-DRAFT_How to A (.docx, .md)")
+            self.assertIn("no demo data", t["M1-1"]["detail"])
+            self.assertEqual((t["M1-2"]["done"], t["M1-2"]["detail"]), ("not done", "error: G2 title"))
+            self.assertEqual(t["M1-3"]["detail"], SEL.NO_CODE)
+            self.assertEqual(t["M1-4"]["done"], "already done")
+            self.assertTrue(t["M1-5"]["detail"].startswith("error"))
 
 
 class Usage(unittest.TestCase):

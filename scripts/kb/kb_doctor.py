@@ -44,6 +44,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 ENV_DIR = ".kb-env"
+LOGIN_FILE = ".env-kb-login"   # capture-site credentials; checked every run (cheap)
 MARKER = "kb-setup.json"
 BROWSERS = "ms-playwright"
 
@@ -279,6 +280,12 @@ def cmd_setup(a):
     missing = [n for n in list(PY_PACKAGES) + list(SYSTEM) + [CHROMIUM] if not working(marker, n)]
     if missing and not skipped:
         print("  missing (recorded, not retried until --setup --force): " + ", ".join(missing))
+    issues = []
+    if not (home(a.home) / LOGIN_FILE).exists():
+        issues.append(f"{LOGIN_FILE} not found in {home(a.home)} — screenshots need a saved "
+                      "session; add the file and run kb_capture.py login --env-file")
+    for i in issues:
+        print(f"  ISSUE {i}")
     print(f"KB_PY={marker['py']}")
     print(f"PLAYWRIGHT_BROWSERS_PATH={marker['browsers']}")
     sess = sessions(a.session_dir)
@@ -286,7 +293,8 @@ def cmd_setup(a):
         print(f"  WARN {w}")
     print("---KB_DOCTOR_RESULT---")
     print(json.dumps({"ok": ok, "py": marker["py"], "skipped": skipped,
-                      "items": marker["items"], "sessions": sess, "warnings": _warnings()}))
+                      "items": marker["items"], "sessions": sess, "issues": issues,
+                      "warnings": _warnings()}))
     return 0 if ok else 1
 
 

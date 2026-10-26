@@ -1,6 +1,6 @@
 ---
 name: kb-capture
-description: Live screenshot capture for /kb-articles on the demo tenant (demo.medtrics.sg) with a scripted Playwright browser — the human-only sign-in per persona, where the saved sessions live, how a run walks persona × surface, what happens when a session expires mid-run, and how to map a new surface or recipe in kb_routes.json. Claude never types a password and never runs the sign-in itself.
+description: Live screenshot capture for /kb-articles on the capture site (medtrics.medtricslab.com) with a scripted Playwright browser — the sign-in per persona from .env-kb-login (run by a person or their scheduler, never by Claude), where the saved sessions live, how a run walks persona × surface, what happens when a session expires mid-run, and how to map a new surface or recipe in kb_routes.json. Claude never types a password and never runs the sign-in itself.
 ---
 
 # KB Capture (Playwright on the demo tenant)
@@ -9,24 +9,32 @@ Screenshots are the slow, expensive part of a KB article. `scripts/kb/kb_capture
 takes them without a model: one visit per surface, every ticket on that surface
 sharing the frame, and each ring placed from the page's own element box.
 
-## Sign-in — a person, once per persona
+## Sign-in — once per persona, from `.env-kb-login`
 
-The capture accounts' passwords are never given to Claude, and Claude never
-types one. A person runs, in a terminal on a machine with a screen, using the Python that
-`kb_doctor.py --setup` created in the folder (`<folder>/.kb-env/bin/python`) or
-any Python with Playwright installed:
+The capture site is `https://medtrics.medtricslab.com` (sign-in page
+`/users/login/`). Credentials live in `.env-kb-login` in the folder selected in
+Cowork (gitignored, never bundled):
 
-```bash
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona admin
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona faculty
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona learner
+```
+KB_ADMIN_EMAIL=…        KB_ADMIN_PASSWORD=…
+KB_FACULTY_EMAIL=…      KB_FACULTY_PASSWORD=…
+KB_LEARNER_EMAIL=…      KB_LEARNER_PASSWORD=…
+# or one shared account: KB_EMAIL=…  KB_PASSWORD=…
 ```
 
-Each opens a visible browser at the demo sign-in page and waits up to ten
-minutes for the person to sign in, then saves the session to
-`$KB_SESSION_DIR/<persona>.json` (default `.kb-sessions/` in the working folder,
-mode 600). When `/kb-articles` finds a persona's session missing or expired, it
-**prints the line above and moves on** — it does not run it.
+A person — or their own scheduler — runs, per persona:
+
+```bash
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona admin --env-file .env-kb-login
+```
+
+It fills the form headless, waits until the site leaves the sign-in page, and
+saves the session to `$KB_SESSION_DIR/<persona>.json` (default `.kb-sessions/`,
+mode 600). Without `--env-file` it opens a visible browser and waits for a
+person to sign in instead. **Claude never runs `login` and never reads or
+prints the file's values** — `/kb-articles` only checks the file exists (a
+missing file is reported as an issue at Step 0) and prints this command when a
+session is missing or expired.
 
 Session files are credentials:
 - never put them in Mem, the outputs folder, a zip, chat, or git (`.kb-sessions/`

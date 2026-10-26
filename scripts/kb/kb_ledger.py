@@ -433,6 +433,31 @@ def enqueue_records(issues, summaries, ledger_index, queue_index, source, date, 
     return recs, ids
 
 
+def enqueue_report(requested, data, ledger, queue, recs):
+    """One row per requested id for `/kb-articles --kb-queue`: queued, already
+    queued, or why not."""
+    issues = {i["identifier"].upper(): i for i in data.get("issues") or []}
+    dropped = {d["identifier"].upper(): d.get("task_type") for d in data.get("dropped") or []}
+    new = {r["ticket"].upper() for r in recs}
+    rows = []
+    for t in requested:
+        k = t.upper()
+        if k in new:
+            res, why = "queued", "added to the KB Queue"
+        elif k in dropped or (k in issues and issues[k].get("task_type") not in FEATURE_TYPES):
+            res, why = "not queued", f"not a feature (type: {dropped.get(k) or issues[k].get('task_type') or 'unknown'})"
+        elif k not in issues:
+            res, why = "not queued", "not found in Optimus"
+        elif (ledger.get(k) or {}).get("status") in DONE:
+            res, why = "not queued", f"already has an article (ledger: {ledger[k]['status']})"
+        elif (queue.get(k) or {}).get("status") == "pending":
+            res, why = "already queued", "pending on the KB Queue"
+        else:
+            res, why = "not queued", "unknown"
+        rows.append({"ticket": t, "result": res, "detail": why})
+    return rows
+
+
 def drain_writes(tickets, queue_notes, run_id, date):
     """update-writes flipping every pending queue note of `tickets` to drained."""
     want = {t.strip().upper() for t in tickets if t.strip()}
@@ -657,15 +682,24 @@ def cmd_enqueue(a):
     except ValueError as e:
         emit({"ok": False, "action": "enqueue", "error": str(e)})
         return 1
-    issues = json.loads(Path(a.data).read_text()).get("issues") or []
+    data = json.loads(Path(a.data).read_text())
+    issues = data.get("issues") or []
     sums = RA.parse_summaries(Path(a.summaries).read_text()) \
         if a.summaries and Path(a.summaries).exists() else []
     queue = queue_index(load_dump(a.queue_notes))
-    recs, ids = enqueue_records(issues, sums, ledger_index(load_dump(a.ledger_notes)),
+    ledger = ledger_index(load_dump(a.ledger_notes))
+    recs, ids = enqueue_records(issues, sums, ledger,
                                 queue, a.source, date, a.ts, _dt.date.today().isoformat())
     _write_json(a.out, [{"action": "create", "collection": "queue",
                          "title": queue_title(r), "content": render_queue_note(r)} for r in recs])
     print(",".join(ids))
+    if a.ids:
+        rows = enqueue_report([t.strip() for t in a.ids.split(",") if t.strip()],
+                              data, ledger, queue, recs)
+        print("| Ticket | Result | Details |")
+        print("|---|---|---|")
+        for r in rows:
+            print(f"| {r['ticket']} | {r['result']} | {r['detail']} |")
     emit({"ok": True, "action": "enqueue", "queued": len(recs),
           "already_queued": len(ids) - len(recs), "tickets": ids,
           "skipped": len(issues) - len(ids)})
@@ -727,6 +761,7 @@ def main(argv=None):
     s.add_argument("--summaries"); s.add_argument("--source", required=True)
     s.add_argument("--date", required=True); s.add_argument("--ts")
     s.add_argument("--ledger-notes"); s.add_argument("--queue-notes")
+    s.add_argument("--ids", help="comma-separated ids asked for: print a per-ticket table")
     s.add_argument("--out", required=True)
     s = sub.add_parser("drain"); s.add_argument("--tickets", required=True)
     s.add_argument("--queue-notes", required=True); s.add_argument("--run-id", required=True)

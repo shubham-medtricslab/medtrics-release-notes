@@ -1,9 +1,9 @@
 {
  "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs.",
  "demo": {
-  "base_url": "https://demo.medtrics.sg",
-  "domain": "medtrics.sg",
-  "login_path": "/accounts/login/",
+  "base_url": "https://medtrics.medtricslab.com",
+  "domain": "medtricslab.com",
+  "login_path": "/users/login/",
   "allow_strings": [
    "Medtrics Medical Center",
    "Medtrics",
