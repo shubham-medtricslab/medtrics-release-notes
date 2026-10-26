@@ -384,7 +384,9 @@ def task_to_issue(task, include_description=False):
         "assignee_name": assignee_name,
         "assignee_email": assignee_email,
         "assignee_id": assignee_id,
-        "task_type": task.get("type") or task.get("task_type") or "",
+        # The integration API names the classification `product_type`; `type` /
+        # `task_type` are kept for older payload shapes.
+        "task_type": task.get("product_type") or task.get("type") or task.get("task_type") or "",
         # Product module (additive) — /kb-articles places tickets by it.
         "module": _module_name(task),
         "mrs": [],

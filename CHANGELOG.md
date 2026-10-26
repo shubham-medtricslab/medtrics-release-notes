@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-10-26
+
+### Fixed
+- **Every ticket looked typeless to `/kb-articles`.** The Optimus integration
+  API carries the classification as `product_type` (e.g. M1-1609 →
+  `feature`), but `gather_notes_data_optimus.py` only read `type` /
+  `task_type`, so the features-only filters (`--task-types`, `kb_select.py
+  filter`, `kb_ledger.py enqueue`) dropped everything as `type: unknown`. It now
+  reads `product_type` first, keeping the older names as fallbacks.
+
 ## [0.22.1] - 2026-10-26
 
 ### Added
