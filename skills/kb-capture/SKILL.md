@@ -12,12 +12,14 @@ sharing the frame, and each ring placed from the page's own element box.
 ## Sign-in — a person, once per persona
 
 The capture accounts' passwords are never given to Claude, and Claude never
-types one. A person runs, in a terminal on a machine with a screen:
+types one. A person runs, in a terminal on a machine with a screen, using the Python that
+`kb_doctor.py --setup` created in the folder (`<folder>/.kb-env/bin/python`) or
+any Python with Playwright installed:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona admin
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona faculty
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona learner
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona admin
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona faculty
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona learner
 ```
 
 Each opens a visible browser at the demo sign-in page and waits up to ten
@@ -34,7 +36,7 @@ Session files are credentials:
 ## Check
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py check --out /tmp/kb/<run>/sessions.json
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py check --out /tmp/kb/<run>/sessions.json
 ```
 
 One page load per persona → `valid | expired | missing`. The command runs it
@@ -43,7 +45,7 @@ before grouping so the plan preview shows which personas can be captured.
 ## Run
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py run \
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py run \
     --plan /tmp/kb/<run>/groups.json --inputs /tmp/kb/<run>/inputs.json \
     --out-dir /tmp/kb/<run>/shots
 ```
@@ -73,7 +75,7 @@ reached are drafted with missing-screenshot markers and recorded as `partial` �
 and the run summary names the persona to sign in again. After signing in:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py run --plan /tmp/kb/<run>/shots/resume.json …
+$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py run --plan /tmp/kb/<run>/shots/resume.json …
 ```
 
 or simply re-run `/kb-articles … --retry-partial` later.

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-26
+
+### Added
+- **One-time automatic setup for `/kb-articles`.** Step 0 now runs
+  `kb_doctor.py --setup` in the folder selected in Cowork. The first run creates
+  `.kb-env/` there, installs what is missing (python-docx, Pillow, numpy, pypdf,
+  pytesseract, Playwright and its Chromium into `.kb-env/`; tesseract,
+  LibreOffice and the Carlito font via apt-get or Homebrew when allowed), and
+  records the result in `.kb-env/kb-setup.json`. Later runs read that file and
+  only confirm the installed files are still there (~0.2 s, no imports, no
+  network). Pieces that could not be installed are recorded and not retried
+  until `--setup --force`; pieces that vanished (reset sandbox) are reinstalled
+  alone. Every KB script runs with the printed `KB_PY`.
+- `.kb-env/` is gitignored and excluded from the bundle.
+
 ## [0.22.0] - 2026-10-26
 
 ### Added

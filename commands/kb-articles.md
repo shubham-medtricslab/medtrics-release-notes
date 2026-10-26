@@ -113,12 +113,23 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    line and stop. This applies to `dry-run`.
 2. **.env** — `OPTIMUS_API_KEY`, `GITLAB_TOKEN`, `GITLAB_PROJECT_ID` present, else
    list the missing keys and stop.
-3. **Doctor** — `python3 $K/kb_doctor.py`. Exit 1 (python-docx or Pillow missing)
-   → show its install lines and stop. Otherwise keep its output for the preview:
-   no Playwright means `--no-capture` is implied; no tesseract means draft-only
-   anchors; no LibreOffice means no PDF this run. Show any `WARN` line (e.g.
+3. **Setup (once per folder)** — `python3 $K/kb_doctor.py --setup`, run from the
+   folder selected in Cowork. The first time, it creates `.kb-env/` there,
+   installs what is missing (Python packages and Playwright's Chromium into
+   `.kb-env/`; tesseract, LibreOffice and the Carlito font through apt-get or
+   Homebrew when it is allowed to), and records the result in
+   `.kb-env/kb-setup.json`. Every later run reads that file and only confirms the
+   installed pieces are still on disk — it prints `KB setup: already done … —
+   skipping the checks.` and takes well under a second. It never asks; a piece it
+   could not install is recorded as unavailable and not retried (say so once in
+   the preview; `--setup --force` retries).
+   Set `KB_PY` to the `KB_PY=` line it prints and run **every** `$K` script below
+   with `$KB_PY`. Exit 1 (python-docx, Pillow or numpy unavailable) → show its
+   output and stop. Otherwise keep it for the preview: no Playwright/Chromium
+   means `--no-capture` is implied; no tesseract means draft-only anchors; no
+   LibreOffice means no PDF this run. Show any `WARN` line (e.g.
    `CLAUDE_CODE_SUBAGENT_MODEL` overriding the pinned models).
-4. **Collections** — `python3 $K/kb_ledger.py resolve`, then resolve the ledger,
+4. **Collections** — `$KB_PY $K/kb_ledger.py resolve`, then resolve the ledger,
    catalogue and queue collections (and, for `since`/`pending`, the release
    archive) by name per the `kb-ledger` skill, and save the dumps under `$RUN/`
    (`ledger_notes.json`, `catalogue_notes.json`, `queue_notes.json`,
@@ -127,23 +138,23 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
 ### Step 1 — Select
 
 ```bash
-python3 $K/kb_ledger.py index --ledger-notes $RUN/ledger_notes.json --out $RUN/ledger_index.json
+$KB_PY $K/kb_ledger.py index --ledger-notes $RUN/ledger_notes.json --out $RUN/ledger_index.json
 ```
 
 Ticket ids:
 - an id list (`M1-1520,M1-1256`, comma-separated, no keyword) → as given. Anything
   that is not `pending` or `since <date>` is read as the id list.
-- `since <date>` → `python3 $K/kb_ledger.py since --archive-notes $RUN/archive_notes.json --date <date>`
-- `pending` → `python3 $K/kb_ledger.py pending --archive-notes $RUN/archive_notes.json --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json [--retry-partial]`
+- `since <date>` → `$KB_PY $K/kb_ledger.py since --archive-notes $RUN/archive_notes.json --date <date>`
+- `pending` → `$KB_PY $K/kb_ledger.py pending --archive-notes $RUN/archive_notes.json --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json [--retry-partial]`
   (the queue first-class, the release archive as the safety net), then
-  `python3 $K/kb_ledger.py queue-summaries --queue-notes $RUN/queue_notes.json --out $RUN/summaries.txt`
+  `$KB_PY $K/kb_ledger.py queue-summaries --queue-notes $RUN/queue_notes.json --out $RUN/summaries.txt`
   so queued tickets reuse the client title and summary their release wrote.
 
 Then drop what the ledger already covers **before** the gather — a done ticket
 must never cost a GitLab call (`pending` already did this):
 
 ```bash
-python3 $K/kb_ledger.py todo --ids <ids> --ledger-notes $RUN/ledger_notes.json [--force] [--retry-partial]
+$KB_PY $K/kb_ledger.py todo --ids <ids> --ledger-notes $RUN/ledger_notes.json [--force] [--retry-partial]
 ```
 
 No ids left → print `Nothing to draft — every
@@ -167,14 +178,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids>
 Then, either way:
 
 ```bash
-python3 $K/kb_select.py filter --data $RUN/data.json --ledger-index $RUN/ledger_index.json \
+$KB_PY $K/kb_select.py filter --data $RUN/data.json --ledger-index $RUN/ledger_index.json \
     --ids <ids> --out $RUN/filtered.json [--force] [--retry-partial]
 ```
 
 ### Step 2 — Place
 
 ```bash
-python3 $K/kb_select.py place --data $RUN/filtered.json --out $RUN/placed.json --bundle $RUN/classifier.md
+$KB_PY $K/kb_select.py place --data $RUN/filtered.json --out $RUN/placed.json --bundle $RUN/classifier.md
 ```
 
 Only if it reports `unplaced` > 0: spawn ONE Task with
@@ -184,19 +195,19 @@ Only if it reports `unplaced` > 0: spawn ONE Task with
 --scope classify --model haiku`), then:
 
 ```bash
-python3 $K/kb_select.py classifier-merge --placed $RUN/placed.json \
+$KB_PY $K/kb_select.py classifier-merge --placed $RUN/placed.json \
     --answer $RUN/classifier_answer.txt --data $RUN/filtered.json
 ```
 
 ### Step 3 — Prepare
 
 ```bash
-python3 $K/kb_capture.py check --out $RUN/sessions.json          # skip with --no-capture / no Playwright
-python3 $K/kb_select.py group --placed $RUN/placed.json --sessions $RUN/sessions.json \
+$KB_PY $K/kb_capture.py check --out $RUN/sessions.json          # skip with --no-capture / no Playwright
+$KB_PY $K/kb_select.py group --placed $RUN/placed.json --sessions $RUN/sessions.json \
     --run-id $RUN_ID --date $TODAY --mode <ids|since|pending> --out $RUN/groups.json
-python3 $K/kb_ledger.py match --data $RUN/filtered.json --catalogue-notes $RUN/catalogue_notes.json \
+$KB_PY $K/kb_ledger.py match --data $RUN/filtered.json --catalogue-notes $RUN/catalogue_notes.json \
     --ledger-notes $RUN/ledger_notes.json --out $RUN/priors.json
-python3 $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json [--summaries $RUN/summaries.txt]
+$KB_PY $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json [--summaries $RUN/summaries.txt]
 ```
 
 ### Step 4 — Preview
@@ -208,7 +219,8 @@ number of groups, classifier calls = 0 or 1, input size from `kb_inputs`.
 
 For every persona whose session is `missing` or `expired`, print the line a
 person must run (never run it yourself):
-`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona <p>`.
+`<folder>/.kb-env/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona <p>`
+(on a machine with a screen; any Python with Playwright works too).
 Its tickets will be drafted without screenshots this run.
 
 `dry-run` → stop here. Otherwise ask `Draft these N articles? (y/n)` unless `--yes`.
@@ -219,7 +231,7 @@ Skip with `--no-capture` or when Playwright is missing (write `{"shots": []}` to
 `$RUN/shots/shots.json`). Otherwise:
 
 ```bash
-python3 $K/kb_capture.py run --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
+$KB_PY $K/kb_capture.py run --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
 ```
 
 Exit 3 = a session expired: say which persona, and **continue** — the shots
@@ -229,7 +241,7 @@ summary lists what was left. Never retry the sign-in.
 ### Step 6 — Write
 
 ```bash
-python3 $K/kb_spec.py bundle --groups $RUN/groups.json --inputs $RUN/inputs.json \
+$KB_PY $K/kb_spec.py bundle --groups $RUN/groups.json --inputs $RUN/inputs.json \
     --shots $RUN/shots/shots.json --priors $RUN/priors.json --out-dir $RUN
 ```
 
@@ -244,19 +256,19 @@ client voice), prompt:
 After each returns, log its usage:
 
 ```bash
-python3 $K/kb_usage.py add --run-dir $RUN --agent kb-writer --scope <group_id> --model sonnet \
+$KB_PY $K/kb_usage.py add --run-dir $RUN --agent kb-writer --scope <group_id> --model sonnet \
     --tokens <total_tokens> --duration-ms <ms> --tool-uses <n>
 ```
 
 If a writer replied with `---KB_SPECS_START---` blocks instead of writing files,
 save the reply to `$RUN/reply_<group_id>.txt` and run
-`python3 $K/kb_spec.py ingest --reply $RUN/reply_<group_id>.txt --prose-dir $RUN/prose`.
+`$KB_PY $K/kb_spec.py ingest --reply $RUN/reply_<group_id>.txt --prose-dir $RUN/prose`.
 Do not re-type a writer's output yourself.
 
 ### Step 7 — Assemble and retry
 
 ```bash
-python3 $K/kb_spec.py assemble --groups $RUN/groups.json --prose-dir $RUN/prose \
+$KB_PY $K/kb_spec.py assemble --groups $RUN/groups.json --prose-dir $RUN/prose \
     --shots $RUN/shots/shots.json --priors $RUN/priors.json --out-dir $RUN/specs
 ```
 
@@ -265,7 +277,7 @@ marker). If `$RUN/specs/failures.json` is non-empty, those articles broke a pros
 gate:
 
 ```bash
-python3 $K/kb_spec.py retry-bundle --failures $RUN/specs/failures.json \
+$KB_PY $K/kb_spec.py retry-bundle --failures $RUN/specs/failures.json \
     --prose-dir $RUN/prose --out-dir $RUN/retry
 ```
 
@@ -283,8 +295,8 @@ it actually used.
 ### Step 8 — Package
 
 ```bash
-python3 $K/kb_usage.py report --run-dir $RUN --groups $RUN/groups.json
-python3 $K/kb_package.py --run-dir $RUN --groups $RUN/groups.json --specs-dir $RUN/specs \
+$KB_PY $K/kb_usage.py report --run-dir $RUN --groups $RUN/groups.json
+$KB_PY $K/kb_package.py --run-dir $RUN --groups $RUN/groups.json --specs-dir $RUN/specs \
     [--failed-after-retry <ids>]
 ```
 
@@ -295,7 +307,7 @@ one LibreOffice call, verifies each PDF, writes the provenance sidecars,
 ### Step 9 — Record
 
 ```bash
-python3 $K/kb_ledger.py writes --run $RUN/run.json --ledger-notes $RUN/ledger_notes.json \
+$KB_PY $K/kb_ledger.py writes --run $RUN/run.json --ledger-notes $RUN/ledger_notes.json \
     --out $RUN/ledger_writes.json [--force]
 ```
 
@@ -307,7 +319,7 @@ Then mark the queue entries of every ticket this run drafted (`drafted` or
 `partial` in `run.json`) as drained — failed tickets stay queued:
 
 ```bash
-python3 $K/kb_ledger.py drain --tickets <drafted ids> --queue-notes $RUN/queue_notes.json \
+$KB_PY $K/kb_ledger.py drain --tickets <drafted ids> --queue-notes $RUN/queue_notes.json \
     --run-id $RUN_ID --date $TODAY --out $RUN/queue_drain.json
 ```
 
@@ -325,7 +337,9 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Situation | Behaviour |
 |---|---|
 | Mem not connected | Stop at Step 0 (dry-run too) |
-| python-docx / Pillow missing | Stop at Step 0 with install lines |
+| Setup could not install python-docx / Pillow / numpy | Stop at Step 0 with its output |
+| Setup could not install tesseract / LibreOffice (no root, no Homebrew) | Recorded once as unavailable; runs continue without OCR / PDF; `kb_doctor.py --setup --force` retries |
+| `.kb-env/` deleted or the sandbox reset | The next run's quick check notices the missing pieces and reinstalls only those |
 | Playwright missing | Implied `--no-capture`; drafts carry markers |
 | tesseract missing | `dom_box` anchors — fine for drafts, refused on publish |
 | LibreOffice missing | No PDFs this run; summary says so; .docx and .md still ship |

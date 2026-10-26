@@ -41,7 +41,7 @@ EXCLUDE_DIRS_COMMON = {
     "dist", "build", "node_modules", ".cowork", ".claude",
     # extra/ is the unshipped KB working area (hand-run pipeline, reference
     # PDFs); .kb-sessions/ holds demo-site storage states, which are credentials.
-    "extra", ".kb-sessions",
+    "extra", ".kb-sessions", ".kb-env",
 }
 EXCLUDE_DIRS_DEFAULT = EXCLUDE_DIRS_COMMON | {"tests"}
 EXCLUDE_DIRS_INCLUDE_TESTS = set(EXCLUDE_DIRS_COMMON)
@@ -168,7 +168,7 @@ def _verify_bundle(plugin_path: Path) -> None:
         # Hard assertion: the KB working area and demo sessions never ship.
         for entry in sorted(names):
             top = entry.split("/", 1)[0]
-            if top in ("extra", ".kb-sessions"):
+            if top in ("extra", ".kb-sessions", ".kb-env"):
                 raise BuildError(f"BUILD FAILED: bundle contains {top}/: {entry}")
         # The KB pipeline must ship whole: its format module and writer agent.
         for required in ("scripts/kb/kb_format.py", "agents/kb-writer.md"):

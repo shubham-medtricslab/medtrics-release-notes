@@ -118,6 +118,11 @@ def _slug(s):
 
 # ── browser half ─────────────────────────────────────────────────────────────
 def _playwright():
+    # kb_doctor.py --setup downloads Chromium into <home>/.kb-env/ms-playwright.
+    if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+        local = Path(os.environ.get("KB_HOME") or os.getcwd()) / ".kb-env" / "ms-playwright"
+        if local.exists():
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(local)
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:

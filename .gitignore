@@ -11,3 +11,4 @@ node_modules/
 .pytest_cache/
 .claude/settings.local.json
 .kb-sessions/
+.kb-env/

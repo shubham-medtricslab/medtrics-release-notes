@@ -86,7 +86,7 @@ The plugin reads Optimus + GitLab over HTTP (no git access needed). It only work
 | `SLACK_CHANNEL_RELEASE` | no longer used | retired in 0.11.0 when the client-channel post was folded into the combined `#dream-team` message; safe to leave in `.env` |
 | `SLACK_BOT_TOKEN` | `/release-slack` | `xoxb-...` bot token. **NOT** a user token (`xoxp-`). The bot must be invited to `#dream-team`. |
 | `MEM_KB_LEDGER_COLLECTION` / `MEM_KB_CATALOGUE_COLLECTION` / `MEM_KB_QUEUE_COLLECTION` | optional | `/kb-articles` and `/release-slack --kb` Mem collection names (defaults `KB Article Ledger` / `KB Catalogue` / `KB Queue`) |
-| `KB_SESSION_DIR` / `KB_OUTPUT_DIR` / `KB_FONT` | optional | `/kb-articles`: where demo sessions are saved (default `.kb-sessions/`, gitignored), the output root override, and the badge font |
+| `KB_SESSION_DIR` / `KB_OUTPUT_DIR` / `KB_FONT` / `KB_HOME` | optional | `/kb-articles`: where demo sessions are saved (default `.kb-sessions/`, gitignored), the output root override, the badge font, and the folder that holds `.kb-env/` (default: the current folder) |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | optional | Name of the Mem collection that receives the archive note for every posted release (see [Mem release archive](#mem-release-archive)). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. Shared by `/release-slack` and `/oracle-release`. The key is optional; the **Mem MCP connection is required** by both release commands |
 
 ## Slack bot setup (one-time, ~10 minutes)
@@ -320,7 +320,7 @@ There is none on disk. The posted root + replies are archived as one Mem note (s
 
 **How a run stays cheap.** Non-features and tickets the ledger already covers are dropped before any GitLab call. Tickets are placed on a surface by rule (backlog map, URL prefix in the diff, template path, module); only leftovers go to one batched Haiku call. Writers see trimmed inputs (description, acceptance criteria, UI strings added in the diff, routes) and shot *labels*, never images or full diffs; their fixed rules live in the agent body so every call shares the cached prefix. Evidence problems are fixed by script; only prose-gate failures go back to the writer, one article at a time, at most twice. One capture visit per surface, one LibreOffice call for all PDFs.
 
-**Before the first run** (once): sign in per persona (`python3 scripts/kb/kb_capture.py login --persona admin|faculty|learner`, a person at a screen — Claude never types passwords), seed the ledger from the October hand-run backlog (`kb_ledger.py seed-legacy`), and, when the FAQ Content Planner export is available, the catalogue (`kb_ledger.py seed-catalogue --csv kb2.csv`). `python3 scripts/kb/kb_doctor.py` shows what this machine can do: python-docx and Pillow are required; Playwright (screenshots), tesseract (OCR-verified anchors), LibreOffice (PDF) and pypdf (PDF checks) each degrade gracefully when absent.
+**Before the first run** (once): sign in per persona (`python3 scripts/kb/kb_capture.py login --persona admin|faculty|learner`, a person at a screen — Claude never types passwords), seed the ledger from the October hand-run backlog (`kb_ledger.py seed-legacy`), and, when the FAQ Content Planner export is available, the catalogue (`kb_ledger.py seed-catalogue --csv kb2.csv`). Installation is automatic: the first `/kb-articles` run in a folder runs `kb_doctor.py --setup`, which installs what is missing into `<folder>/.kb-env/` (Python packages, Playwright's Chromium) and, where it is allowed to, tesseract, LibreOffice and the Carlito font via apt-get or Homebrew, then records the result in `.kb-env/kb-setup.json`. Later runs only confirm the files are still there — no re-checking, no downloads. Anything it could not install is recorded and skipped (screenshots, OCR or PDF degrade gracefully); `kb_doctor.py --setup --force` retries.
 
 **From a release.** `/release-slack --kb` posts the release as usual, then puts its feature tickets on the KB queue and hands them to `/kb-articles` in the same chat, reusing the release's ticket data and client summaries (no second Optimus/GitLab fetch). You see the plan and answer y/n; on no, they wait on the queue for `/kb-articles pending`.
 
@@ -351,7 +351,7 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.0**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.1**.
 
 ## Repository layout
 
