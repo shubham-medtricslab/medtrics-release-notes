@@ -32,6 +32,28 @@ M1_1596 = (
 M1_723 = ("**URL/Page:** https://lmucvm.medtrics.sg/forms/evaluation/my/#Review\n\n"
           "**Overview:** Reviewers see a new tab.")
 
+# Trimmed from the MR attachments `<branch-slug>-manual-qa-checklist.txt`.
+CL_465 = (
+    "Manual QA Checklist\nBranch: m1-465-sessions-a-session-schedule-change-email-notifications\n\n"
+    "Branch under test\n"
+    "- `M1-465 — Sessions (A) > Session Schedule Change Email Notifications`\n"
+    "- Primary workflow lives in the curriculum SPA route `'/vadministration/curriculum/sessions/'`.\n"
+    "- Main UI path: open a session, go to the `Scheduling` section, then use `Add schedule` or the row `Edit` action.\n\n"
+    "Blocked / Assumed Conditions\n"
+    "- If internal documentation still links to `'/administration/curriculum/sessions/'`, use the active "
+    "SPA route `'/vadministration/curriculum/sessions/'` for this branch.\n")
+
+CL_1596 = (
+    "Manual QA Checklist — M1-1596: Date Custom Case-Log Questions\n"
+    "Direct Actions\n"
+    "- As Program Admin, create a Date question on the Custom Questions page (`/cases/administration/demographic-list/`) "
+    "and map it into a case template section\n\n"
+    "Tester Role and Login Prerequisites\n"
+    "- Supervisor (logged in): review queue at `/cases/procedure_logs/review/` and the case-log detail page\n"
+    "- Supervisor (no login): `/user/<user_id>/procedure_logs/detail/<log_id>/<token>/`\n\n"
+    "1. Open the Custom Questions page\n"
+    "  Action: Go to `/cases/administration/demographic-list/` and start creating a new question\n")
+
 
 def tk(desc):
     return {"identifier": "M1-X", "description": desc}
@@ -75,6 +97,48 @@ class Route(unittest.TestCase):
              "2. Check the chart\n\n## Notes\nx")
         r = R.extract(tk(d))
         self.assertEqual((r["start"], r["source"]), ("/gradebook/grouped/", "qa_checklist"))
+
+    def test_mr_checklist_beats_stale_description_link(self):
+        i = {"identifier": "M1-465", "description": M1_465,
+             "qa_checklist": {"text": CL_465, "source": "mr_attachment"}}
+        r = R.extract(i)
+        self.assertEqual(r["start"], "/vadministration/curriculum/sessions/")
+        self.assertEqual(r["clicks"], [{"row": True}, {"text": "Add schedule"}])
+        self.assertEqual(r["source"], "mr_checklist")
+        self.assertIn("save", r["write_gated"].lower())   # from the description's hint
+
+    def test_mr_checklist_primary_route_without_stale_note(self):
+        text = CL_465.split("Blocked")[0]
+        r = R.extract({"qa_checklist": {"text": text, "source": "mr_attachment"}})
+        self.assertEqual(r["start"], "/vadministration/curriculum/sessions/")
+
+    def test_mr_checklist_m1_1596_admin_route(self):
+        r = R.extract({"identifier": "M1-1596", "description": M1_1596,
+                       "qa_checklist": {"text": CL_1596, "source": "mr_attachment"}})
+        self.assertEqual((r["start"], r["clicks"], r["source"]),
+                         ("/cases/administration/demographic-list/", [], "mr_checklist"))
+
+    def test_mr_checklist_without_route_or_optimus_source_falls_back(self):
+        i = tk(M1_1596)
+        i["qa_checklist"] = {"text": "Open a session and look around.", "source": "mr_attachment"}
+        self.assertEqual(R.extract(i)["source"], "release_checklist")
+        i["qa_checklist"] = {"text": CL_465, "source": "optimus"}
+        self.assertEqual(R.extract(i)["source"], "release_checklist")
+
+    def test_mr_checklist_keeps_host_and_id_rules(self):
+        def start(text):
+            r = R.extract({"qa_checklist": {"text": text, "source": "mr_attachment"}})
+            return r and r["start"]
+        self.assertEqual(start("- Main route: `https://demo.medtricslab.com/reports/list/`"), "/reports/list/")
+        self.assertIsNone(start("- Main route: `https://example.com/reports/list/`"))
+        for bad in ("- Main route: `/users/1234/edit/`", "- Main route: `/`",
+                    "- Main route: `/users/<id>/edit/`"):
+            self.assertIsNone(start(bad), bad)
+
+    def test_checklist_ui_path_write_verbs_gate(self):
+        clicks, gated = R._checklist_clicks("- UI path: open a session, use `Add schedule`, then `Save` and confirm")
+        self.assertEqual(clicks, [{"row": True}, {"text": "Add schedule"}])
+        self.assertTrue(gated.startswith("`Save`"))
 
     def test_none(self):
         self.assertIsNone(R.extract(tk("")))

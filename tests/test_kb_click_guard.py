@@ -218,9 +218,14 @@ class KbclickRuns(unittest.TestCase):
             {"els": [el(onclick="x()")], "args": args, "table": {"row": 0}},
         ])
         self.assertEqual(got[0], {"ok": True, "x": 120, "y": 60, "label": "Intro Course"})
-        self.assertEqual([g["threw"] for g in got[1:]],
-                         ["KB_TENANT_ROW", "KB_TENANT_ROW", "KB_CLICK_NOTFOUND:row",
+        self.assertEqual(got[1], got[0])                      # REVIEW (soft) does not stop a row click
+        self.assertEqual([g["threw"] for g in got[2:]],
+                         ["KB_TENANT_ROW", "KB_CLICK_NOTFOUND:row",
                           "KB_CLICK_REFUSED:sidebar", "KB_CLICK_REFUSED:onclick"])
+
+    def test_row_gate_python_mirror(self):
+        self.assertEqual([C.row_tenant_refusal(v) for v in ("CLEAR", "REVIEW", "BLOCK", None)],
+                         ["", "", "tenant_row", ""])
 
 
 CLICK_PLAN = {"run_id": "r1", "capture_plan": [

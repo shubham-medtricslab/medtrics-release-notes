@@ -10,7 +10,9 @@
    "Medtrics",
    "Geriatric",
    "Internal Medicine",
-   "IM program"
+   "IM program",
+   "ZZ DEMO",
+   "ZZDEMO"
   ],
   "home": {
    "admin": "/administration/",

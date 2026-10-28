@@ -93,6 +93,7 @@ MISSING_REASONS = {
     "click_refused": "the capture could not safely open this screen",
     "click_not_found": "the capture could not find the button that opens this screen",
     "tenant_row": "the first row on this screen shows real tenant data",
+    "page_not_found": "the capture could not find this page in the app",
     "label_not_found": "the screen did not show the labelled item",
 }
 

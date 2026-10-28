@@ -15,6 +15,16 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
           guard installed with the probe) picks the point, the capturer clicks
           it, then the usual settle/probe/export. A click batch has `pick` and
           `act` (with "$X","$Y"). "write_gated" becomes a needs_write screen.
+  route-check-js --plan groups.json [--routes kb_routes.json]
+          Prints one javascript_tool snippet for the signed-in tab: fetch()es each
+          distinct start URL (and its /administration <-> /vadministration
+          alternate; max 20) and returns a JSON string
+          [{url, status, final, login, nf}].
+  route-fix  --plan groups.json --result <json file> --out groups.json
+          A start page that is a 404 moves to the first ok alternate (hash kept),
+          else the entry gets "skip_reason": "page_not_found" (plan-calls skips it;
+          its tickets get that reason in `missing`). A login page: KB_LOGIN
+          expired, exit 3, nothing written.
   ingest     --calls calls.json --raw-dir raw/ --out-dir $RUN/shots
              [--downloads-dir D] [--no-ocr] [--routes kb_routes.json]
           Turns the capturer's raw files (probe JSON + exported GIF name) into
@@ -480,6 +490,16 @@ def tenant_regexes():
             "course": [Q.COURSE_CODE_RE.pattern, fl(Q.COURSE_CODE_RE)]}
 
 
+# The app's 404 page ("Oh No! Looks like we are a little lost ... Error 404").
+# One source for the probe, the route-check snippet and the Python check.
+NF_SOURCE = r"Error 404|page that does not exist|Page not found"
+NF_RE = re.compile(NF_SOURCE, re.I)
+
+
+def is_not_found(text):
+    return bool(NF_RE.search(str(text or "")))
+
+
 # Plain JS, no comments, every statement ends with ';' (lines are joined with
 # spaces). __TENANT__ and __NONLATIN__ are filled from the Python side.
 _PROBE_JS = r"""
@@ -494,6 +514,9 @@ var pick=function(f){var c=pl.filter(f);return c.length&&(c.length<pl.length||pl
 var act=pick(function(e){return CL.test(String(e.className||''));})||pick(function(e){var m=String(W.getComputedStyle(e).backgroundColor).match(/[\d.]+/g)||[];var r=+m[0],g=+m[1],b=+m[2],al=m.length>3?+m[3]:1;return al>0&&!(r===g&&g===b);});
 if(act&&!act.some(function(e){return norm(e.innerText||e.textContent).toLowerCase()===String(a.portal).toLowerCase();}))throw new Error('KB_PERSONA');
 }
+var NFR=new RegExp(__NF__,'i');
+var hd=D.querySelector('h1,h2');
+var nf=NFR.test(String(D.title||'')+' '+norm(hd&&hd.innerText)+' '+norm(D.body.innerText).slice(0,1500));
 var all=Array.prototype.slice.call(D.body.querySelectorAll('*'));
 var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
 var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
@@ -526,7 +549,7 @@ var STOP=__SLUG_STOP__; while((m3=re2.exec(low))){if(STOP.indexOf(m3[1])<0)add('
 var nl=0;
 for(var i=0;i<low.length;i++){if(low.charCodeAt(i)>0x3FF)nl++;}
 if(nl>=__NONLATIN__)add('non_latin_script',true);
-return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,labels:labels,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k}};
+return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k}};
 })
 """
 
@@ -636,7 +659,7 @@ return '';
 var el=null;
 if(a.row){
 var p=(0,eval)(sessionStorage.getItem('kbp'));
-if(p(a.pa).tn.v!=='CLEAR')throw new Error('KB_TENANT_ROW');
+if(p(a.pa).tn.v==='BLOCK')throw new Error('KB_TENANT_ROW');
 var tb=Array.prototype.slice.call(D.querySelectorAll('table')).filter(vis).sort(function(x,y){var u=x.getBoundingClientRect(),v=y.getBoundingClientRect();return v.width*v.height-u.width*u.height;})[0];
 var tr=tb&&tb.querySelector('tbody tr');
 el=tr&&tr.querySelector('a[href]');
@@ -671,6 +694,12 @@ def click_source():
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
+def row_tenant_refusal(verdict):
+    """Python mirror of the row gate: only a BLOCK (hard) tenant verdict stops a
+    {"row": true} click; REVIEW (a soft rule, e.g. a demo course code) does not."""
+    return "tenant_row" if verdict == "BLOCK" else ""
+
+
 def click_reason(error_text):
     """'KB_CLICK_REFUSED:onclick' -> ('click_refused', 'onclick'); None when not a click error."""
     t = str(error_text or "")
@@ -684,6 +713,7 @@ def click_reason(error_text):
 def probe_source():
     """The probe as one JS function expression (evaluates to a function)."""
     src = _PROBE_JS.replace("__TENANT__", json.dumps(tenant_regexes())) \
+                   .replace("__NF__", json.dumps(NF_SOURCE)) \
                    .replace("__NONLATIN__", str(Q.NONLATIN_MIN)) \
                    .replace("__SLUG_STOP__", json.dumps(sorted(Q.SLUG_STOP)))
     return " ".join(l.strip() for l in src.strip().splitlines())
@@ -791,6 +821,12 @@ def build_calls(plan, inputs, routes, per_batch=3):
     visits, entries, screens = [], {}, []
     for c in plan["capture_plan"]:
         if not c.get("url"):
+            continue
+        if c.get("skip_reason"):                      # route-fix: the page does not exist
+            screens.append({"visit_id": f"x{len(screens) + 1:02d}-skip", "entry": "",
+                            "persona": c["persona"], "surface": c["surface"],
+                            "tickets": list(c.get("tickets", [])),
+                            "reason": c["skip_reason"], "detail": c["url"]})
             continue
         per_ticket = {t: list((inputs.get(t) or {}).get("labels", []))[:MAX_LABELS]
                       for t in c.get("tickets", [])}
@@ -977,12 +1013,147 @@ def cmd_plan_calls(a):
     calls = build_calls(plan, inputs, routes, a.per_batch)
     (out_dir / "calls.json").write_text(json.dumps(calls, indent=1))
     (out_dir / "capture.md").write_text(capture_md(calls))
-    skipped = sum(1 for c in plan["capture_plan"] if not c.get("url"))
+    skipped = sum(1 for c in plan["capture_plan"] if not c.get("url") or c.get("skip_reason"))
     print(f"planned {len(calls['visits'])} visits in {len(calls['batches'])} batches "
           f"({skipped} without a URL skipped) -> {out_dir / 'capture.md'}")
     emit({"ok": True, "action": "plan-calls", "visits": len(calls["visits"]),
           "batches": len(calls["batches"]), "skipped": skipped,
           "calls": str(out_dir / "calls.json"), "capture_md": str(out_dir / "capture.md")})
+    return 0
+
+
+# ── page check before capture: route-check-js / route-fix ─────────────────────
+ROUTE_CHECK_MAX = 20
+ALT_PREFIXES = (("/administration/", "/vadministration/"), ("/vadministration/", "/administration/"))
+
+_ROUTE_CHECK_JS = r"""
+(async function(U,L,N){
+var NF=new RegExp(N,'i');
+var one=async function(u){
+try{
+var r=await fetch(u,{method:'GET',credentials:'same-origin',redirect:'follow'});
+var t=await r.text();
+var d=new DOMParser().parseFromString(t,'text/html');
+d.querySelectorAll('script,style').forEach(function(e){e.remove();});
+var f=new URL(r.url).pathname;
+var hd=d.querySelector('h1,h2');
+var tx=String((d.body&&d.body.textContent)||'').replace(/\s+/g,' ').trim();
+var login=f.indexOf(L)>=0||!!d.querySelector('input[type=password]');
+var nf=r.status===404||NF.test(String(d.title||'')+' '+String((hd&&hd.textContent)||'')+' '+tx.slice(0,1500));
+return {url:u,status:r.status,final:f,login:login,nf:nf};
+}catch(e){return {url:u,status:0,final:'',login:false,nf:false,err:String(e).slice(0,80)};}
+};
+return JSON.stringify(await Promise.all(U.map(one)));
+})
+"""
+
+
+def start_key(url):
+    """path+query of a start URL, no hash."""
+    return str(url or "").split("#", 1)[0]
+
+
+def alt_route(url):
+    """/administration/X <-> /vadministration/X (query kept), or None."""
+    u = start_key(url)
+    for a, b in ALT_PREFIXES:
+        if u.startswith(a):
+            return b + u[len(a):]
+    return None
+
+
+def route_check_urls(plan, cap=ROUTE_CHECK_MAX):
+    """Distinct start URLs of the plan, each followed by its administration alternate."""
+    urls = []
+    for c in plan.get("capture_plan", []):
+        if not c.get("url") or c.get("skip_reason"):
+            continue
+        for u in (start_key(c["url"]), alt_route(c["url"])):
+            if u and u not in urls:
+                urls.append(u)
+    return urls[:cap], max(len(urls) - cap, 0)
+
+
+def route_check_source(urls, login_path):
+    """javascript_tool text: fetch()es every URL in the signed-in tab and returns a
+    JSON string [{url,status,final,login,nf}]."""
+    return (_ROUTE_CHECK_JS.strip().replace("\n", " ")
+            + f"({json.dumps(urls)},{json.dumps(login_path)},{json.dumps(NF_SOURCE)})")
+
+
+def route_fix(plan, results):
+    """-> (new plan, expired, changes). results: [{url,status,final,login,nf}].
+    A start whose page is a 404 is moved to the first checked-ok alternate, else
+    marked skip_reason page_not_found. Starts that were not checked are untouched."""
+    by = {start_key(r.get("url")): r for r in results if isinstance(r, dict)}
+
+    def ok(r):
+        return bool(r) and not r.get("nf") and not r.get("login") and 200 <= int(r.get("status") or 0) < 400
+    expired = [r["url"] for r in by.values() if r.get("login")]
+    out, changes = [], []
+    for c in plan.get("capture_plan", []):
+        e = dict(c)
+        r = by.get(start_key(e.get("url")))
+        if e.get("url") and not e.get("skip_reason") and r and r.get("nf"):
+            alt = alt_route(e["url"])
+            if alt and ok(by.get(alt)):
+                h = "#" + e["url"].split("#", 1)[1] if "#" in e["url"] else ""
+                changes.append({"surface": e.get("surface"), "from": e["url"], "to": alt + h})
+                e["route_fixed_from"] = e["url"]
+                e["url"] = alt + h
+            else:
+                e["skip_reason"] = "page_not_found"
+                changes.append({"surface": e.get("surface"), "from": e["url"], "to": None})
+        out.append(e)
+    return {**plan, "capture_plan": out}, expired, changes
+
+
+def cmd_route_check_js(a):
+    plan = json.loads(Path(a.plan).read_text())
+    routes = json.loads(Path(a.routes).read_text())
+    urls, dropped = route_check_urls(plan)
+    if dropped:
+        print(f"note: {dropped} URL(s) over the {ROUTE_CHECK_MAX} cap not checked", file=sys.stderr)
+    print(route_check_source(urls, routes["demo"]["login_path"]))
+    return 0
+
+
+def _load_route_results(path):
+    r = json.loads(Path(path).read_text())
+    for _ in range(2):                              # the tool may hand back the JSON as a string
+        if isinstance(r, str):
+            r = json.loads(r)
+    if isinstance(r, dict):
+        r = r.get("results") or r.get("result") or []
+        if isinstance(r, str):
+            r = json.loads(r)
+    if not isinstance(r, list):
+        raise ValueError("route-check result is not a list")
+    return r
+
+
+def cmd_route_fix(a):
+    plan = json.loads(Path(a.plan).read_text())
+    try:
+        results = _load_route_results(a.result)
+    except ValueError as e:
+        emit({"ok": False, "action": "route-fix", "error": f"bad result: {e}"})
+        return 1
+    new, expired, changes = route_fix(plan, results)
+    if expired:
+        print(f"KB_LOGIN expired: the tab is signed out ({expired[0]} landed on the login page); "
+              f"sign in again, then re-run route-check")
+        emit({"ok": False, "action": "route-fix", "error": "expired", "checked": len(results)})
+        return 3
+    Path(a.out).write_text(json.dumps(new, indent=1))
+    moved = [c for c in changes if c["to"]]
+    gone = [c for c in changes if not c["to"]]
+    print(f"route-fix: {len(results)} page(s) checked · {len(moved)} start page(s) moved"
+          + "".join(f" ({c['from']} -> {c['to']})" for c in moved)
+          + f" · {len(gone)} marked page_not_found"
+          + "".join(f" ({c['from']})" for c in gone) + f" -> {a.out}")
+    emit({"ok": True, "action": "route-fix", "checked": len(results), "moved": moved,
+          "page_not_found": [c["from"] for c in gone], "out": str(a.out)})
     return 0
 
 
@@ -1217,6 +1388,13 @@ def cmd_ingest(a):
             settled.add(vid)
             dead[v.get("entry", vid)] = cr[0]
             continue
+        pr = parse_probe(it.get("probe")) if it else None
+        if pr and pr.get("nf"):                         # the 404 page: no shot, no label misses
+            screen.update(reason="page_not_found", detail=pr.get("u") or v["url"])
+            screens[vid] = screen
+            settled.add(vid)
+            dead[v.get("entry", vid)] = "page_not_found"
+            continue
         if it:
             timeout = FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S
             if it.get("gif"):
@@ -1401,6 +1579,10 @@ def main(argv=None):
     s.add_argument("--inputs", required=True); s.add_argument("--out-dir", required=True)
     s.add_argument("--per-batch", type=int, default=3)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES))
+    s = sub.add_parser("route-check-js"); s.add_argument("--plan", required=True)
+    s.add_argument("--routes", default=str(DEFAULT_ROUTES))
+    s = sub.add_parser("route-fix"); s.add_argument("--plan", required=True)
+    s.add_argument("--result", required=True); s.add_argument("--out", required=True)
     s = sub.add_parser("ingest"); s.add_argument("--calls", required=True)
     s.add_argument("--raw-dir", required=True); s.add_argument("--out-dir", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--no-ocr", action="store_true")
@@ -1414,7 +1596,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         return {"login": cmd_login, "check": cmd_check, "run": cmd_run,
-                "plan-calls": cmd_plan_calls, "ingest": cmd_ingest,
+                "plan-calls": cmd_plan_calls, "route-check-js": cmd_route_check_js,
+                "route-fix": cmd_route_fix, "ingest": cmd_ingest,
                 "pickup": cmd_pickup, "sweep": cmd_sweep, "cleanup": cmd_cleanup}[a.cmd](a)
     except (OSError, json.JSONDecodeError, KeyError) as e:
         emit({"ok": False, "action": a.cmd, "error": f"{type(e).__name__}: {e}"})

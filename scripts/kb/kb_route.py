@@ -2,6 +2,10 @@
 """
 kb_route.py — read the start page and click path a ticket's own text gives.
 
+The MR's own manual QA checklist (issue["qa_checklist"], see kb_checklist.py)
+comes first: it is written from the branch's code, so its route is current
+where a description's link can be stale.
+
 Optimus descriptions of legacy features usually say where the feature lives:
 a "**URL/Page:**" field (often with a "User Opens a Session > hits View
 Button" line under it), the appended Release Impact Checklist answer to
@@ -12,7 +16,7 @@ into a route; kb_select uses it before any diff-based guess.
     {"start": "/administration/curriculum/sessions/",   # host dropped, no id segment
      "clicks": [{"row": true}, {"text": "View"}, {"text": "Add Schedule"}],
      "write_gated": "",      # what only appears after a save/submit, else ""
-     "source": "url_page" | "release_checklist" | "qa_checklist"}
+     "source": "mr_checklist" | "url_page" | "release_checklist" | "qa_checklist"}
 
 Only medtricslab.com and medtrics.sg hosts count (demo, client tenants);
 loom/lovable/atlassian/slack/github links are ignored. A path with a numeric or uuid segment is a record, not a page, and is
@@ -175,10 +179,92 @@ def _qa_checklist(desc):
         return p, clicks, gated
     return None
 
+QUOTED_PATH_RE = re.compile(r"""[`"'“‘]+\s*(/[A-Za-z0-9_\-./#?=&<>]+)\s*[`"'”’]+""")
+CODE_RE = re.compile(r"`+\s*['\"“‘]?([^`]+?)['\"”’]?\s*`+")
+UI_PATH_RE = re.compile(r"^\W*(?:main\s+)?UI\s+path\s*:\s*(.+)$", re.I)
+STALE_RE = re.compile(r"\b(?:stale|still links?|old link|legacy link|outdated)\b", re.I)
+USE_RE = re.compile(r"\buse (?:the )?(?:active|current|new|correct)\b", re.I)
+MAIN_RE = re.compile(r"\b(?:primary|main)\b.*\b(?:route|workflow|page|lives?)\b|\blives? in\b", re.I)
+HINT_RE = re.compile(r"\b(?:route|url|page|navigate to|go to)\b", re.I)
+
+
+def _line_paths(line):
+    """Usable paths named in backticks or quotes on one line, in order."""
+    out = [p for p in (_path_of(u.rstrip("`")) for u in URL_RE.findall(line)) if p]
+    for m in QUOTED_PATH_RE.finditer(URL_RE.sub(" ", line)):
+        p = _clean_path(m.group(1))
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def _checklist_start(text):
+    """The route a manual QA checklist names: a "use the active route" line
+    beats a primary/main-route line beats a Navigate/Go to/page line."""
+    lines = text.splitlines()
+    stale = {p for ln in lines if STALE_RE.search(ln) for p in _line_paths(ln)}
+    best = None
+    for n, ln in enumerate(lines):
+        paths = _line_paths(ln)
+        if not paths:
+            continue
+        if USE_RE.search(ln):
+            rank, pick = 0, paths[-1]
+        else:
+            fresh = [p for p in paths if p not in stale]
+            if not fresh:
+                continue
+            rank = 1 if MAIN_RE.search(ln) else 2 if HINT_RE.search(ln) else 9
+            pick = fresh[0]
+        if rank < 9 and (best is None or (rank, n) < best[:2]):
+            best = (rank, n, pick)
+    return best[2] if best else None
+
+
+def _checklist_clicks(text):
+    """('Main UI path:' sentence) -> (clicks, write_gated). Clauses split on
+    commas / "then"; "go to the X section" is scrolling, "or ..." an
+    alternative; a backticked name is a click, "open a session" a row."""
+    for line in text.splitlines():
+        m = UI_PATH_RE.match(line.strip().lstrip("-*• "))
+        if not m:
+            continue
+        clicks, gated = [], []
+        for clause in re.split(r",|;|\bthen\b|\band then\b", m.group(1).strip().rstrip(".")):
+            clause = re.split(r"\bor\b", clause)[0].strip()
+            if not clause or (re.search(r"\bsection\b|\bscroll", clause, re.I)):
+                continue
+            if gated or WRITE_RE.search(clause):
+                gated.append(clause)
+                continue
+            names = CODE_RE.findall(clause)
+            if names:
+                clicks.append({"text": names[0].strip()})
+            else:
+                clicks += parse_clicks(clause)[0]
+        return clicks, " > ".join(gated)
+    return [], ""
+
+
+def _mr_checklist(issue):
+    qa = issue.get("qa_checklist") or {}
+    text = qa.get("text") or ""
+    if qa.get("source") == "optimus" or not text:
+        return None   # the description's own checklist is read by _qa_checklist
+    start = _checklist_start(text)
+    if not start:
+        return None
+    clicks, gated = _checklist_clicks(text)
+    return start, clicks, gated
+
 
 def extract(issue):
     """Route dict from the untrimmed description, or None."""
     desc = issue.get("description") or ""
+    mr = _mr_checklist(issue)
+    if mr:
+        return {"start": mr[0], "clicks": mr[1], "write_gated": mr[2] or _write_gated_hint(desc),
+                "source": "mr_checklist"}
     for source, fn in (("url_page", _url_page), ("release_checklist", _release_checklist),
                        ("qa_checklist", _qa_checklist)):
         found = fn(desc)

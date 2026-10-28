@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-10-29
+
+Fixes from the second Cowork run (M1-465: the ticket's link was a 404 page).
+
+### Fixed
+- **Stale ticket links.** The route now comes first from the MR's QA checklist
+  (`<branch>-manual-qa-checklist.txt`, attached by the medtrics repo's
+  `sk-manual-qa` skill and run by QA automation), which names the page and UI
+  path as they are in the code — e.g. M1-465 →
+  `/vadministration/curriculum/sessions/` → first session → "Add schedule".
+  New `kb_checklist.py attach` fetches it (read-only); the ticket's own links
+  are the fallback.
+- **404 pages treated as the page.** Before capture, one `route-check-js` call
+  GETs each start page (and its `/administration` ↔ `/vadministration` twin);
+  `route-fix` moves a 404 to the working twin or marks it `page_not_found`.
+  The probe also flags a 404 page as a safety net.
+- **Demo data blocked the first-row click.** "ZZ DEMO" / "ZZDEMO" are demo
+  allow-strings, and only a hard (BLOCK) tenant verdict stops a row click.
+- **Email text as labels.** Labels come from the checklist's button names and
+  the changed templates; acceptance-criteria quotes count only when the same
+  string is in the changed UI code.
+- **LibreOffice leftovers.** PDFs are converted in a temp folder and only the
+  PDF is copied out (Cowork refuses deletes in the selected folder).
+
 ## [0.26.0] - 2026-10-28
 
 Fixes from the first Cowork run (M1-1596, M1-465, M1-723: every article came

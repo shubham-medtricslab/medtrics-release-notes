@@ -4,7 +4,7 @@ kb_inputs.py — the trimmed per-ticket input the KB writer sees.
 
 A KB article explains what a user sees and does, so full diffs are mostly
 wasted tokens. This keeps: the title, the description with its acceptance
-criteria split out, strings quoted in either (candidate UI labels), the
+criteria split out, strings quoted in the description and the MR's QA checklist (candidate UI labels), the
 user-visible strings ADDED in template / JS / Vue / Django hunks, changed URL
 patterns, and — when the ticket came through `--kb` — the client title and
 summary the release already wrote. Each ticket is capped (default 4,000 chars).
@@ -114,6 +114,27 @@ def quoted(text):
     return list(dict.fromkeys(out))
 
 
+CODE_RE = re.compile(r"`+\s*['\"“‘]?([^`]+?)['\"”’]?\s*`+")
+UI_PATH_LINE_RE = re.compile(r"^\W*(?:main\s+)?UI\s+path\s*:", re.I)
+ACTION_LINE_RE = re.compile(r"^\s*Action\s*:", re.I)
+
+
+def checklist_labels(issue):
+    """Backticked UI names from the QA checklist's UI-path line and step
+    Actions: short, not paths, files, dates, formats or code identifiers."""
+    text = (issue.get("qa_checklist") or {}).get("text") or ""
+    lines = [ln for ln in text.splitlines() if UI_PATH_LINE_RE.match(ln)] \
+        + [ln for ln in text.splitlines() if ACTION_LINE_RE.match(ln)]
+    out = []
+    for ln in lines:
+        for name in CODE_RE.findall(ln):
+            name = name.strip()
+            if (name and name not in out and len(name.split()) <= 5 and is_label(name)
+                    and name[0].isupper() and not re.search(r"/|\.\w|\d{2}|^[A-Z]{3,}[-/]", name)):
+                out.append(name)
+    return out
+
+
 def _clip(s, n):
     s = re.sub(r"[ \t]+", " ", s or "").strip()
     return s if len(s) <= n else s[:n - 1].rstrip() + "…"
@@ -122,7 +143,10 @@ def _clip(s, n):
 def build_input(issue, summary=None, cap=CAP):
     body, ac = split_ac(issue.get("description") or "")
     ui = ui_strings(issue)
-    labels = list(dict.fromkeys(quoted(body) + quoted(ac) + ui))
+    # Acceptance-criteria quotes are mostly sample data or email copy; one only
+    # counts when the diff also adds it to a template or a gettext string.
+    labels = list(dict.fromkeys(checklist_labels(issue) + quoted(body)
+                                + [q for q in quoted(ac) if q in ui] + ui))
     rec = {"ticket": issue["identifier"], "title": issue.get("title", ""),
            "module": issue.get("module", ""),
            "client_title": (summary or {}).get("CLIENT_TITLE", ""),

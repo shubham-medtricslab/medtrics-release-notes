@@ -259,6 +259,25 @@ class Inputs(unittest.TestCase):
         self.assertEqual(rec["client_summary"], "S")
         self.assertLess(len(rec["description"]), 400)
 
+    def test_checklist_labels_lead_and_ac_quotes_need_ui_evidence(self):
+        cl = ("- Main UI path: open a session, go to the `Scheduling` section, then use `Add schedule` "
+              "or the row `Edit` action.\n- Primary route `'/vadministration/curriculum/sessions/'`\n"
+              "- Stores `YYYY-MM-DD`, shown as `Jan 05, 2026`; migration `0007_alter_demographic_type`\n"
+              "1. Open\n  Action: Click `Import Custom Case Questions` and choose `x-manual-qa-checklist.txt`\n"
+              "  Action: type `not-a-date` into `dateField`\n")
+        desc = ('Notify members.\n\nAcceptance criteria:\n- Email says "Friday, March 15th"\n'
+                '- Shows "Notify Members"\n')
+        i = issue("M1-465", description=desc,
+                  diffs=[("src/templates/s.html", "+<button>Notify Members</button>")])
+        i["qa_checklist"] = {"text": cl, "source": "mr_attachment"}
+        self.assertEqual(I.checklist_labels(i), ["Scheduling", "Add schedule", "Edit",
+                                                 "Import Custom Case Questions"])
+        labels = I.build_input(i)["labels"]
+        self.assertEqual(labels[:4], ["Scheduling", "Add schedule", "Edit", "Import Custom Case Questions"])
+        self.assertIn("Notify Members", labels)
+        self.assertNotIn("Friday, March 15th", labels)
+        self.assertNotIn("Friday, March 15th", I.build_input(issue("M1-2", description=desc))["labels"])
+
     def test_tests_and_migrations_ignored(self):
         i = issue("M1-1", diffs=[("src/apps/x/tests/test_a.py", "+label='Nope'"),
                                  ("src/apps/x/migrations/0001.py", "+verbose_name='Nope'")])

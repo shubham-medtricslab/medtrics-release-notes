@@ -3,8 +3,9 @@
 kb_pdf.py — the PDF of each KB article, converted from its .docx so the two
 files can never disagree.
 
-  convert  One LibreOffice batch call for every .docx (a private profile, so a
-           LibreOffice the person has open is never touched).
+  convert  One LibreOffice batch call for every .docx, run in a temp dir with a
+           private profile (a LibreOffice the person has open is never touched,
+           and no lock or scratch file lands in the output folder).
   verify   Each PDF against its spec: at least one Letter page, one embedded
            image per screenshot, the title, the section headings and every
            bold label in its text. Calibri or its metric twin Carlito pass;
@@ -51,16 +52,39 @@ def soffice():
 
 
 def convert(docx_paths, out_dir, timeout=600):
+    """Convert in a fresh temp dir (docx copies, profile, outdir all inside it) so
+    LibreOffice's lock (.~lock.<name>#) and lu*.tmp files never touch out_dir —
+    deletes inside a mounted Cowork folder are refused. Only the PDFs are copied
+    to out_dir; the temp dir is then removed."""
     exe = soffice()
     if not exe:
         raise RuntimeError("LibreOffice (soffice) not found")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    profile = Path(tempfile.gettempdir()) / "kb" / "lo-profile"
-    profile.mkdir(parents=True, exist_ok=True)
-    cmd = [exe, f"-env:UserInstallation=file://{profile}", "--headless",
-           "--convert-to", "pdf", "--outdir", str(out_dir), *map(str, docx_paths)]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
-    return [Path(out_dir) / (Path(d).stem + ".pdf") for d in docx_paths]
+    work = Path(tempfile.mkdtemp(prefix="kb-pdf-"))
+    try:
+        sources = []
+        for i, d in enumerate(docx_paths):
+            src_dir = work / "in" / str(i)
+            src_dir.mkdir(parents=True)
+            src = src_dir / Path(d).name
+            shutil.copyfile(d, src)
+            sources.append(src)
+        made = work / "out"
+        made.mkdir()
+        profile = work / "profile"
+        cmd = [exe, f"-env:UserInstallation=file://{profile}", "--headless",
+               "--convert-to", "pdf", "--outdir", str(made), *map(str, sources)]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
+        result = []
+        for d in docx_paths:
+            name = Path(d).stem + ".pdf"
+            dest = Path(out_dir) / name
+            if (made / name).is_file():
+                shutil.copyfile(made / name, dest)
+            result.append(dest)
+        return result
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def expected_strings(spec):

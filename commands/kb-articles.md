@@ -225,6 +225,16 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids>
     --include-description --task-types feature,critical_feature --output $RUN/data.json
 ```
 
+Then attach each ticket's QA checklist — the `<branch>-manual-qa-checklist.txt`
+file the medtrics repo's `sk-manual-qa` skill attaches to the MR (the file QA
+automation runs), else a `## QA Checklist` in the description. It names the
+page and the click path as they are in the current code, so placement uses it
+before the ticket's own links (which go stale). It never stops the run:
+
+```bash
+$KB_PY $K/kb_checklist.py attach --data $RUN/data.json
+```
+
 Then, either way (a feature with no merge request is **skipped, not a stop**
 — "code missing" — and so is an id Optimus doesn't return; both show in the
 end-of-run table):
@@ -305,7 +315,28 @@ filling for the capture agent. A first-row click happens only when the page
 shows no tenant data. A step that only appears after a save is never reached:
 the article describes it in words.
 
-1. Plan the calls (no model, no browser):
+1. **Check the pages exist** — you, in the capture tab, one call. Ticket links
+   go stale (Sessions moved from `/administration/` to `/vadministration/`):
+
+   ```bash
+   mkdir -p $RUN/shots && $KB_PY $K/kb_capture.py route-check-js --plan $RUN/groups.json > $RUN/shots/route_check.js
+   ```
+
+   Send that file's text with `javascript_tool` on the tab (it only GETs the
+   start pages, plus their `/administration` ↔ `/vadministration` twin, and
+   returns a JSON string). Save the returned string to
+   `$RUN/shots/route_check.json`, then:
+
+   ```bash
+   $KB_PY $K/kb_capture.py route-fix --plan $RUN/groups.json --result $RUN/shots/route_check.json --out $RUN/groups.json
+   ```
+
+   It moves a 404 start page to its working twin, or marks it
+   `page_not_found` (that page is skipped and its tickets say why). Exit 3 =
+   the site showed its sign-in page: ask the owner to sign in to Chrome, then
+   re-run this step. If the call returned nothing usable (`{}`, empty, an
+   error), say so in one line and go on without the check.
+2. Plan the calls (no model, no browser):
 
    ```bash
    $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
@@ -313,7 +344,7 @@ the article describes it in words.
 
    It writes `shots/calls.json` (visits, `canary`, `abort`, `gif_dir`) and
    `shots/capture.md`.
-2. **Canary** — you, not an agent, with the owner present. Send the `canary`
+3. **Canary** — you, not an agent, with the owner present. Send the `canary`
    actions from `calls.json` in one `browser_batch` (tab from `tabs_context_mcp`,
    substituted for every `"$TAB"`; first run only: Chrome may show a download or
    privacy prompt — say so and let the owner allow it). Then:
@@ -330,7 +361,7 @@ the article describes it in words.
    and Downloads must be the download folder; or a privacy / download prompt
    that was dismissed) and continue to drafting. Articles then carry
    missing-screenshot markers.
-3. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
+4. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
    `model: "haiku"`, prompt
    `Run folder: $RUN. Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.`
    (absolute paths). It drives your Chrome — including the two-part click
@@ -341,18 +372,18 @@ the article describes it in words.
    $KB_PY $K/kb_usage.py add --run-dir $RUN --agent kb-capturer --scope capture --model haiku \
        --tokens <total_tokens> --duration-ms <ms> --tool-uses <n>
    ```
-4. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, or returns without having written
+5. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, or returns without having written
    any raw file, follow `$RUN/shots/capture.md` yourself in this session with
    the same tools and the same rules (the fallback, as QA automation does it).
    Say so in one line.
-5. Ingest the raw files (reads each GIF from Downloads, copies it to
+6. Ingest the raw files (reads each GIF from Downloads, copies it to
    `shots/gifs/` — Downloads itself is never changed here — takes the last
    frame, verifies it, places the ringed boxes, runs the tenant screen):
 
    ```bash
    $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --downloads-dir $DL
    ```
-6. Exit 3 = some screens were left. Read `shots/resume.json` and say which, with
+7. Exit 3 = some screens were left. Read `shots/resume.json` and say which, with
    the reason: `expired` (sign in to the site again in Chrome), `wrong_persona`,
    `bridge_down`, `no_probe`, `not_reached` (its batch never ran), `retry` (a
    blocked or unreadable probe), `download_missing` (the GIF never reached
@@ -360,7 +391,8 @@ the article describes it in words.
    not be read as an image), `click_refused` (the page script would not click
    that target, with why), `click_not_found` (no element with that text),
    `tenant_row` (the first row showed tenant data, so it was not opened) or
-   `needs_write` (the step only appears after a save). **Continue** — the shots already taken are kept,
+   `needs_write` (the step only appears after a save) or `page_not_found` (the
+   page does not exist in the app). **Continue** — the shots already taken are kept,
    the rest become missing-screenshot markers and the summary lists them.
    `--retry-partial` re-runs them later.
 
