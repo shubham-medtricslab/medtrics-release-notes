@@ -171,7 +171,9 @@ def _verify_bundle(plugin_path: Path) -> None:
             if top in ("extra", ".kb-sessions", ".kb-env"):
                 raise BuildError(f"BUILD FAILED: bundle contains {top}/: {entry}")
         # The KB pipeline must ship whole: its format module and writer agent.
-        for required in ("scripts/kb/kb_format.py", "agents/kb-writer.md"):
+        # ...and its click guard: the hook that keeps the capturer read-only.
+        for required in ("scripts/kb/kb_format.py", "agents/kb-writer.md",
+                         "hooks/hooks.json", "hooks/kb_guard.py"):
             if required not in names:
                 raise BuildError(f"BUILD FAILED: bundle is missing {required}")
         # plugin.json must be present and parseable

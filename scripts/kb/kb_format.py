@@ -85,6 +85,28 @@ DRAFT_BANNER = (
     "Re-capture each shot against the demo tenant before this goes out."
 )
 MISSING_SHOT = "[Screenshot missing — {reason}]"
+NO_SCREEN = "no_screen"      # sentinel: the change has no screen; no marker, one note
+NO_SCREEN_NOTE = "No screenshot: this change has no screen of its own."
+# Per-screen capture reasons -> the words after "Screenshot missing —".
+MISSING_REASONS = {
+    "needs_write": "This step happens after you save; no screenshot",
+    "click_refused": "the capture could not safely open this screen",
+    "click_not_found": "the capture could not find the button that opens this screen",
+    "tenant_row": "the first row on this screen shows real tenant data",
+    "label_not_found": "the screen did not show the labelled item",
+}
+
+
+def missing_reason_text(code, detail=""):
+    """Words for a missing-screenshot marker from a capture reason code.
+    Unknown codes pass through unchanged; NO_SCREEN is returned as the sentinel."""
+    code = (code or "").strip()
+    if code.split(":")[0] == NO_SCREEN:
+        return NO_SCREEN
+    base = MISSING_REASONS.get(code)
+    if not base:
+        return code
+    return f"{base} ({detail})" if detail and code in ("click_refused", "click_not_found") else base
 SUBTITLE = "Audience: {audience} · {portal} · Generated from {ticket} · {state}"
 
 # ── gates ────────────────────────────────────────────────────────────────────

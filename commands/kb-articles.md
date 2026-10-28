@@ -33,7 +33,7 @@ Flags (combine with any mode):
 | `--force` | Re-draft tickets the ledger already covers (updates their notes) |
 | `--retry-partial` | Re-draft `partial` tickets (drafts that had missing screenshots) |
 | `--no-capture` | Skip Chrome; every article is drafted with missing-screenshot markers |
-| `--yes` | Don't wait for confirmation at the plan preview |
+| `--yes` | Don't wait for confirmation at the plan preview (named ids never ask; this matters for `pending`, `since` and the release hand-off) |
 | `--allow-no-code` | Also draft features that have no merge request (skipped by default as "code missing") |
 | `--from-release` | Set only by `/release-slack --kb` (Step 9c) with an id list: reuse that release's `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` instead of gathering again, and mark the tickets' queue notes drained afterwards |
 
@@ -59,7 +59,7 @@ needs only Optimus (no GitLab) and Mem:
 ## Pipeline overview
 
 ```
-0  preflight     setup check (kb_doctor --check) + Mem probe (hard stop) + .env keys + Claude in Chrome check + Downloads folder (Cowork) + sweep
+0  preflight     paths (kb_paths) + setup check (kb_doctor --check) + Mem probe (hard stop) + .env keys + Claude in Chrome check + Downloads folder (Cowork) + sweep
 1  select        ledger + queue dumps → ids (argv | release archive | queue) → gather (features only,
                  skipped with --from-release) → kb_select filter
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
@@ -81,7 +81,7 @@ needs only Optimus (no GitLab) and Mem:
   `<root>` is `$KB_OUTPUT_DIR`, else `/mnt/user-data/outputs` (Cowork), else
   `.claude/outputs/kb/`.
 - Mem: one ledger note per ticket and one run note; queue notes of drafted tickets marked `drained` (`kb-ledger` skill).
-- Working files only under `/tmp/kb/<run_id>/`.
+- Working files only under `<folder>/.kb-runs/<run_id>/` (it ignores itself in git; the agents can read it in Cowork, where `/tmp` is out of their reach).
 
 Every article is a **draft**. The publish render needs a person to confirm every
 screenshot is free of tenant data (`tenant_confirmed_by`), so this command never
@@ -107,36 +107,38 @@ produces it.
 "Bash(python3:*)",
 "Bash(date:*)",
 "Bash(mkdir:*)",
-"Write(//tmp/kb/**)",
+"Write(**/.kb-runs/**)",
 "Task",
 "mcp__claude-in-chrome__*",
 "mcp__cowork__request_cowork_directory"
 ```
 
-`Write(//tmp/kb/**)` lets the writer agents save their own JSON, so their output
-is not re-typed by the orchestrator (that would pay for it twice). Grant nothing
-broader to them. The `mcp__claude-in-chrome__*` tools are the Claude in Chrome
+`Write(**/.kb-runs/**)` lets the writer and capture agents save their own JSON
+inside the run folder, so their output is not re-typed by the orchestrator (that
+would pay for it twice). Grant nothing broader to them. The `mcp__claude-in-chrome__*` tools are the Claude in Chrome
 extension's (including `gif_creator`); the capture agent (Step 5), the canary and the Step 0 check use them. `mcp__cowork__request_cowork_directory` is Cowork-only: it mounts your Downloads folder, where the exported GIFs land (Step 0).
 
 ## Flow
 
-Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
-`RUN=/tmp/kb/$RUN_ID`, then `mkdir -p $RUN/prose`. Never guess the date.
-`K=${CLAUDE_PLUGIN_ROOT}/scripts/kb`.
+Set once, via Bash, from the selected folder: `K=${CLAUDE_PLUGIN_ROOT}/scripts/kb`,
+`RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`, then
+`python3 $K/kb_paths.py ensure` (prints `KB_RUNS=`, `KB_CONFIG=`; keep both),
+`RUN=$KB_RUNS/$RUN_ID` and `mkdir -p $RUN/prose`. Never guess the date. Every
+path you hand an agent is an absolute path under `$RUN`.
 
 ### Step 0 — Preflight
 
 1. **Mem** — follow the `kb-ledger` skill's probe. Not connected → print its stop
    line and stop. This applies to `dry-run`.
-2. **.env** — `OPTIMUS_API_KEY`, `GITLAB_TOKEN`, `GITLAB_PROJECT_ID` present, else
-   list the missing keys and stop.
+2. **.env** — `python3 $K/kb_paths.py env-check`. Exit 1 → list the missing keys
+   it printed and stop (`--kb-queue` needs only `OPTIMUS_API_KEY`).
 3. **Setup check** — `python3 $K/kb_doctor.py --check`, run from the folder
-   selected in Cowork. It installs nothing: it reads `.kb-env/kb-setup.json`
-   (written by `/release-note-setup`) and confirms the pieces are still on disk,
-   in well under a second. Exit 2 → setup was never run here or the folder was
+   selected in Cowork. It installs nothing: it re-detects the packages and system
+   tools that `/release-note-setup` installed, in well under a second. Exit 2 → setup was never run here or the folder was
    reset: print its line ("run /release-note-setup, then re-run") and stop. Do
    not install anything yourself.
-   Set `KB_PY` to the `KB_PY=` line it prints and run **every** `$K` script below
+   Set `KB_PY` to the `KB_PY=` line it prints — fresh every run, never from a
+   file or an earlier chat — and run **every** `$K` script below
    with `$KB_PY`. Keep the recorded items for the preview: no tesseract means
    draft-only anchors; no LibreOffice means no PDF this run. Show any `WARN` line
    (a piece gone since setup, or `CLAUDE_CODE_SUBAGENT_MODEL` overriding the
@@ -173,9 +175,13 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    ```
 
    Say what it moved, if anything.
-6. **Collections** — `$KB_PY $K/kb_ledger.py resolve`, then resolve the ledger,
-   catalogue and queue collections (and, for `since`/`pending`, the release
-   archive) by name per the `kb-ledger` skill, and save the dumps under `$RUN/`
+6. **Collections** — `python3 $K/kb_paths.py config` holds the ids setup saved
+   (`mem.kb_ledger`, `mem.kb_queue`, `mem.kb_catalogue`, `mem.release_archive`).
+   Use an id directly; only when one is missing, or a call on it fails, run
+   `$KB_PY $K/kb_ledger.py resolve` and resolve that collection by name per the
+   `kb-ledger` skill, then save it with `python3 $K/kb_paths.py merge
+   '{"mem": {"<key>": "<id>"}}'`. (`since`/`pending` also need the release
+   archive.) Save the dumps under `$RUN/`
    (`ledger_notes.json`, `catalogue_notes.json`, `queue_notes.json`,
    `archive_notes.json`).
 
@@ -258,8 +264,12 @@ $KB_PY $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json [--summa
 ### Step 4 — Preview
 
 Show, compactly: tickets kept and skipped (with reasons), writer groups (persona,
-tickets), the capture visits and the surfaces they cover per persona (admin
-first, then faculty through the Personal portal), the uncapturable list,
+tickets), the capture visits per persona (admin first, then faculty through the
+Personal portal) — for each ticket with its own route, the start page, the
+click path (e.g. `/administration/curriculum/sessions/` → first row → View →
+Add Schedule) and any step that only appears after a save ("described in
+words, no screenshot") — the uncapturable list (including "no screen": an
+email or background change),
 prior-article hits, and an estimate — writer calls = number of groups,
 classifier calls = 0 or 1, one capture call, input size from `kb_inputs`.
 
@@ -269,10 +279,12 @@ each page and returns to the Admin portal at the end.
 
 Also say: "Chrome must save downloads to Downloads without asking (Settings →
 Downloads → 'Ask where to save each file' off). GIFs land in
-Downloads/kb-capture/ and are moved out." Add it to the preview only when
-capture will run.
+Downloads/kb-capture/ and are copied out; you can delete them at the end." Add
+it to the preview only when capture will run.
 
-`dry-run` → stop here. Otherwise ask `Draft these N articles? (y/n)` unless `--yes`.
+`dry-run` → stop here. Named ids (you typed the tickets) → go straight on, no
+question. `pending`, `since` and the release hand-off (`--from-release`) → ask
+`Draft these N articles? (y/n)` unless `--yes`.
 
 ### Step 5 — Capture
 
@@ -281,6 +293,17 @@ With `--no-capture` (or a Step 0 answer that ended in "continue"), write
 recorded with `gif_creator` and exported as a GIF into `$DL/kb-capture/<run_id>/`;
 ingest takes the last frame as the screenshot. No screenshot is taken and the
 capturer never receives an image.
+
+A ticket whose own text gives a click path (e.g. "Open a Session > View > Add
+Schedule") gets one screen per click. Every click target is chosen by the
+`kbclick` script inside the page, which refuses anything that could change data
+(submit buttons, POST forms, delete / remove / toggle / portal-switch links,
+red buttons, write words like Save or Send, buttons that are not a modal / tab
+toggle); the capturer only clicks the coordinates it returns. The plugin's
+hook (`hooks/kb_guard.py`) also blocks typing, key presses, drags and form
+filling for the capture agent. A first-row click happens only when the page
+shows no tenant data. A step that only appears after a save is never reached:
+the article describes it in words.
 
 1. Plan the calls (no model, no browser):
 
@@ -299,8 +322,8 @@ capturer never receives an image.
    $KB_PY $K/kb_capture.py pickup --downloads-dir $DL --name kb-capture/$RUN_ID/canary.gif --timeout 20
    ```
 
-   Exit 0 → the GIF arrived and was readable (it prints the frame size and
-   deletes the canary); go on. Exit 1 `download_missing`, 2 `empty_export` or
+   Exit 0 → the GIF arrived and was readable (it prints the frame size; the
+   canary stays in Downloads until the cleanup at the end); go on. Exit 1 `download_missing`, 2 `empty_export` or
    3 `bad_gif` (or the batch itself erroring) → **skip capture with that
    reason**: write `{"shots": []}` to `$RUN/shots/shots.json`, say why in one
    line (Chrome download settings — "Ask where to save each file" must be off
@@ -309,18 +332,22 @@ capturer never receives an image.
    missing-screenshot markers.
 3. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
    `model: "haiku"`, prompt
-   `Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.` It drives
-   your Chrome and writes `raw/<batch_id>.json`. Log usage:
+   `Run folder: $RUN. Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.`
+   (absolute paths). It drives your Chrome — including the two-part click
+   batches, where it fills `$X`/`$Y` only from the `kbclick` result just before
+   — and writes `raw/<batch_id>.json`. Log usage:
 
    ```bash
    $KB_PY $K/kb_usage.py add --run-dir $RUN --agent kb-capturer --scope capture --model haiku \
        --tokens <total_tokens> --duration-ms <ms> --tool-uses <n>
    ```
-4. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, follow `$RUN/shots/capture.md`
-   yourself in this session with the same tools and the same rules.
-5. Ingest the raw files (reads each GIF from Downloads, moves it to
-   `shots/gifs/`, takes the last frame, verifies it, places the ringed boxes,
-   runs the tenant screen):
+4. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, or returns without having written
+   any raw file, follow `$RUN/shots/capture.md` yourself in this session with
+   the same tools and the same rules (the fallback, as QA automation does it).
+   Say so in one line.
+5. Ingest the raw files (reads each GIF from Downloads, copies it to
+   `shots/gifs/` — Downloads itself is never changed here — takes the last
+   frame, verifies it, places the ringed boxes, runs the tenant screen):
 
    ```bash
    $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --downloads-dir $DL
@@ -330,7 +357,10 @@ capturer never receives an image.
    `bridge_down`, `no_probe`, `not_reached` (its batch never ran), `retry` (a
    blocked or unreadable probe), `download_missing` (the GIF never reached
    Downloads), `empty_export` (the GIF file was empty) or `bad_gif` (it could
-   not be read as an image). **Continue** — the shots already taken are kept,
+   not be read as an image), `click_refused` (the page script would not click
+   that target, with why), `click_not_found` (no element with that text),
+   `tenant_row` (the first row showed tenant data, so it was not opened) or
+   `needs_write` (the step only appears after a save). **Continue** — the shots already taken are kept,
    the rest become missing-screenshot markers and the summary lists them.
    `--retry-partial` re-runs them later.
 
@@ -431,6 +461,18 @@ article, or the error). Then the output folder and zip path, the counts line, th
 uncapturable and left-by-capture lists (with reasons), the
 PDF warnings, and the token estimate. Offer the files for download.
 
+**Downloads cleanup** (only when capture ran): ask once, "Delete this run's N
+GIFs from Downloads/kb-capture/? (they may show demo data; copies are kept in
+the run folder)". Yes → in Cowork, the delete may need your approval for the
+Downloads folder; then
+
+```bash
+$KB_PY $K/kb_capture.py cleanup --downloads-dir $DL --names-from $RUN/shots/calls.json
+```
+
+and say how many it deleted and which it could not. No → list the folder so you
+can delete it yourself. A later run's sweep moves any leftovers into that run.
+
 ## Failure modes
 
 | Situation | Behaviour |
@@ -447,7 +489,9 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Downloads folder not mounted or declined (Cowork) | Step 0 asks once: approve it, or continue with `--no-capture` |
 | Canary failed (`download_missing`, `empty_export`, `bad_gif`) | Capture skipped with that reason, drafting continues with missing-screenshot markers; check Chrome's download settings ("Ask where to save each file" off, Downloads as the folder) and any privacy / download prompt, then `--retry-partial` |
 | A GIF missing, empty or bad for one screen | That screen is left (`download_missing`, `empty_export`, `bad_gif`), the others are kept; `--retry-partial` re-runs it |
-| Leftover GIFs from a crashed run | Step 0's sweep moves `Downloads/kb-capture/*` into `$RUN/shots/stale/` (never deletes); remove them yourself once checked |
+| Leftover GIFs from a crashed or un-cleaned run | Step 0's sweep moves `Downloads/kb-capture/*` into `$RUN/shots/stale/` (never deletes); remove them yourself once checked |
+| A click refused or not found | That ticket's remaining screens are left with the reason; the article describes those steps in words |
+| Capture agent can't drive Chrome | The orchestrator follows `capture.md` itself (Step 5.4) |
 | tesseract missing | `dom_box` anchors — fine for drafts, refused on publish |
 | LibreOffice missing | No PDFs this run; summary says so; .docx and .md still ship |
 | Capture exits 3 | Continue with what was captured; summary lists the rest |
@@ -466,7 +510,7 @@ PDF warnings, and the token estimate. Offer the files for download.
 - Touch Oracle (ORC) tickets, bugs or work types.
 - Combine tickets, or update an existing article in place.
 - Type a password or sign in for you.
-- Click or type in your account: capture only navigates, waits, hovers to park the pointer, runs a read-only probe and records each screen as a GIF.
+- Type, press keys, fill forms or click anything that saves, sends or deletes: capture navigates, waits, parks the pointer, runs a read-only probe, records each screen as a GIF, and clicks only targets the `kbclick` page script allows (menu links, tabs, View / Open, buttons that just open a modal).
 - Close your Chrome tabs.
 - Upload to Drive or Intercom.
 
@@ -475,4 +519,4 @@ PDF warnings, and the token estimate. Offer the files for download.
 - Scripts print one human line plus a `---KB_*_RESULT---` block; read the block,
   don't echo whole JSON files into the conversation.
 - Never re-type agent output; never hand-edit specs to get past a gate.
-- All working files under `/tmp/kb/<run_id>/`; deliverables only under the output root.
+- All working files under `<folder>/.kb-runs/<run_id>/`; deliverables only under the output root.

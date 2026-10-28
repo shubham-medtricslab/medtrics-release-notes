@@ -117,6 +117,55 @@ class Select(unittest.TestCase):
         self.assertEqual((s["surface"], how), ("Faculty > Notes", "module"))
         self.assertEqual(SEL.place_issue(issue("M1-33", module="Nope"), ROUTES), (None, None))
 
+    def test_url_rule_only_added_urls_py_lines(self):
+        body = "+ x = '/gradebook/grouped/'\n- path('gradebook/grouped/', v)\n"
+        for path in ("src/x/views.py", "src/x/urls.py"):
+            self.assertEqual(SEL.place_issue(issue("M1-34", diffs=[(path, body)]), ROUTES), (None, None))
+        s, how = SEL.place_issue(issue("M1-35", diffs=[("src/x/urls.py", "+    path('gradebook/grouped/', v)")]),
+                                 ROUTES)
+        self.assertEqual(how, "url")
+
+    def test_ticket_route_placement(self):
+        desc = ("**URL/Page:** https://demo.medtricslab.com/gradebook/grouped/\n\n"
+                "Opens a Session > hits View Button\n")
+        s, how = SEL.place_issue(issue("M1-36", description=desc), ROUTES)
+        self.assertEqual(how, "ticket_route")
+        p = SEL._placement(issue("M1-36", description=desc), s, how, ROUTES)
+        self.assertEqual((p["persona"], p["surface"], p["url"], p["capturable"]),
+                         ("admin", "/gradebook/grouped/", "/gradebook/grouped/", True))
+        self.assertEqual(p["route"]["clicks"], [{"row": True}, {"text": "View"}])
+        # unmatched path: admin persona, the path is the surface
+        d2 = "**URL/Page:** https://demo.medtricslab.com/cases/administration/demographic-list/\n"
+        s, how = SEL.place_issue(issue("M1-37", description=d2), ROUTES)
+        p = SEL._placement(issue("M1-37", description=d2), s, how, ROUTES)
+        self.assertEqual((p["persona"], p["surface"]), ("admin", "/cases/administration/demographic-list/"))
+        # a personal-portal page ("/my/") is the faculty persona
+        d4 = "**URL/Page:** https://lmucvm.medtrics.sg/forms/evaluation/my/#Review\n"
+        s, how = SEL.place_issue(issue("M1-38", description=d4), ROUTES)
+        p = SEL._placement(issue("M1-38", description=d4), s, how, ROUTES)
+        self.assertEqual((p["persona"], p["url"]), ("faculty", "/forms/evaluation/my/#Review"))
+        # a known ticket still wins over its description's route
+        d3 = "**URL/Page:** https://demo.medtricslab.com/gradebook/grouped/\n"
+        self.assertEqual(SEL.place_issue(issue("M1-10", description=d3), ROUTES)[1], "known")
+
+    def test_group_route_clicks_get_own_entry(self):
+        def pl(tid, clicks):
+            d = ("**URL/Page:** https://demo.medtricslab.com/reports/x/\n"
+                 + ("Opens a Session > hits View Button\n" if clicks else ""))
+            i = issue(tid, description=d)
+            s, how = SEL.place_issue(i, ROUTES)
+            return SEL._placement(i, s, how, ROUTES)
+        placements = [pl("M1-60", True), pl("M1-61", True), pl("M1-62", False), pl("M1-63", False),
+                      SEL._placement(issue("M1-64"), ROUTES["surfaces"][1], "module", ROUTES)]
+        capture, _, _ = SEL.group(placements, ROUTES)
+        by = {tuple(c["tickets"]): c for c in capture}
+        self.assertEqual(set(by), {("M1-60",), ("M1-61",), ("M1-62", "M1-63"), ("M1-64",)})
+        c = by[("M1-60",)]
+        self.assertEqual(c["clicks"], [{"row": True}, {"text": "View"}])
+        self.assertEqual((c["url"], c["route_source"], c["write_gated"]), ("/reports/x/", "url_page", ""))
+        self.assertEqual(by[("M1-62", "M1-63")]["clicks"], [])
+        self.assertEqual(by[("M1-64",)]["clicks"], [])
+
     def test_capturability(self):
         p = SEL._placement(issue("M1-20"), ROUTES["surfaces"][1], "known", ROUTES)
         self.assertFalse(p["capturable"])
@@ -135,6 +184,17 @@ class Select(unittest.TestCase):
         self.assertTrue(all(w["persona"] == "admin" for w in writers))
         self.assertEqual(capture[0]["session"], "valid")
         self.assertEqual(uncap, [])
+
+    def test_group_write_gated_is_not_shared_across_tickets(self):
+        def pl(tid, gated):
+            return {"ticket": tid, "persona": "admin", "surface": "Forms > Assignments",
+                    "url": "/forms/x/", "capturable": True,
+                    "route": {"start": "/forms/x/", "clicks": [], "write_gated": gated, "source": "url_page"}}
+        placements = [pl("M1-70", "confirm dialog after Save"), pl("M1-71", ""), pl("M1-72", ""),
+                      pl("M1-73", "confirm dialog after Save")]
+        capture, _, _ = SEL.group(placements, ROUTES)
+        by = {tuple(c["tickets"]): c["write_gated"] for c in capture if c["persona"] == "admin"}
+        self.assertEqual(by, {("M1-70", "M1-73"): "confirm dialog after Save", ("M1-71", "M1-72"): ""})
 
     def test_classifier_bundle_and_merge(self):
         text = SEL.classifier_bundle([issue("M1-40", description="x" * 900)], ROUTES)
@@ -169,6 +229,27 @@ class Inputs(unittest.TestCase):
         self.assertNotIn("Old Label", rec["ui_strings"])
         self.assertEqual(rec["routes"], ["forms/picker/"])
         self.assertEqual(rec["labels"][0], "Filter to Selected")
+
+    def test_labels_user_visible_only(self):
+        desc = ('Add "Custom Question" and "DemographicOptions" with "ANSWER_TEXT_TYPES".\n'
+                'Email Subject: "Your case log was reviewed"\n'
+                'Body: "Hi {name}, Please review"\n')
+        diff = ("+<button>Add Question</button>\n"
+                "+    label=_('Question text')\n"
+                "+    foo = _('some_key')\n")
+        i = issue("M1-1", description=desc, diffs=[("src/templates/q.html", diff),
+                                                   ("src/apps/q/forms.py",
+                                                    "+    q = forms.Field(label='Python Label')\n"
+                                                    "+    t = _('Gettext Label')\n")])
+        labels = I.build_input(i)["labels"]
+        self.assertEqual(labels, ["Custom Question", "Add Question", "Question text", "Gettext Label"])
+
+    def test_route_uses_untrimmed_description(self):
+        import kb_route as R
+        desc = "word " * 3000 + "\n**URL/Page:** https://demo.medtricslab.com/reports/\n"
+        i = issue("M1-1", description=desc)
+        self.assertLess(len(I.build_input(i, cap=1000)["description"]), 700)
+        self.assertEqual(R.extract(i)["start"], "/reports/")
 
     def test_cap_and_summary_reuse(self):
         rec = I.build_input(issue("M1-1", description="word " * 5000), cap=1000)
@@ -367,6 +448,29 @@ class Spec(unittest.TestCase):
         self.assertNotIn("s2 ·", text)
         self.assertIn("Prior articles (list only, do not merge): CX-1 How to X", text)
         self.assertIn("none (no demo data)", text)
+
+    def test_cmd_bundle_translates_reason_codes_for_the_writer(self):
+        import types
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            groups = {"writer_groups": [{"group_id": "admin-01", "persona": "admin", "portal": "P",
+                                         "audience": "A", "tickets": ["M1-1", "M1-2", "M1-3"]}],
+                      "uncapturable": [{"ticket": "M1-1", "reason": "no_screen"},
+                                       {"ticket": "M1-2", "reason": "no demo data"}]}
+            (d / "g.json").write_text(json.dumps(groups))
+            (d / "s.json").write_text(json.dumps({"missing": {"M1-3": {"reason": "needs_write"}}}))
+            (d / "i.json").write_text("{}")
+            (d / "p.json").write_text("{}")
+            a = types.SimpleNamespace(groups=str(d / "g.json"), inputs=str(d / "i.json"),
+                                      priors=str(d / "p.json"), shots=str(d / "s.json"),
+                                      out_dir=str(d / "out"))
+            self.assertEqual(SP.cmd_bundle(a), 0)
+            text = (d / "out" / "writer_admin-01.md").read_text()
+            self.assertNotIn("no_screen", text)
+            self.assertNotIn("needs_write", text)
+            self.assertIn("this change has no screen", text)
+            self.assertIn("none (no demo data)", text)
+            self.assertIn("after you save", text)
 
 
 @unittest.skipUnless(has_module("docx"), "python-docx not installed")

@@ -13,3 +13,5 @@ node_modules/
 .kb-sessions/
 .kb-env/
 .env-kb-login
+.kb-runs/
+.medtrics-release-notes/

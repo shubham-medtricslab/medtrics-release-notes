@@ -57,6 +57,9 @@ class BuildPluginTestCase(unittest.TestCase):
         (self.root / "scripts" / "kb" / "kb_format.py").write_text("X = 1\n")
         (self.root / "agents").mkdir()
         (self.root / "agents" / "kb-writer.md").write_text("---\n")
+        (self.root / "hooks").mkdir()
+        (self.root / "hooks" / "hooks.json").write_text("{}\n")
+        (self.root / "hooks" / "kb_guard.py").write_text("pass\n")
 
     def _build(self):
         return build_plugin.build(self.root, self.out_dir)
@@ -167,6 +170,13 @@ class BuildPluginTestCase(unittest.TestCase):
         self.assertNotIn("KB-PLAN.md", names)
         self.assertIn("scripts/kb/kb_format.py", names)
         self.assertIn("agents/kb-writer.md", names)
+        self.assertIn("hooks/hooks.json", names)
+        self.assertIn("hooks/kb_guard.py", names)
+
+    def test_missing_kb_guard_hook_fails_the_build(self):
+        (self.root / "hooks" / "kb_guard.py").unlink()
+        with self.assertRaises(build_plugin.BuildError):
+            self._build()
 
     def test_missing_kb_writer_agent_fails_the_build(self):
         (self.root / "agents" / "kb-writer.md").unlink()

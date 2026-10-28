@@ -170,6 +170,45 @@ class Match(unittest.TestCase):
         self.assertIn("CX-780", L.prior_line(res))
 
 
+MEM_BODY = ("KB: M1-1596 · How to Add a Case Log Question\n\n"
+            "**Ticket:** M1-1596\\\n**Optimus type:** feature\\\n**Status:** drafted\\\n"
+            "**Article title:** How to Add a Case Log Question\\\n**Generated:** 2026-10-28\\\n"
+            "**Run:** kb-20261028-1200\\\n**Prior article:** M1-1596 How to Add a Case Log Question (ledger, 1.00)\\\n"
+            "**Published as:** —\\\n")
+
+
+class MemHardBreaks(unittest.TestCase):
+    """Mem hands notes back with a trailing backslash on each line."""
+
+    def test_values_are_clean_and_dates_parse(self):
+        rec = L.parse_ledger_note({"id": "n9", "version": 1, "content": MEM_BODY})
+        self.assertEqual(rec["ticket"], "M1-1596")
+        self.assertEqual(rec["status"], "drafted")
+        self.assertEqual(rec["generated"], "2026-10-28")
+        self.assertEqual(rec["published_as"], "")
+        self.assertFalse(any(v.endswith("\\") for v in rec.values() if isinstance(v, str)))
+
+    def test_index_key_is_the_plain_id(self):
+        idx = L.ledger_index([{"id": "n9", "version": 1, "content": MEM_BODY}])
+        self.assertEqual(list(idx), ["M1-1596"])
+
+    def test_catalogue_and_queue_values_clean_too(self):
+        q = L.parse_queue_note("KB queue: M1-9 · T\n\n**Ticket:** M1-9\\\n**Status:** pending\\\n"
+                               "**Queued:** 2026-10-20  \\\n")
+        self.assertEqual((q["ticket"], q["status"], q["queued"]), ("M1-9", "pending", "2026-10-20"))
+
+    def test_ticket_never_its_own_prior(self):
+        ledger = L.ledger_index([{"id": "n9", "version": 1, "content": MEM_BODY}])
+        issues = [{"identifier": "M1-1596\\", "title": "How to Add a Case Log Question",
+                   "module": "Cases"}]
+        catalogue = [{"id": "CX-1", "title": "How to Add a Case Log Question", "module": "Cases"}]
+        res = L.match(issues, catalogue, ledger)["M1-1596\\"]
+        self.assertEqual([r["id"] for r in res], ["CX-1"])
+        res = L.match([{"identifier": "m1-1596", "title": "How to Add a Case Log Question"}],
+                      [], ledger)["m1-1596"]
+        self.assertEqual(res, [])
+
+
 def queue_note(ticket, status="pending", queued="2026-10-20", nid="q1", version=2, **kw):
     rec = {"ticket": ticket, "status": status, "source": "release-slack",
            "released": "2026-10-20", "title": f"Title {ticket}", "queued": queued, **kw}

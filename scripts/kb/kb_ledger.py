@@ -180,7 +180,8 @@ def _fields(lines, schema):
         label = m.group("key").strip().lower()
         for flabel, key in schema:
             if flabel.lower() == label:
-                v = m.group("value").strip()
+                # Mem returns a hard line break as a trailing backslash
+                v = re.sub(r"[\\\s]+$", "", m.group("value")).strip()
                 rec[key] = "" if v == NONE else v
     return rec
 
@@ -345,6 +346,11 @@ def score(ticket_text, article_text):
     return round(len(common) / math.sqrt(len(a) * len(b)), 3), common
 
 
+def _nid(x):
+    """A ticket id compared loosely: upper-case, no backslashes or spaces."""
+    return re.sub(r"[\\\s]", "", str(x or "")).upper()
+
+
 def match(issues, catalogue, ledger, top=3, floor=0.3):
     out = {}
     cands = [{"id": c["id"], "title": c["title"], "module": c.get("module", ""),
@@ -356,7 +362,7 @@ def match(issues, catalogue, ledger, top=3, floor=0.3):
         text = f"{issue.get('title', '')} {issue.get('module', '')}"
         ranked = []
         for c in cands:
-            if c["source"] == "ledger" and c["id"].upper() == tid.upper():
+            if _nid(c["id"]) == _nid(tid):
                 continue
             s, common = score(text, f"{c['title']} {c['module']}")
             if s >= floor:

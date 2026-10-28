@@ -7,7 +7,9 @@ next run reads the marker and skips (no installer called); a piece that
 vanished (reset sandbox) is reinstalled alone; a piece recorded unavailable
 is not retried until --force; Playwright and Chromium are installed only with --with-playwright (and
 Chromium only once Playwright works); no .env-kb-login issue is raised;
-the marker carries the environment's python.
+the marker holds no absolute path (KB_PY is resolved per run from the folder, never
+read from a file another chat wrote); --check looks at the disk now, ignoring a
+stale or foreign marker; setup records its result in the config.
 """
 
 import json
@@ -55,7 +57,7 @@ class Setup(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.home = Path(self._tmp.name)
+        self.home = Path(self._tmp.name).resolve()
 
     def run_setup(self, fake, force=False, with_playwright=False):
         with mock.patch.object(D, "probe_all", fake.probe):
@@ -78,7 +80,8 @@ class Setup(unittest.TestCase):
         self.assertNotIn("LibreOffice", fake.calls[1][1])
         on_disk = json.loads((self.home / D.ENV_DIR / D.MARKER).read_text())
         self.assertEqual(on_disk["items"], marker["items"])
-        self.assertIn("py", on_disk)
+        self.assertNotIn("py", on_disk)
+        self.assertNotIn("browsers", on_disk)
 
     def test_with_playwright_installs_playwright_and_chromium(self):
         present = {n: n in ("Pillow", "numpy", "LibreOffice") for n in ALL}
@@ -118,6 +121,15 @@ class Setup(unittest.TestCase):
         marker, skipped = self.run_setup(fake)
         self.assertFalse(skipped)
         self.assertEqual(fake.calls, [("packages", ("pypdf",))])
+
+    def test_tool_installed_by_hand_is_picked_up_without_installing(self):
+        fake = Fake({n: False for n in ALL}, fail={"LibreOffice"})
+        self.run_setup(fake)
+        fake.calls.clear()
+        fake.present["LibreOffice"] = True
+        marker, skipped = self.run_setup(fake)
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(marker["items"]["LibreOffice"], "present")
 
     def test_unavailable_not_retried_until_force(self):
         fake = Fake({n: False for n in ALL}, fail={"tesseract", "LibreOffice"})
@@ -172,6 +184,15 @@ class Setup(unittest.TestCase):
             rc = D.main(["--setup", "--home", str(self.home)])
         self.assertEqual(rc, 0)
         self.assertIn("KB_PY=", buf.getvalue())
+        cfg = json.loads((self.home / ".medtrics-release-notes" / "config.json").read_text())
+        self.assertEqual(cfg["kb"]["setup"], "done")
+        self.assertEqual((self.home / ".medtrics-release-notes" / ".gitignore").read_text(), "*\n")
+
+    def fake_env_python(self):
+        py = self.home / D.ENV_DIR / "bin" / "python"
+        py.parent.mkdir(parents=True, exist_ok=True)
+        py.write_text("")
+        return py
 
     def run_check(self):
         import contextlib
@@ -189,16 +210,45 @@ class Setup(unittest.TestCase):
 
     def test_check_after_setup_installs_nothing(self):
         fake = Fake({n: True for n in ALL})
+        py = self.fake_env_python()
         with mock.patch.object(D, "probe_all", fake.probe):
             self.run_setup(fake)
             fake.calls.clear()
             rc, out = self.run_check()
         self.assertEqual(rc, 0)
-        self.assertIn("KB_PY=", out)
+        self.assertIn(f"KB_PY={py}", out)
         self.assertEqual(fake.calls, [])
+
+    def test_check_ignores_a_py_path_from_another_chat(self):
+        # The marker an old version wrote in a different Cowork chat.
+        fake = Fake({n: True for n in ALL})
+        py = self.fake_env_python()
+        (self.home / D.ENV_DIR / D.MARKER).write_text(json.dumps(
+            {"items": {n: "present" for n in ALL}, "py": "/sessions/other-chat/.kb-env/bin/python",
+             "browsers": "/sessions/other-chat/.kb-env/ms-playwright"}))
+        with mock.patch.object(D, "probe_all", fake.probe):
+            rc, out = self.run_check()
+        self.assertEqual(rc, 0)
+        self.assertIn(f"KB_PY={py}", out)
+        self.assertNotIn("other-chat", out)
+
+    def test_check_redetects_system_tools_each_run(self):
+        fake = Fake({n: True for n in ALL})
+        self.fake_env_python()
+        (self.home / D.ENV_DIR / D.MARKER).write_text(json.dumps(
+            {"items": {n: ("installed" if n in D.PY_PACKAGES else "present") for n in ALL}}))
+        fake.present["tesseract"] = False
+        with mock.patch.object(D, "probe_all", fake.probe):
+            rc, out = self.run_check()
+        self.assertEqual(rc, 0)
+        self.assertIn("WARN tesseract is gone", out)
+        res = json.loads(out.split("---KB_DOCTOR_RESULT---")[1])
+        self.assertEqual(res["items"]["tesseract"], "missing")
+        self.assertEqual(res["items"]["LibreOffice"], "present")
 
     def test_check_hard_piece_gone_needs_setup(self):
         fake = Fake({n: True for n in ALL})
+        self.fake_env_python()
         with mock.patch.object(D, "probe_all", fake.probe):
             self.run_setup(fake)
         fake2 = Fake({n: n != "python-docx" for n in ALL})

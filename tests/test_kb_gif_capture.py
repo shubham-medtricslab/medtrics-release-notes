@@ -32,7 +32,7 @@ def make_gif(path, w=1470, h=802, frames=3):
 class Actions(Base):
     def test_visit_order_and_options(self):
         calls, _ = self.plan_calls()
-        v = calls["batches"][0]["actions"][2:9]                   # first visit, after entry
+        v = calls["batches"][0]["actions"][3:10]                  # first visit, after entry + install
         self.assertEqual([(a["name"], a["input"].get("action")) for a in v],
                          [("gif_creator", "start_recording"), ("navigate", None),
                           ("computer", "wait"), ("computer", "hover"),
@@ -153,12 +153,12 @@ class PickupSweep(unittest.TestCase):
     def pick(self):
         return run_cli("pickup", "--downloads-dir", self.dl, "--name", self.name, "--timeout", 0.3)
 
-    def test_ok_deletes_canary(self):
+    def test_ok_keeps_canary_for_cleanup(self):
         make_gif(self.dl / self.name)
         rc, res, out = self.pick()
         self.assertEqual((rc, res["ok"], res["width"], res["height"]), (0, True, 1470, 802))
         self.assertIn("1470x802", out)
-        self.assertFalse((self.dl / self.name).exists())
+        self.assertTrue((self.dl / self.name).exists())     # deleting needs approval; cleanup does it
 
     def test_missing_empty_bad(self):
         rc, res, _ = self.pick()
@@ -224,7 +224,7 @@ class IngestGif(Base):
                                "--out-dir", self.shots, "--downloads-dir", self.dl, "--no-ocr", *extra)
         return rc, res, json.loads((self.shots / "shots.json").read_text())["shots"]
 
-    def test_last_frame_move_and_cleanup(self):
+    def test_last_frame_copy_then_cleanup(self):
         from PIL import Image
         make_gif(self.dl / "kb-capture/r1/v01.gif")
         make_gif(self.dl / "kb-capture/r1/v02.gif")
@@ -242,9 +242,35 @@ class IngestGif(Base):
             self.assertEqual(im.mode, "RGB")
             self.assertEqual(im.getpixel((5, 5)), (200, 30, 30))   # the LAST frame
         self.assertTrue((self.shots / "gifs" / "v01.gif").is_file())
-        self.assertFalse((self.dl / "kb-capture/r1/v01.gif").exists())
+        self.assertTrue((self.dl / "kb-capture/r1/v01.gif").exists())   # copied, not moved
+        self.assertEqual(res["downloads_left"], ["kb-capture/r1/v01.gif", "kb-capture/r1/v02.gif"])
+        self.assertEqual(Path(self.shots / "gifs" / "v01.gif").read_bytes(),
+                         (self.dl / "kb-capture/r1/v01.gif").read_bytes())
+        rc, res, _ = run_cli("cleanup", "--downloads-dir", self.dl,
+                             "--names-from", self.shots / "calls.json")
+        self.assertEqual((rc, sorted(res["deleted"])),
+                         (0, ["kb-capture/r1/v01.gif", "kb-capture/r1/v02.gif"]))
         self.assertFalse((self.dl / "kb-capture").exists())      # run folder + root removed
         self.assertTrue(self.dl.exists())
+        self.assertTrue((self.shots / "gifs" / "v01.gif").is_file())
+
+    def test_reingest_after_cleanup_uses_the_kept_copy(self):
+        make_gif(self.dl / "kb-capture/r1/v01.gif")
+        make_gif(self.dl / "kb-capture/r1/v02.gif")
+        self.write_raw([self.item("v01"), self.item("v02", probe_for([lab("Save")]))])
+        self.ingest()
+        run_cli("cleanup", "--downloads-dir", self.dl, "--names-from", self.shots / "calls.json")
+        rc, res, shots = self.ingest()
+        self.assertEqual((rc, len(shots)), (0, 2))
+
+    def test_cleanup_never_leaves_kb_capture(self):
+        outside = self.tmp / "keep.gif"
+        outside.write_bytes(b"x")
+        calls = json.loads((self.shots / "calls.json").read_text())
+        calls["visits"][0]["gif"] = "../keep.gif"
+        (self.shots / "calls2.json").write_text(json.dumps(calls))
+        run_cli("cleanup", "--downloads-dir", self.dl, "--names-from", self.shots / "calls2.json")
+        self.assertTrue(outside.exists())
 
     def test_run_folder_kept_when_not_empty(self):
         make_gif(self.dl / "kb-capture/r1/v01.gif")

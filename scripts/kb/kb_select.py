@@ -31,6 +31,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import kb_ledger as L                    # noqa: E402
+import kb_route as R                     # noqa: E402
 
 DEFAULT_ROUTES = HERE / "kb_routes.json"
 MAX_GROUP = 8
@@ -84,20 +85,61 @@ def _paths(issue):
             yield d.get("new_path") or d.get("old_path") or "", d.get("diff") or ""
 
 
+URL_DEF_RE = re.compile(r"""(?:path|re_path|url)\(\s*r?['"]""")
+
+
+def _added_url_lines(diffs):
+    """Added (+) lines of urls.py diffs that define a URL pattern."""
+    for path, body in diffs:
+        if not path.endswith("urls.py"):
+            continue
+        for line in body.splitlines():
+            if line.startswith("+") and not line.startswith("+++") and URL_DEF_RE.search(line):
+                yield line
+
+
+def _route_surface(route, routes):
+    """Synthetic surface for a ticket's own route. Persona comes from the
+    longest kb_routes url_prefix the start path falls under; no match -> admin
+    (the portal paths all live in the administration portal), except a
+    personal-portal page (a "/my/" segment), which is the faculty persona. The surface name
+    is the path, not the matched surface, which can be broader than the page."""
+    path = route["start"].split("#")[0]
+    best, size = None, 0
+    for s in routes["surfaces"]:
+        for prefix in s["match"].get("url_prefixes") or []:
+            if prefix and path.startswith(prefix) and len(prefix) > size:
+                best, size = s, len(prefix)
+    personal = "/my/" in path
+    persona = "faculty" if personal else (best["persona"] if best else "admin")
+    return {"persona": persona,
+            "surface": route["start"],      # the path itself: a prefix match can be broader than the page
+            "url": route["start"], "also_personas": [], "recipe": [], "match": {},
+            "route": route,
+            "route_reason": (f"route from ticket ({route['source']}); persona from "
+                             + ("the personal-portal path" if personal
+                                else f"surface {best['surface']}" if best else "default portal"))}
+
+
 def place_issue(issue, routes):
     """(surface_entry, how) or (None, None). Order: the backlog's known
-    placement, then a URL prefix the diff touches, then a template path, then a
-    unique module match."""
+    placement (an explicit decision wins), then the route the ticket's own text
+    gives (kb_route), then an added URL pattern in a urls.py diff, then a
+    template path, then a unique module match."""
     tid = issue["identifier"]
     surfaces = routes["surfaces"]
     for s in surfaces:
         if tid in s.get("known_tickets", {}):
             return s, "known"
+    route = R.extract(issue)
+    if route:
+        return _route_surface(route, routes), "ticket_route"
     diffs = list(_paths(issue))
+    added = list(_added_url_lines(diffs))
     for s in surfaces:
         for prefix in s["match"].get("url_prefixes") or []:
             core = prefix.strip("/")
-            if core and any(core in body for _, body in diffs):
+            if core and any(core in line for line in added):
                 return s, "url"
     for s in surfaces:
         for glob in s["match"].get("template_globs") or []:
@@ -113,6 +155,12 @@ def place_issue(issue, routes):
 
 
 def _placement(issue, s, how, routes):
+    if s.get("route"):
+        persona = routes["personas"][s["persona"]]
+        return {"ticket": issue["identifier"], "persona": s["persona"], "also_personas": [],
+                "surface": s["surface"], "url": s["route"]["start"], "route": s["route"],
+                "portal": persona["portal"], "audience": persona["audience"], "how": how,
+                "capturable": True, "reason": s.get("route_reason", "")}
     status = s.get("known_tickets", {}).get(issue["identifier"], "")
     persona = routes["personas"][s["persona"]]
     uncapturable = (not s.get("url") or persona.get("no_session")
@@ -157,7 +205,7 @@ def merge_classifier(placed, answer, routes, data_by_id):
         if row.get("has_ui") is False:
             placed["placements"].append({"ticket": tid, "persona": "", "surface": "",
                                          "capturable": False, "how": "classifier",
-                                         "reason": "no ui surface"})
+                                         "reason": "no_screen"})
             continue
         s = by_surface.get((row.get("persona"), row.get("surface"))) or by_name.get(row.get("surface"))
         if not s:
@@ -181,12 +229,21 @@ def group(placements, routes, max_group=MAX_GROUP, sessions=None):
         for persona in [p["persona"]] + list(p.get("also_personas") or []):
             if persona not in routes["personas"] or routes["personas"][persona].get("no_session"):
                 continue
-            key = (persona, p["surface"])
+            route = p.get("route") or {}
+            clicks = route.get("clicks") or []
+            # A ticket with its own click path gets its own visit; a route without
+            # clicks shares a visit with others on the same page.
+            key = ((persona, p["surface"], p["ticket"]) if clicks
+                   else (persona, "route", p["url"], route.get("write_gated", "")) if route
+                   else (persona, p["surface"]))
             if key not in by_key:
                 by_key[key] = {"persona": persona, "surface": p["surface"], "url": p["url"],
                                "recipe": next((s.get("recipe", []) for s in routes["surfaces"]
                                                if s["surface"] == p["surface"]), []),
+                               "clicks": clicks, "write_gated": route.get("write_gated", ""),
                                "tickets": [], "session": sessions.get(persona, "unknown")}
+                if route:
+                    by_key[key]["route_source"] = route.get("source", "")
                 capture.append(by_key[key])
             by_key[key]["tickets"].append(p["ticket"])
     capture.sort(key=lambda c: (c["persona"], order.get((c["persona"], c["surface"]), 1e9)))

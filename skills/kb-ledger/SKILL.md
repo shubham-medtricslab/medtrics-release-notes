@@ -43,10 +43,10 @@ each collection, following `next_page` to the end, and save the merged
 
 | Dump | Path |
 |---|---|
-| Ledger | `/tmp/kb/<run>/ledger_notes.json` |
-| Catalogue | `/tmp/kb/<run>/catalogue_notes.json` |
-| Queue | `/tmp/kb/<run>/queue_notes.json` |
-| Release archive (only for `since` / `pending`) | `/tmp/kb/<run>/archive_notes.json` — the `release-archive` collection |
+| Ledger | `<folder>/.kb-runs/<run>/ledger_notes.json` |
+| Catalogue | `<folder>/.kb-runs/<run>/catalogue_notes.json` |
+| Queue | `<folder>/.kb-runs/<run>/queue_notes.json` |
+| Release archive (only for `since` / `pending`) | `<folder>/.kb-runs/<run>/archive_notes.json` — the `release-archive` collection |
 
 A collection that does not exist yet is an empty dump (write `{"notes": []}`).
 Keep `id`, `version` and `content` — the scripts need all three.
@@ -66,7 +66,7 @@ Keep `id`, `version` and `content` — the scripts need all three.
 
 ## Writing
 
-After packaging, `kb_ledger.py writes --run /tmp/kb/<run>/run.json --ledger-notes …`
+After packaging, `kb_ledger.py writes --run <folder>/.kb-runs/<run>/run.json --ledger-notes …`
 emits a list of writes. Perform each in order:
 
 - `create` → `create_note({content, collection_ids: [<ledger uuid>]})`
@@ -126,7 +126,7 @@ drafted or matched, so the first run only drafts the rest:
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_ledger.py seed-legacy \
     --tickets <path>/tickets.json --articles <path>/articles_a.json <path>/articles_b.json \
-    --ledger-notes /tmp/kb/seed/ledger_notes.json --out /tmp/kb/seed/writes.json
+    --ledger-notes <folder>/.kb-runs/seed/ledger_notes.json --out <folder>/.kb-runs/seed/writes.json
 ```
 
 **Intercom catalogue** — from a fresh FAQ Content Planner export (`kb2.csv`).
@@ -135,8 +135,8 @@ Columns are matched by common names (`id`/`article id`, `title`, `module`/`categ
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_ledger.py seed-catalogue \
-    --csv kb2.csv --catalogue-notes /tmp/kb/seed/catalogue_notes.json \
-    --out /tmp/kb/seed/catalogue_writes.json
+    --csv kb2.csv --catalogue-notes <folder>/.kb-runs/seed/catalogue_notes.json \
+    --out <folder>/.kb-runs/seed/catalogue_writes.json
 ```
 
 Perform the writes as above (all `create`). Until the catalogue is seeded, the

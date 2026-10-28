@@ -86,14 +86,16 @@ class PlanCalls(Base):
         visit = [("gif_creator", "start_recording"), ("navigate", None), ("computer", "wait"),
                  ("computer", "hover"), ("javascript_tool", "javascript_exec"),
                  ("gif_creator", "stop_recording"), ("gif_creator", "export")]
-        self.assertEqual(names, entry + visit * 3)
+        install = [("javascript_tool", "javascript_exec")]       # every run, first batch, after entry
+        self.assertEqual(names, entry + install + visit * 3)
+        self.assertEqual(b["actions"][2]["input"], calls["install"])
         for a in b["actions"]:
             self.assertEqual(a["input"]["tabId"], "$TAB")
         acts = b["actions"]
         self.assertTrue(acts[0]["input"]["url"].endswith("/?portal_change=administration"))
         self.assertEqual(acts[1]["input"]["duration"], 2)
-        self.assertEqual(acts[5]["input"]["coordinate"], [1465, 740])
-        self.assertEqual(acts[3]["input"]["url"], "https://medtrics.medtricslab.com/users/")
+        self.assertEqual(acts[6]["input"]["coordinate"], [1465, 740])
+        self.assertEqual(acts[4]["input"]["url"], "https://medtrics.medtricslab.com/users/")
         self.assertNotIn("screenshot", [a["input"].get("action") for a in acts])
 
     def test_per_batch_and_persona_entry(self):
@@ -117,7 +119,7 @@ class PlanCalls(Base):
         self.assertEqual((a["portal"], a["login"], a["domain"], a["v"]),
                          ("Admin", "/users/login/", "medtricslab.com", calls["probe_version"]))
         self.assertEqual(calls["visits"][4]["args"]["portal"], "Personal")
-        stub = calls["batches"][0]["actions"][6]["input"]["text"]
+        stub = calls["batches"][0]["actions"][7]["input"]["text"]
         self.assertTrue(stub.endswith(")(" + json.dumps(a) + ")"))
         self.assertIn("KB_NOPROBE", stub)
         self.assertIn("(0,eval)(sessionStorage.getItem('kbp'))", stub)
@@ -130,6 +132,10 @@ class PlanCalls(Base):
         ins = calls["install"]
         self.assertEqual((ins["action"], ins["tabId"]), ("javascript_exec", "$TAB"))
         self.assertIn("sessionStorage.setItem('kbp',S)", ins["text"])
+        self.assertIn("sessionStorage.setItem('kbc',K)", ins["text"])
+        self.assertIn(json.dumps(C.click_source()), ins["text"])
+        only_first = [b for b in calls["batches"] if ins in [a["input"] for a in b.get("actions", [])]]
+        self.assertEqual([b["batch_id"] for b in only_first], ["b01"])
         self.assertTrue(ins["text"].endswith("'kbp:'+S.length"))
         self.assertTrue(ins["text"].startswith("var S=" + json.dumps(C.probe_source())))
 

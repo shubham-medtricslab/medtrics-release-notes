@@ -7,19 +7,21 @@ kb_doctor.py — set up, once, everything /kb-articles needs, and remember it.
             Pillow, numpy, pypdf, pytesseract), tries
             the system tools (tesseract, LibreOffice, the Carlito font) with
             apt-get or Homebrew, and writes <home>/.kb-env/kb-setup.json.
-            Later runs read that file and only confirm the installed pieces are
-            still on disk (file lookups, no imports, no network) — nothing is
-            re-checked or re-downloaded. A piece that could not be installed is
-            recorded as unavailable and not retried; `--setup --force` retries
-            everything. Prints `KB_PY=<python>` for the command to run every KB
-            script with.
+            Later runs only confirm the installed pieces are still on disk (file
+            lookups, no imports, no network) — nothing is re-downloaded. A piece
+            that could not be installed is recorded as unavailable and not
+            retried; `--setup --force` retries everything. The outcome is also
+            recorded in <home>/.medtrics-release-notes/config.json (kb.setup,
+            kb.items). Prints `KB_PY=<python>` — resolved now, never read from a
+            file, because a Cowork chat's folder path changes between chats.
   --with-playwright
             Also install Playwright + its Chromium (the legacy screenshot
             path). Off by default: screenshots use the Claude in Chrome
             extension, which needs nothing installed here.
-  --check   What /kb-articles runs every time: reads kb-setup.json and confirms
-            the hard pieces are still on disk. Installs nothing. Exit 2 when
-            setup was never run here or the folder was reset — the command then
+  --check   What /kb-articles runs every time: looks at the environment and the
+            system tools on disk right now (cheap lookups, fast) and confirms the
+            hard pieces are there. Installs nothing. Exit 2 when they are not
+            (setup never ran here, or the folder was reset) — the command then
             tells you to run /release-note-setup.
   (none)    Report only, for the current interpreter. Nothing is installed.
 
@@ -35,6 +37,9 @@ the model each KB agent pins.
     ---KB_DOCTOR_RESULT---
     {"ok", "py", "skipped", "items": {name: "installed"|"present"|"unavailable"},
      "sessions": {...}, "warnings": [...]}
+
+kb-setup.json (in .kb-env) is kept for older readers; it holds only the item
+statuses and dates, and nothing in this script reads a path from it.
 """
 
 import argparse
@@ -51,7 +56,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-ENV_DIR = ".kb-env"
+import kb_paths  # noqa: E402
+
+ENV_DIR = kb_paths.ENV_DIR
 MARKER = "kb-setup.json"
 BROWSERS = "ms-playwright"
 
@@ -79,7 +86,7 @@ NOT_REQUESTED = "not requested"
 
 
 def home(arg=None):
-    return Path(arg or os.environ.get("KB_HOME") or os.getcwd()).resolve()
+    return kb_paths.folder(arg)
 
 
 def env_python(env):
@@ -231,7 +238,15 @@ def setup(h, force=False, installers=None, with_playwright=False):
         late = [n for n in OPTIONAL if with_playwright
                 and marker["items"].get(n, NOT_REQUESTED) == NOT_REQUESTED]
         todo = gone + [n for n in late if n not in gone]
+        # a tool recorded unavailable that is on disk now (installed by hand)
+        now = probe_all(env)
+        fixed = [n for n, st in marker["items"].items()
+                 if st.startswith("unavailable") and now.get(n)]
+        for n in fixed:
+            marker["items"][n] = "present"
         if not todo:
+            if fixed:
+                _write_marker(env, marker)
             return marker, True
     else:
         now = probe_all(env)
@@ -260,13 +275,17 @@ def setup(h, force=False, installers=None, with_playwright=False):
     if sys_todo:
         marker["items"].update(inst["system"](sys_todo))
 
-    py = env_python(env)
-    marker.update({"py": str(py) if py else sys.executable,
-                   "browsers": str(env / BROWSERS),
-                   "updated": _dt.datetime.now().isoformat(timespec="seconds")})
+    _write_marker(env, marker)
+    return marker, False
+
+
+def _write_marker(env, marker):
+    # No absolute paths: KB_PY and the browsers folder are resolved per run.
+    marker.pop("py", None)
+    marker.pop("browsers", None)
+    marker["updated"] = _dt.datetime.now().isoformat(timespec="seconds")
     marker.setdefault("created", marker["updated"])
     (env / MARKER).write_text(json.dumps(marker, indent=1))
-    return marker, False
 
 
 def working(marker, name):
@@ -287,7 +306,9 @@ def _warnings():
 
 def cmd_setup(a):
     h = home(a.home)
+    kb_paths.ensure(h)
     marker, skipped = setup(h, force=a.force, with_playwright=a.with_playwright)
+    kb_paths.ensure(h)
     if skipped:
         print(f"KB setup: already done ({marker.get('updated')}) — skipping the checks.")
     else:
@@ -302,39 +323,56 @@ def cmd_setup(a):
     issues = []
     for i in issues:
         print(f"  ISSUE {i}")
-    print(f"KB_PY={marker['py']}")
-    print(f"PLAYWRIGHT_BROWSERS_PATH={marker['browsers']}")
+    py = env_python(h / ENV_DIR)
+    try:
+        kb_paths.merge(h, {"kb": {"setup": "done" if ok else "failed", "items": marker["items"]}})
+    except OSError as e:
+        print(f"  WARN could not write the config: {e}")
+    print(f"KB_PY={py or sys.executable}")
+    print(f"PLAYWRIGHT_BROWSERS_PATH={h / ENV_DIR / BROWSERS}")
     sess = sessions(a.session_dir)
     for w in _warnings():
         print(f"  WARN {w}")
     print("---KB_DOCTOR_RESULT---")
-    print(json.dumps({"ok": ok, "py": marker["py"], "skipped": skipped,
+    print(json.dumps({"ok": ok, "py": str(py or sys.executable), "skipped": skipped,
                       "items": marker["items"], "sessions": sess, "issues": issues,
                       "warnings": _warnings()}))
     return 0 if ok else 1
 
 
 def cmd_check(a):
-    """--check: never installs. Exit 0 + KB_PY when setup is done, 2 when not."""
-    env = home(a.home) / ENV_DIR
+    """--check: never installs. Exit 0 + KB_PY when the hard pieces are on disk
+    right now, 2 when not. System tools are looked up again every run."""
+    h = home(a.home)
+    env = h / ENV_DIR
     marker = load_marker(env)
-    gone = still_there(marker, env) if marker else []
+    now = probe_all(env)
     hard = [n for n, (_p, _d, is_hard, _c) in PY_PACKAGES.items() if is_hard]
-    if not marker or any(n in gone for n in hard) or not all(working(marker, n) for n in hard):
+    py = env_python(env)
+    if not py or not all(now.get(n) for n in hard):
         why = "not done in this folder" if not marker else "incomplete or reset"
         print(f"KB setup: {why} — run /release-note-setup, then re-run.")
         print("---KB_DOCTOR_RESULT---")
-        print(json.dumps({"ok": False, "setup": False, "gone": gone}))
+        print(json.dumps({"ok": False, "setup": False,
+                          "gone": [n for n in hard if not now.get(n)]}))
         return 2
-    print(f"KB setup: done ({marker.get('updated')}).")
+    items = {n: ("present" if ok else (NOT_REQUESTED if n in OPTIONAL else "missing"))
+             for n, ok in now.items()}
+    # what setup could not install is "unavailable"; what is simply absent is "missing"
+    for n, st in (marker or {}).get("items", {}).items():
+        if items.get(n) == "missing" and st.startswith("unavailable"):
+            items[n] = st
+    gone = [n for n, st in (marker or {}).get("items", {}).items()
+            if st in ("installed", "present") and not now.get(n)]
+    print("KB setup: done.")
     for n in gone:
         print(f"  WARN {n} is gone since setup — run /release-note-setup to put it back")
-    print(f"KB_PY={marker['py']}")
-    print(f"PLAYWRIGHT_BROWSERS_PATH={marker['browsers']}")
+    print(f"KB_PY={py}")
+    print(f"PLAYWRIGHT_BROWSERS_PATH={env / BROWSERS}")
     for w in _warnings():
         print(f"  WARN {w}")
     print("---KB_DOCTOR_RESULT---")
-    print(json.dumps({"ok": True, "setup": True, "py": marker["py"], "items": marker["items"],
+    print(json.dumps({"ok": True, "setup": True, "py": str(py), "items": items,
                       "gone": gone, "warnings": _warnings()}))
     return 0
 
@@ -365,7 +403,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--setup", action="store_true")
     ap.add_argument("--check", action="store_true",
-                    help="confirm setup was done (reads kb-setup.json); installs nothing")
+                    help="confirm the hard pieces are on disk now; installs nothing")
     ap.add_argument("--force", action="store_true", help="with --setup: re-check and retry everything")
     ap.add_argument("--with-playwright", action="store_true",
                     help="with --setup: also install Playwright + Chromium (legacy capture path)")

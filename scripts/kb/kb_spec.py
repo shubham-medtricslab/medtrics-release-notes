@@ -158,14 +158,17 @@ def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
     """prose + evidence -> spec (images annotated under out_root/assets/<ticket>/)."""
     tid = prose["ticket"]
     by_id = {s["shot_id"]: s for s in shots if s.get("verified")}
-    steps = []
+    steps, no_screen = [], False
     for n, st in enumerate(prose.get("steps") or [], 1):
         step = {"text": st.get("text", "")}
         if st.get("caption"):
             step["caption"] = st["caption"]
         sid = st.get("shot")
         if sid == "missing":
-            step["missing_shot"] = missing_reason or "no screenshot captured"
+            if missing_reason == F.NO_SCREEN:
+                no_screen = True                   # no marker; one note below
+            else:
+                step["missing_shot"] = missing_reason or "no screenshot captured"
         elif sid:
             shot = by_id.get(sid)
             if not shot:
@@ -191,7 +194,7 @@ def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
         "considerations": prose.get("considerations") or [],
         "conclusion": prose.get("conclusion", ""), "meta": meta,
         "provenance": {"note": f"Captured on the demo tenant; annotated per {F.summary()}."},
-        "notes": prose.get("notes") or [],
+        "notes": list(prose.get("notes") or []) + ([F.NO_SCREEN_NOTE] if no_screen else []),
     }
 
 
@@ -246,7 +249,11 @@ def cmd_bundle(a):
     groups = _load(a.groups)
     inputs, priors = _load(a.inputs, {}), _load(a.priors, {})
     shots = shots_by_ticket(_load(a.shots, {}))
-    uncap = {u["ticket"]: u["reason"] for u in groups.get("uncapturable") or []}
+    uncap = {}
+    for tid, m in [(u["ticket"], u["reason"]) for u in groups.get("uncapturable") or []] + \
+            list(((_load(a.shots, {}) or {}).get("missing") or {}).items()):
+        t = _reason_text(m)                      # the writer never sees a raw code
+        uncap[tid] = "this change has no screen" if t == F.NO_SCREEN else t
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     sizes = []
@@ -270,11 +277,20 @@ def cmd_ingest(a):
     return 0
 
 
+def _reason_text(r):
+    """A plan-time reason (str) or a shots.json `missing` entry ({reason, detail}) -> marker words."""
+    if isinstance(r, dict):
+        return F.missing_reason_text(r.get("reason"), r.get("detail", "")) or None
+    return F.missing_reason_text(r) if r else r
+
+
 def cmd_assemble(a):
     groups, routes = _load(a.groups), _load(a.routes)
     shots = shots_by_ticket(_load(a.shots, {}))
     priors = _load(a.priors, {})
     uncap = {u["ticket"]: u["reason"] for u in groups.get("uncapturable") or []}
+    for tid, m in ((_load(a.shots, {}) or {}).get("missing") or {}).items():
+        uncap[tid] = m                              # per-screen capture reason wins
     placed = {}
     for g in groups["writer_groups"]:
         for tid in g["tickets"]:
@@ -299,7 +315,7 @@ def cmd_assemble(a):
                 "persona": g["persona"].title(), "surface": surface_of.get(tid, ""),
                 "prior": priors.get(tid) or []}
         spec, ok, prose_fails = assemble_one(prose, shots.get(tid, []), meta,
-                                             uncap.get(tid), out_root, annotate=not a.no_annotate)
+                                             _reason_text(uncap.get(tid)), out_root, annotate=not a.no_annotate)
         (out_root / f"{tid}.json").write_text(json.dumps(spec, indent=1, ensure_ascii=False))
         if not ok:
             failures.append({"ticket": tid, "fails": [str(f) for f in prose_fails],

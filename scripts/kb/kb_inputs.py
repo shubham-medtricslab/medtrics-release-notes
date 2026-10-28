@@ -62,13 +62,33 @@ def added_lines(issue):
                     yield path, line[1:]
 
 
+def is_label(s):
+    """True for a string a user could read on screen. Drops code identifiers
+    (CamelCase, UPPER_SNAKE, snake_case), placeholders and email copy."""
+    s = (s or "").strip()
+    if not s or re.search(r"[{}\[\]<>=]|%\(|\\", s):
+        return False
+    if " " not in s and (re.search(r"[a-z][A-Z]", s) or "_" in s or re.fullmatch(r"[A-Z0-9]{2,}", s)):
+        return False
+    if re.fullmatch(r"[A-Z0-9_ ]+", s) and "_" in s:
+        return False
+    return len(s.split()) <= 6 and not re.search(r"[.!?:]$", s)
+
+
+# An email's subject, body or greeting is copy, not a screen label.
+EMAIL_LINE_RE = re.compile(r"\b(?:subject|body|greeting|salutation)\b|^\W*(?:hi|hello|dear)\b", re.I)
+
+
 def ui_strings(issue):
+    """User-visible strings ADDED in templates/JS (any pattern) and in gettext
+    calls of .py files — never verbose_name/label kwargs of Python code."""
     seen = []
-    for _, line in added_lines(issue):
-        for rx in ADDED_STRING_RES:
+    for path, line in added_lines(issue):
+        rxs = ADDED_STRING_RES[:2] if path.endswith(".py") else ADDED_STRING_RES
+        for rx in rxs:
             for s in rx.findall(line):
                 s = s.strip()
-                if s and s not in seen and not re.search(r"[{}%<>=]", s):
+                if s and s not in seen and is_label(s):
                     seen.append(s)
     return seen
 
@@ -84,7 +104,14 @@ def routes(issue):
 
 
 def quoted(text):
-    return list(dict.fromkeys(q.strip() for q in QUOTED_RE.findall(text or "")))
+    """Quoted capitalised strings that read like labels; lines about an email's
+    subject/body/greeting are skipped."""
+    out = []
+    for line in (text or "").splitlines():
+        if EMAIL_LINE_RE.search(line):
+            continue
+        out += [q.strip() for q in QUOTED_RE.findall(line) if is_label(q)]
+    return list(dict.fromkeys(out))
 
 
 def _clip(s, n):

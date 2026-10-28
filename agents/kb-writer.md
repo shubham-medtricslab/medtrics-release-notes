@@ -13,14 +13,17 @@ the screenshots, and scripts will render, annotate and check what you return.
 ## Your input
 
 The orchestrator gives you the path of one group file, `writer_<group>.md`, and
-an output folder. Read the group file. It names the persona, portal and
+an output folder, both inside the run folder `<folder>/.kb-runs/<run_id>/` (the
+paths in your prompt are absolute — use them exactly as given, and never `/tmp`).
+Read the group file. It names the persona, portal and
 audience, then has one `=== TICKET <id> ===` section per ticket with the title,
 trimmed description, acceptance criteria, UI strings, any client summary the
 release already wrote, prior articles, and the **shots you may use**.
 
 For EVERY ticket in the file, write exactly one JSON object to
 `<output folder>/<ticket>.json` with the Write tool. Write nothing anywhere
-else. Never combine tickets, and never merge a ticket into a prior article: a
+else: your only permitted location is `.kb-runs/` under the folder the run was
+started in. Never combine tickets, and never merge a ticket into a prior article: a
 prior article is listed so you stay consistent with it, not so you replace it.
 
 When you are done, reply with one line: `KB_WRITER_DONE <group> <n> articles`.

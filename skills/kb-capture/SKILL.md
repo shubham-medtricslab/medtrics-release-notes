@@ -50,7 +50,14 @@ Step 0 (every run, except `--no-capture` and `--kb-queue`):
 
 Chrome must save downloads there without asking (Settings → Downloads → "Ask
 where to save each file" off). GIFs land in `Downloads/kb-capture/<run_id>/`
-and are moved out by ingest.
+and are copied out by ingest; `cleanup` deletes them afterwards (below).
+
+**Cleanup.** Ingest never moves or deletes anything in Downloads: it copies each
+GIF to `shots/gifs/` and reports `downloads_left`. After the drafts are in, and
+only once the owner approves, `kb_capture.py cleanup --downloads-dir $DL
+--names-from $RUN/shots/calls.json` deletes this run's GIFs (and the canary)
+and the emptied `kb-capture/<run_id>` folders; it never touches a path outside
+`Downloads/kb-capture/`.
 
 **Sweep.** `kb_capture.py sweep --downloads-dir $DL --into $RUN/shots/stale`
 moves any leftover `Downloads/kb-capture/*` folders (a crashed earlier run; they
@@ -104,19 +111,70 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    itself.
 6. **ingest** pairs each probe result with its GIF: `D/<gif>` is awaited until
    its size is stable over two polls (20 s for the first file, 5 s for the rest),
-   **moved** to `shots/gifs/<visit_id>.gif`, and its last composited frame
+   **copied** (Downloads untouched) to `shots/gifs/<visit_id>.gif`, and its last composited frame
    written to `shots/frames/<visit_id>.png`. Then, as before: map the probe's
    element boxes onto the frame, verify the label (OCR when tesseract is
    present, else a DOM match, which a draft accepts and a publish does not), run
    the tenant screen, write `shots/shots.json`. Entries carry
-   `frame_source: gif|disk`. Empty `D/kb-capture/<run_id>` (and `D/kb-capture`)
-   are removed afterwards. A 0.23.0 raw file with a readable `screenshot_path`
+   `frame_source: gif|disk`. `shots.json` also carries `screens` (one record per
+   screen, with its `reason` when it failed) and `missing` (`{ticket: {reason,
+   detail}}`), which `kb_spec assemble` turns into the missing-screenshot line;
+   the result carries `downloads_left`. A 0.23.0 raw file with a readable `screenshot_path`
    still ingests the old way. Exit 3 means some visits were left;
    `shots/resume.json` holds the rest of the plan and the reason per
    `persona/surface`: `expired`, `wrong_persona`, `bridge_down`, `no_probe`,
    `retry`, `not_reached` (its batch never ran), `download_missing` (no GIF in
    Downloads), `empty_export` (a zero-byte GIF) or `bad_gif` (not readable as an
    image).
+
+## Click visits (0.26.0)
+
+A capture_plan entry may carry `"clicks": [{"text": "View"}, {"row": true}, …]`
+(from the ticket's route) and `"write_gated"` (a step that only appears after a
+save). Visit `<entry>-s0` is the start page; each click is one more visit
+`<entry>-s1`, `-s2`, … that continues from the previous screen (an entry with
+no clicks keeps the plain id `v01`). A click visit is a **click batch** with two
+`browser_batch` calls, because the click point comes out of the first:
+
+1. `pick`: `gif_creator start_recording`, then `javascript_tool` running
+   `kbclick` (stored in `sessionStorage.kbc`, installed with the probe at the
+   start of the first batch of every run). It returns `{ok, x, y, label}`
+   (element centre in CSS px, after `scrollIntoView` with `behavior: instant`)
+   or throws `KB_CLICK_REFUSED:<why>`, `KB_CLICK_NOTFOUND:<text>` or
+   `KB_TENANT_ROW`.
+2. `act`: `computer left_click` at `"$X","$Y"` (the capturer substitutes the
+   numbers from the `pick` result), settle wait, hover at the cursor park, probe,
+   `stop_recording`, export.
+
+`kbclick` refuses (in this order): not visible; sidebar element on a `{row}`
+click; `type=submit`; inside `form[method=post]` unless a plain GET `<a href>`;
+`data-href`; inline `onclick`; class `btn-danger|text-danger|delete|remove`;
+`href` or any `data-*` value containing
+`delete|remove|destroy|toggle|archive|portal_change|logout|signout`; title,
+aria-label or text starting with a write verb (save, submit, send, confirm,
+delete, remove, archive, publish, approve, reject, sign); a `<button>` (or
+`role=button`) without `data-bs-toggle`/`data-toggle` of `modal|tab|collapse|dropdown`;
+an `<a>` with no real target (`#`, `javascript:`, none) and no toggle; and a
+point covered by another element. `{row: true}` picks the first `<a href>` in
+the first body row of the largest visible table, and only when the page's tenant
+check is CLEAR (else `KB_TENANT_ROW`). The rules live in `kb_capture.py`
+(`CLICK_RX`, `click_refusal()`, which tests pin) and the JS is generated from the
+same constants.
+
+A refused or missing click does not stop the run: the capturer sends the abort
+(`gif_creator clear`), writes `click_error` for that visit and skips the rest
+of that entry's clicks. Ingest records the screen with its reason
+(`click_refused`, `click_not_found`, `tenant_row`), never leaves it for resume,
+and `write_gated` becomes a `needs_write` screen without a visit. Reasons reach
+the article as: `needs_write` → "This step happens after you save; no
+screenshot"; `no_screen` → no marker, a one-line note; `click_*`, `tenant_row`,
+`label_not_found` → a marker with that reason.
+
+**Hook.** `hooks/hooks.json` + `hooks/kb_guard.py` (PreToolUse on
+`computer|form_input`) deny `type`, `key`, `left_click_drag` and `form_input`
+only when the caller's `agent_type` contains `kb-capturer`; everyone else and
+any hook error is allowed, and it writes no files. The Cowork spike showed
+plugin hooks fire for subagents and main chat and that a deny is honoured.
 
 ## Live-test facts the design depends on
 
@@ -137,7 +195,8 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
   (`demo.cursor_park`, `[1465, 740]`) before the export removes it.
 - The first `javascript_tool` right after `navigate` can run on the old page, so
   every visit waits after navigating (the settle wait above).
-- The probe is stored once per tab in `sessionStorage.kbp` and called with a
+- The probe is stored once per tab in `sessionStorage.kbp` (with `kbc`, the click guard; both
+  reinstalled at the start of every run) and called with a
   short stub, `(0,eval)(sessionStorage.getItem('kbp'))(<args>)`. The page
   reloads on navigation but `sessionStorage` survives. A new tab has no probe
   and the stub throws `KB_NOPROBE`.

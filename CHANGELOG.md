@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-28
+
+Fixes from the first Cowork run (M1-1596, M1-465, M1-723: every article came
+back with 0 screenshots although every GIF arrived).
+
+### Fixed
+- **Wrong page.** The URL rule matched a surface whenever its path word
+  (`resources`, `users`, `reports`) appeared anywhere in the diff. It now only
+  matches a URL pattern added in a `urls.py` file.
+- **Unseeable labels.** Code identifiers (CamelCase, UPPER_SNAKE) and email copy
+  are no longer sent to the page probe; labels come from templates, `_()` /
+  gettext and on-screen quotes only.
+- **Cowork paths.** Setup no longer stores an absolute Python path (it pointed
+  at another chat's `/sessions/<name>/`); `KB_PY` is worked out every run. Run
+  files moved from `/tmp/kb` (which agents can't read in Cowork) to
+  `<folder>/.kb-runs/<run_id>/`, which ignores itself in git.
+- **Ledger.** Mem's trailing hard-break `\` is stripped from every note field,
+  so existing notes are updated instead of duplicated and a ticket never lists
+  itself as its own prior article.
+- LibreOffice lock and temp files are removed from the output folders.
+
+### Added
+- **The ticket's own route** (`scripts/kb/kb_route.py`): the start page and
+  click path from the ticket's "URL/Page" field, the release checklist's
+  "Which portal and URL", or a QA checklist — host dropped, record-id links
+  refused. Personal-portal (`/my/`) pages use the faculty persona. The fixed
+  `kb_routes.json` map is now a fallback.
+- **Guarded clicks, one GIF per click step** (the way Charles's QA automation
+  walks a ticket). Each target is picked by the `kbclick` page script, which
+  refuses submit buttons, POST forms, delete/remove/toggle/portal-switch links,
+  red buttons, write words and buttons that are not a modal/tab toggle; a
+  first-row click happens only when the page shows no tenant data. Steps behind
+  a save are described in words (`needs_write`). New reasons: `click_refused`,
+  `click_not_found`, `tenant_row`, `needs_write`, `no_screen` (email-only
+  changes get a note, not a missing-screenshot marker).
+- **Plugin hook** `hooks/kb_guard.py`: blocks typing, key presses, drags and
+  form filling for the `kb-capturer` agent only (allow by default for
+  everything else).
+- `kb_capture.py cleanup` — deletes the run's GIFs (and the canary) from
+  Downloads after you say yes at the end of the run.
+- `scripts/kb/kb_paths.py` — the folder config
+  (`.medtrics-release-notes/config.json`: setup status, Mem collection ids, `.env`
+  key names; no absolute paths), `ensure`, `env-check`, `merge`.
+
+### Changed
+- **`/release-note-setup`** now follows the QA plugin's setup, lighter: install,
+  Chrome check, `.env` key check, find or create the KB Mem collections and
+  save their ids, approve Downloads (Cowork), a ready / to-do table. Re-running
+  only redoes what is missing.
+- Ingest **copies** GIFs out of Downloads (moving needed a Cowork delete
+  approval every run); the canary also stays until the cleanup.
+- Named tickets (`/kb-articles M1-1596`) start without the y/n; `pending`,
+  `since` and the release hand-off still ask.
+- If the Haiku capture agent can't drive Chrome, the main chat follows the
+  same capture file itself.
+
+### Verified
+- Cowork check (`/kb-spike`): a Haiku subagent drives Claude in Chrome and
+  reads/writes the selected folder; a plugin PreToolUse hook fires in the main
+  chat and in subagents and its deny is honoured.
+
 ## [0.25.0] - 2026-10-28
 
 ### Added

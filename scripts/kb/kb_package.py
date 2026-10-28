@@ -38,6 +38,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import build_kb_doc as B                # noqa: E402
+import kb_format as F                   # noqa: E402
 import kb_ledger as L                   # noqa: E402
 import kb_pdf as P                      # noqa: E402
 import kb_validate as V                 # noqa: E402
@@ -89,6 +90,21 @@ def _ticket_record(tid, spec, status, files, run_id, date, tokens, group):
     if tokens:
         rec["tokens"] = f"~{tokens:,} (apportioned, estimate)"
     return rec
+
+
+def clean_office_leftovers(out):
+    """Delete LibreOffice's lock (.~lock.<file>#) and scratch (lu*.tmp) files that
+    a PDF conversion can leave in an output folder. Returns the names removed."""
+    gone = []
+    for pat in (".~lock*#", "lu*.tmp"):
+        for f in sorted(Path(out).rglob(pat)):
+            if f.is_file():
+                try:
+                    f.unlink()
+                    gone.append(f.name)
+                except OSError:
+                    pass
+    return gone
 
 
 def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=None,
@@ -148,9 +164,11 @@ def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=No
         except Exception as e:
             pdf_note = f"PDF step skipped: {type(e).__name__}: {e}"
 
+    clean_office_leftovers(out)
     records = [_ticket_record(r["ticket"], r["spec"], r["status"], r["files"], run_id, date,
                               (usage.get("per_ticket") or {}).get(r["ticket"]), r["group"])
                for r in rows]
+    reasons = shot_reasons(groups, run_dir)
     totals = {s: sum(1 for r in rows if r["status"] == s) for s in ("drafted", "partial", "failed")}
     totals["skipped"] = len(groups.get("skipped") or [])
     totals["tokens"] = usage.get("total_tokens", 0)
@@ -160,11 +178,11 @@ def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=No
         left = sorted({c["surface"] for c in json.loads(resume.read_text())["capture_plan"]})
     run = {"run_id": run_id, "date": date, "mode": groups.get("mode"), "totals": totals,
            "records": records, "left_by_expiry": left, "output": str(out),
-           "tickets": ticket_table(requested, rows, groups, out),
+           "tickets": ticket_table(requested, rows, groups, out, reasons),
            "usage": [{"agent": u["agent"], "scope": u["scope"], "model": u["model"],
                       "total_tokens": u["total_tokens"]} for u in usage.get("rows", [])]}
     (Path(run_dir) / "run.json").write_text(json.dumps(run, indent=1, ensure_ascii=False))
-    (out / "RUN-SUMMARY.md").write_text(summary_md(run, rows, groups, pdf_report, pdf_note, usage))
+    (out / "RUN-SUMMARY.md").write_text(summary_md(run, rows, groups, pdf_report, pdf_note, usage, reasons))
 
     zpath = out / f"kb-articles-{run_id}.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
@@ -175,15 +193,40 @@ def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=No
 
 
 DONE_STATUSES = ("drafted", "partial")
+NO_SCREEN_WORDS = "no screen (text only)"
 
 
-def ticket_table(requested, rows, groups, out_dir):
+def reason_words(r):
+    """A reason code, {reason, detail} entry or plain words -> words for a reader
+    (never a raw code like no_screen)."""
+    if isinstance(r, dict):
+        t = F.missing_reason_text(r.get("reason"), r.get("detail", ""))
+    else:
+        t = F.missing_reason_text(r)
+    return NO_SCREEN_WORDS if t == F.NO_SCREEN else (t or "not captured")
+
+
+def shot_reasons(groups, run_dir=None):
+    """{TICKET: words} for tickets with no or missing screenshots: the plan's
+    uncapturable list, then <run>/shots/shots.json `missing` (what capture saw)."""
+    out = {u["ticket"].upper(): reason_words(u["reason"]) for u in groups.get("uncapturable") or []}
+    if run_dir:
+        try:
+            miss = json.loads((Path(run_dir) / "shots" / "shots.json").read_text()).get("missing") or {}
+        except (OSError, ValueError, AttributeError):
+            miss = {}
+        for tid, m in miss.items():
+            out[str(tid).upper()] = reason_words(m)
+    return out
+
+
+def ticket_table(requested, rows, groups, out_dir, reasons=None):
     """One row per ticket the run was given, in the order given: done or not,
     the files, and why. Tickets the run was not given but drafted anyway
     (e.g. from `pending`) are appended."""
     by_row = {r["ticket"].upper(): r for r in rows}
     skipped = {s["ticket"].upper(): s["reason"] for s in groups.get("skipped") or []}
-    uncap = {u["ticket"].upper(): u["reason"] for u in groups.get("uncapturable") or []}
+    uncap = shot_reasons(groups) if reasons is None else reasons
     order = list(requested) + [r["ticket"] for r in rows
                                if r["ticket"].upper() not in {t.upper() for t in requested}]
     table = []
@@ -195,8 +238,10 @@ def ticket_table(requested, rows, groups, out_dir):
                 stem = Path(r["files"][0]).stem
                 exts = [e for e in (".docx", ".pdf", ".md") if (Path(out_dir) / t / f"{stem}{e}").exists()]
                 files = f"{t}/{stem} ({', '.join(exts)})"
-            detail = ("all screenshots" if r["status"] == "drafted"
-                      else f"screenshots missing: {uncap.get(t.upper(), 'not captured')}")
+            why = uncap.get(t.upper())
+            detail = (NO_SCREEN_WORDS if why == NO_SCREEN_WORDS
+                      else "all screenshots" if r["status"] == "drafted"
+                      else f"screenshots missing: {why or 'not captured'}")
             table.append({"ticket": t, "done": "done", "files": files, "detail": detail})
         elif r:
             table.append({"ticket": t, "done": "not done", "files": "—",
@@ -217,7 +262,7 @@ def table_md(table):
     return L_
 
 
-def summary_md(run, rows, groups, pdf_report, pdf_note, usage):
+def summary_md(run, rows, groups, pdf_report, pdf_note, usage, reasons=None):
     t = run["totals"]
     L_ = [f"# KB articles — run {run['run_id']}", "",
           f"{run['date']} · mode {run.get('mode')} · **{t['drafted']} drafted · {t['partial']} partial "
@@ -236,10 +281,10 @@ def summary_md(run, rows, groups, pdf_report, pdf_note, usage):
     if failed:
         L_ += ["", "## Failed", ""] + [f"- {r['ticket']}: {r['reason'] or 'gates refused after retries'}"
                                        for r in failed]
-    uncap = groups.get("uncapturable") or []
+    uncap = shot_reasons(groups) if reasons is None else reasons
     if uncap:
         L_ += ["", "## No screenshots possible on the demo", ""] + \
-              [f"- {u['ticket']}: {u['reason']}" for u in uncap]
+              [f"- {t}: {w}" for t, w in uncap.items()]
     if run["left_by_expiry"]:
         L_ += ["", "## Left by session expiry", "",
                "Sign in again with `kb_capture.py login --persona <persona>`, then re-run "

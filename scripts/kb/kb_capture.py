@@ -10,14 +10,24 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
           actions, restore) and capture.md (the only input the capturer reads).
           Each visit is recorded with gif_creator (no screenshot); calls.json also
           carries `canary`, `abort`, `gif_dir` and a `gif` filename per visit.
+          A capture_plan entry with "clicks" ([{"text"} | {"row": true}]) gets one
+          extra visit per click ("<entry>-s0", "-s1", ...): kbclick (the click
+          guard installed with the probe) picks the point, the capturer clicks
+          it, then the usual settle/probe/export. A click batch has `pick` and
+          `act` (with "$X","$Y"). "write_gated" becomes a needs_write screen.
   ingest     --calls calls.json --raw-dir raw/ --out-dir $RUN/shots
              [--downloads-dir D] [--no-ocr] [--routes kb_routes.json]
           Turns the capturer's raw files (probe JSON + exported GIF name) into
-          shots.json entries: waits for D/<gif>, moves it to shots/gifs/, takes
-          its last frame as frames/<visit_id>.png. 0.23.0 raw files with a
+          shots.json entries: waits for D/<gif>, COPIES it to shots/gifs/ (Downloads
+          is not touched), takes its last frame as frames/<visit_id>.png. shots.json
+          also gets `screens` and `missing` ({ticket: {reason, detail}}); the result
+          carries `downloads_left`. 0.23.0 raw files with a
           screenshot_path still ingest (frames/<visit_id>.jpg). Re-ingest replaces
           by visit_id. Anything left -> resume.json and exit 3
           (download_missing / empty_export / bad_gif / retry / ...).
+  cleanup    --downloads-dir D --names-from calls.json
+          Deletes the run's GIFs (and canary) from D/kb-capture/ — only after the
+          owner approves — and the emptied folders.
   pickup     --downloads-dir D --name kb-capture/<run>/canary.gif [--timeout 20]
           Waits for the canary GIF, checks it decodes, deletes it. Exit 0 ok,
           1 download_missing, 2 empty_export, 3 bad_gif.
@@ -521,6 +531,156 @@ return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelR
 """
 
 
+# ── click guard (kbclick): refusal rules, Python mirror + the JS built from them ─
+# The same constants feed both, so tests of click_refusal() pin what the page runs.
+WRITE_VERBS = ("save", "submit", "send", "confirm", "delete", "remove", "archive",
+               "publish", "approve", "reject", "sign")
+CLICK_RX = {
+    "write": r"\b(?:" + "|".join(WRITE_VERBS) + r")",        # prefix match: "signed", "sending"
+    "cls": r"btn-danger|text-danger|delete|remove",
+    "attr": (r"delete|remove|destroy|toggle|archive|portal_change|logout|signout|"
+             r"(?<![a-z])(?:approve|reject|publish|activate|deactivate|enable|disable|"
+             r"impersonate|login[-_]?as|switch|reset|unlock|cancel|withdraw|send|sign|"
+             r"submit|confirm|save)"),                     # word-start: "assign" stays allowed
+    "tok": r"^(?:js-.+|ajax.*|post)$",                     # class tokens of script-driven links
+    "dat": r"^data-(?:method|remote|ajax)$",
+    "tog": r"^(?:modal|tab|collapse|dropdown)$",
+}
+_CLICK_RE = {k: re.compile(v, re.I if k != "tog" else 0) for k, v in CLICK_RX.items()}
+KBC_KEY = "kbc"
+KBC_ERRORS = {"KB_CLICK_REFUSED": "click_refused", "KB_CLICK_NOTFOUND": "click_not_found",
+              "KB_TENANT_ROW": "tenant_row"}
+
+
+def click_refusal(el, text_click=True):
+    """Why kbclick refuses `el`, or "" when the click is allowed (Python mirror of
+    the JS). el: {"tag", "attrs": {name: value, incl. data-*, type, href, class, title,
+    aria-label, onclick, role}, "text", "visible", "in_sidebar", "in_post_form", "occluded"}.
+    text_click is False for a {"row": true} click (sidebar elements refused)."""
+    at = el.get("attrs") or {}
+    g = lambda n: str(at.get(n, "") or "")
+    tag = str(el.get("tag") or "").lower()
+    ty, href = g("type").lower(), g("href")
+    plain_get = tag == "a" and href and not re.match(r"(#|javascript:)", href, re.I)
+    if not el.get("visible", True):
+        return "not_visible"
+    if el.get("in_sidebar") and not text_click:
+        return "sidebar"
+    if not text_click and not str(el.get("text") or "").strip():
+        return "icon_only"                       # a row link with no words: can't tell what it does
+    if ty == "submit":
+        return "submit"
+    if el.get("in_post_form") and not plain_get:
+        return "post_form"
+    if "data-href" in at:
+        return "data_href"
+    if "onclick" in at:
+        return "onclick"
+    if _CLICK_RE["cls"].search(g("class")):
+        return "danger_class"
+    if tag == "a" and (any(_CLICK_RE["tok"].search(t) for t in g("class").split())
+                       or any(_CLICK_RE["dat"].search(n) for n in at)):
+        return "ajax_link"
+    if _CLICK_RE["attr"].search(href) or any(
+            n.lower().startswith("data-") and _CLICK_RE["attr"].search(str(v or ""))
+            for n, v in at.items()):
+        return "danger_attr"
+    w = _CLICK_RE["write"]
+    if w.search(g("title")) or w.search(g("aria-label")) or w.search(str(el.get("text") or "")):
+        return "write_verb"
+    ok = bool(_CLICK_RE["tog"].search(g("data-bs-toggle") or g("data-toggle")))
+    if (tag == "button" or ty == "button" or g("role") == "button") and not ok:
+        return "button_no_toggle"
+    if tag == "a" and not ok and (not href or re.match(r"(#|javascript:)", href, re.I)):
+        return "anchor_no_target"
+    if el.get("occluded"):
+        return "occluded"
+    return ""
+
+
+# Plain JS like the probe: no comments, every statement ends with ';'.
+_CLICK_JS = r"""
+(function(a){
+var D=document,R=__RX__;
+var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
+var WR=new RegExp(R.write,'i'),CR=new RegExp(R.cls,'i'),AR=new RegExp(R.attr,'i'),TR=new RegExp(R.tog),KR=new RegExp(R.tok),DR=new RegExp(R.dat);
+var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
+var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
+var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
+var txt=function(e){return norm(e.innerText||e.value||e.textContent);};
+var why=function(e,tc){
+var tag=String(e.tagName||'').toLowerCase();
+var g=function(n){var v=e.getAttribute(n);return v===null||v===undefined?'':String(v);};
+var ty=g('type').toLowerCase(),href=g('href'),plain=tag==='a'&&href&&!/^(#|javascript:)/i.test(href);
+if(!vis(e))return 'not_visible';
+if(inSb(e)&&!tc)return 'sidebar';
+if(!tc&&!txt(e))return 'icon_only';
+if(ty==='submit')return 'submit';
+var f=e.closest('form');
+if(f&&/^post$/i.test(f.getAttribute('method')||'')&&!plain)return 'post_form';
+if(e.hasAttribute('data-href'))return 'data_href';
+if(e.hasAttribute('onclick'))return 'onclick';
+if(CR.test(String(e.className||'')))return 'danger_class';
+var tk=g('class').split(/\s+/).filter(Boolean).some(function(c){return KR.test(c);});
+var da=Array.prototype.some.call(e.attributes,function(t){return DR.test(t.name);});
+if(tag==='a'&&(tk||da))return 'ajax_link';
+var bad=AR.test(href);
+Array.prototype.forEach.call(e.attributes,function(t){if(/^data-/i.test(t.name)&&AR.test(t.value))bad=true;});
+if(bad)return 'danger_attr';
+if(WR.test(g('title'))||WR.test(g('aria-label'))||WR.test(txt(e)))return 'write_verb';
+var ok=TR.test(g('data-bs-toggle')||g('data-toggle'));
+if((tag==='button'||ty==='button'||g('role')==='button')&&!ok)return 'button_no_toggle';
+if(tag==='a'&&!ok&&(!href||/^(#|javascript:)/i.test(href)))return 'anchor_no_target';
+return '';
+};
+var el=null;
+if(a.row){
+var p=(0,eval)(sessionStorage.getItem('kbp'));
+if(p(a.pa).tn.v!=='CLEAR')throw new Error('KB_TENANT_ROW');
+var tb=Array.prototype.slice.call(D.querySelectorAll('table')).filter(vis).sort(function(x,y){var u=x.getBoundingClientRect(),v=y.getBoundingClientRect();return v.width*v.height-u.width*u.height;})[0];
+var tr=tb&&tb.querySelector('tbody tr');
+el=tr&&tr.querySelector('a[href]');
+if(!el)throw new Error('KB_CLICK_NOTFOUND:row');
+}else{
+if(WR.test(a.text))no('write_verb');
+var want=norm(a.text).toLowerCase();
+var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]')).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want;});
+if(!all.length)throw new Error('KB_CLICK_NOTFOUND:'+a.text);
+var pool=all.filter(function(e){return !inSb(e);});
+var okOf=function(l){return l.filter(function(e){return !why(e,true);});};
+var good=okOf(pool);
+if(!good.length)good=okOf(all);
+var h0=good.length?String(good[0].getAttribute('href')||''):'';
+if(good.some(function(e){return String(e.getAttribute('href')||'')!==h0;}))no('ambiguous');
+el=good[0]||pool[0]||all[0];
+}
+var w=why(el,!a.row);
+if(w)no(w);
+el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+var r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;
+var t=D.elementFromPoint(x,y);
+if(!t||!(t===el||el.contains(t)))no('occluded');
+return {ok:true,x:Math.round(x),y:Math.round(y),label:txt(el).slice(0,60)};
+})
+"""
+
+
+def click_source():
+    """kbclick as one JS function expression (evaluates to a function)."""
+    src = _CLICK_JS.replace("__RX__", json.dumps(CLICK_RX))
+    return " ".join(l.strip() for l in src.strip().splitlines())
+
+
+def click_reason(error_text):
+    """'KB_CLICK_REFUSED:onclick' -> ('click_refused', 'onclick'); None when not a click error."""
+    t = str(error_text or "")
+    for k, code in KBC_ERRORS.items():
+        i = t.find(k)
+        if i >= 0:
+            return code, t[i + len(k):].lstrip(":").strip().strip("\"'.)")[:80]
+    return None
+
+
 def probe_source():
     """The probe as one JS function expression (evaluates to a function)."""
     src = _PROBE_JS.replace("__TENANT__", json.dumps(tenant_regexes())) \
@@ -530,15 +690,17 @@ def probe_source():
 
 
 def install_action():
-    """javascript_tool input that stores the probe in sessionStorage once."""
-    src = probe_source()
-    text = (f"var S={json.dumps(src)};sessionStorage.setItem('{KEY}',S);'{KEY}:'+S.length")
+    """javascript_tool input that stores the probe (kbp) and the click guard (kbc)
+    in sessionStorage. Sent first in the first batch of every run."""
+    text = (f"var S={json.dumps(probe_source())};sessionStorage.setItem('{KEY}',S);"
+            f"var K={json.dumps(click_source())};sessionStorage.setItem('{KBC_KEY}',K);"
+            f"'{KEY}:'+S.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
 
 
-def stub(args):
-    """Short per-visit call: runs the stored probe, throws KB_NOPROBE if absent."""
-    return (f"(sessionStorage.getItem('{KEY}')?(0,eval)(sessionStorage.getItem('{KEY}'))"
+def stub(args, key=KEY):
+    """Short per-visit call: runs the stored function, throws KB_NOPROBE if absent."""
+    return (f"(sessionStorage.getItem('{key}')?(0,eval)(sessionStorage.getItem('{key}'))"
             f":()=>{{throw new Error('KB_NOPROBE')}})({json.dumps(args)})")
 
 
@@ -566,17 +728,37 @@ def settle_seconds(demo, surface_wait=None):
     return int(w) if w == int(w) else w
 
 
+def _park(demo):
+    return demo.get("cursor_park") or [1465, 740]
+
+
 def visit_actions(base_url, visit, demo):
     """One recording per visit, no screenshot: the exported GIF's last frame is
     the settled page. The probe (javascript_tool) produces no frame."""
-    park = demo.get("cursor_park") or [1465, 740]
     return [_act("gif_creator", action="start_recording"),
             _act("navigate", url=base_url + visit["url"]),
             _wait(settle_seconds(demo, visit.get("wait_s"))),
-            _act("computer", action="hover", coordinate=list(park)),
+            _act("computer", action="hover", coordinate=list(_park(demo))),
             _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
             _act("gif_creator", action="stop_recording"),
             _export(visit["gif"])]
+
+
+def click_visit_actions(visit, demo):
+    """A click visit in two phases (the click point comes out of the first):
+    pick = start the recording, run kbclick (returns {ok,x,y,label} or throws);
+    act  = left_click at "$X","$Y" (the capturer substitutes the pick result),
+           settle, park the cursor, probe, stop, export."""
+    pick = [_act("gif_creator", action="start_recording"),
+            _act("javascript_tool", action="javascript_exec",
+                 text=stub(visit["click_args"], KBC_KEY))]
+    act = [_act("computer", action="left_click", coordinate=["$X", "$Y"]),
+           _wait(settle_seconds(demo, visit.get("wait_s"))),
+           _act("computer", action="hover", coordinate=list(_park(demo))),
+           _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
+           _act("gif_creator", action="stop_recording"),
+           _export(visit["gif"])]
+    return pick, act
 
 
 def canary_actions(base_url, first_persona, demo, gif):
@@ -590,6 +772,14 @@ def canary_actions(base_url, first_persona, demo, gif):
             _export(gif)]
 
 
+def _click_spec(c):
+    """Normalise a capture_plan click to {"text"} or {"row": True}."""
+    if isinstance(c, dict) and c.get("row"):
+        return {"row": True}
+    text = c.get("text") if isinstance(c, dict) else c
+    return {"text": str(text)}
+
+
 def build_calls(plan, inputs, routes, per_batch=3):
     demo = routes["demo"]
     gif_dir = f"{DL_ROOT}/{plan.get('run_id') or 'run'}"
@@ -598,7 +788,7 @@ def build_calls(plan, inputs, routes, per_batch=3):
     base = demo["base_url"]
     entry = demo.get("portal_entry") or {}
     labels_of = demo.get("portal_label") or {}
-    visits = []
+    visits, entries, screens = [], {}, []
     for c in plan["capture_plan"]:
         if not c.get("url"):
             continue
@@ -609,40 +799,80 @@ def build_calls(plan, inputs, routes, per_batch=3):
             for l in ls:
                 if l not in flat:
                     flat.append(l)
-        v = {"visit_id": f"v{len(visits) + 1:02d}", "persona": c["persona"],
-             "surface": c["surface"], "url": c["url"], "tickets": list(c.get("tickets", [])),
-             "session": c.get("session", "unknown"), "labels": per_ticket}
-        v["gif"] = f"{gif_dir}/{v['visit_id']}.gif"
+        eid = f"v{len(entries) + 1:02d}"
+        clicks = [_click_spec(k) for k in (c.get("clicks") or [])]
         wait = c.get("wait_s", surface_wait.get((c["persona"], c["surface"])))
-        if wait is not None:
-            v["wait_s"] = wait
-        v["args"] = {"v": PROBE_VERSION, "login": demo["login_path"],
-                     "portal": labels_of.get(c["persona"]), "labels": flat,
-                     "side": demo.get("sidebar_selector", ""),
-                     "allow": list(demo.get("allow_strings", [])), "domain": demo["domain"]}
-        visits.append(v)
+        args = {"v": PROBE_VERSION, "login": demo["login_path"],
+                "portal": labels_of.get(c["persona"]), "labels": flat,
+                "side": demo.get("sidebar_selector", ""),
+                "allow": list(demo.get("allow_strings", [])), "domain": demo["domain"]}
+        entries[eid] = {"persona": c["persona"], "surface": c["surface"], "url": c["url"],
+                        "tickets": list(c.get("tickets", [])), "session": c.get("session", "unknown"),
+                        "clicks": clicks, "write_gated": c.get("write_gated") or ""}
+        for step in range(len(clicks) + 1):
+            vid = (f"{eid}-s{step}" if clicks else eid)
+            v = {"visit_id": vid, "entry": eid, "step": step,
+                 "kind": "click" if step else "start",
+                 "persona": c["persona"], "surface": c["surface"], "url": c["url"],
+                 "tickets": list(c.get("tickets", [])), "session": c.get("session", "unknown"),
+                 "labels": per_ticket, "gif": f"{gif_dir}/{vid}.gif", "args": dict(args)}
+            if wait is not None:
+                v["wait_s"] = wait
+            if step:
+                k = clicks[step - 1]
+                v["click"] = k
+                v["click_args"] = {"side": args["side"], **k,
+                                   **({"pa": {**args, "labels": []}} if k.get("row") else {})}
+            if clicks and step == 0:
+                v["has_clicks"] = True
+            visits.append(v)
+        if c.get("write_gated"):
+            screens.append({"visit_id": f"{eid}-write", "entry": eid, "persona": c["persona"],
+                            "surface": c["surface"], "tickets": list(c.get("tickets", [])),
+                            "reason": "needs_write", "detail": c["write_gated"]})
     batches, seen = [], set()
+    install_sent = []
     personas = []
     for v in visits:
         if v["persona"] not in personas:
             personas.append(v["persona"])
+
+    def flush(persona, chunk):
+        if not chunk:
+            return
+        actions = []
+        if persona not in seen and entry.get(persona):
+            actions += [_act("navigate", url=base + entry[persona]), _wait()]
+        seen.add(persona)
+        if not install_sent:                                  # every run, first batch
+            actions.append({"name": "javascript_tool", "input": install_action()})
+            install_sent.append(1)
+        for v in chunk:
+            actions += visit_actions(base, v, demo)
+        batches.append({"batch_id": f"b{len(batches) + 1:02d}", "persona": persona, "kind": "visits",
+                        "visit_ids": [v["visit_id"] for v in chunk], "actions": actions})
+        chunk.clear()
+
     for persona in personas:
-        mine = [v for v in visits if v["persona"] == persona]
-        for n in range(0, len(mine), max(1, per_batch)):
-            chunk = mine[n:n + max(1, per_batch)]
-            actions = []
-            if persona not in seen and entry.get(persona):
-                actions += [_act("navigate", url=base + entry[persona]), _wait()]
-            seen.add(persona)
-            for v in chunk:
-                actions += visit_actions(base, v, demo)
-            batches.append({"batch_id": f"b{len(batches) + 1:02d}", "persona": persona,
-                            "visit_ids": [v["visit_id"] for v in chunk], "actions": actions})
+        chunk = []
+        for v in (x for x in visits if x["persona"] == persona):
+            if v["kind"] == "click":
+                flush(persona, chunk)
+                pick, act = click_visit_actions(v, demo)
+                batches.append({"batch_id": f"b{len(batches) + 1:02d}", "persona": persona,
+                                "kind": "click", "entry": v["entry"], "step": v["step"],
+                                "visit_ids": [v["visit_id"]], "pick": pick, "act": act})
+                continue
+            chunk.append(v)
+            if len(chunk) >= max(1, per_batch) or v.get("has_clicks"):
+                flush(persona, chunk)       # an entry's clicks follow its start page directly
+        flush(persona, chunk)
     home = (demo.get("portal_entry") or {}).get(demo.get("home_portal", "admin"))
     restore = [_act("navigate", url=base + home), _wait()] if home else []
     canary_gif = f"{gif_dir}/canary.gif"
     return {"run_id": plan.get("run_id"), "base_url": base, "probe_version": PROBE_VERSION,
             "gif_dir": gif_dir, "install": install_action(), "visits": visits,
+            "entries": entries, "screens": screens,
             "batches": batches, "restore": restore,
             "abort": [_act("gif_creator", action="clear")],
             "canary": {"gif": canary_gif,
@@ -656,9 +886,11 @@ def _j(x):
 
 def capture_md(calls):
     L = ["# KB capture — instructions for the capturer", "",
-         "You only drive the user's Chrome. Never type, never click, never close a tab. "
+         "You only drive the user's Chrome. Never type, never press keys, never drag, never click "
+         "anything except the one point a `kbclick` result gives you. Never close a tab. "
          "Replace the string `\"$TAB\"` with the numeric tab id (no quotes) in every action "
          "before sending it.", "",
+         "The run folder is the folder this file is in. Write raw files to its `raw/` folder.", "",
          "## 1. Tab", "",
          "1. Load the Chrome tools with ToolSearch (`select:mcp__claude-in-chrome__tabs_context_mcp,"
          "mcp__claude-in-chrome__browser_batch,mcp__claude-in-chrome__javascript_tool,"
@@ -667,17 +899,39 @@ def capture_md(calls):
          "fails, reply `KB_CAPTURE NO_CHROME_TOOLS` and stop.",
          "2. Call `tabs_context_mcp`; use the tab it returns (create one with `tabs_create_mcp` only "
          "if there is none). That tab's numeric id is `$TAB`.", "",
-         "## 2. Install the probe (once)", "",
-         "Send this one `javascript_tool` call. It must return `kbp:<number>`.", "",
+         "## 2. The probe install", "",
+         "The first batch below already starts with this install (every run installs it afresh; "
+         "it stores the probe and the click guard in the tab). Send it alone, once, only after a "
+         "`KB_NOPROBE` error. It must return `kbp:<number>`.", "",
          _j(calls["install"]), ""]
     L += [f"## 3. Batches ({len(calls['batches'])})", "",
-          "For each batch, in order, call `browser_batch` with exactly the `actions` array below. "
-          "Visits (ids in the heading) are in order; each visit is one `gif_creator` recording: "
+          "For each batch, in order, follow its heading. Visits are `gif_creator` recordings: "
           "start_recording, navigate, wait, hover, probe, stop_recording, export. There are no "
           "screenshots: never call `computer` with `screenshot`, and you never receive a page "
           "image. The probe result is the `javascript_tool` result. The `export` result says "
-          "`Downloaded \"<filename>\"`; that filename is the visit's `gif`.", ""]
+          "`Downloaded \"<filename>\"`; that filename is the visit's `gif`.", "",
+          "**Visit batches** (`actions`): call `browser_batch` with exactly the `actions` array.", "",
+          "**Click batches** (`pick` and `act`) open the next screen by one click and are sent in two "
+          "calls:", "",
+          "1. Send `pick` with `browser_batch`. Its last result is the `kbclick` result, an object "
+          "`{\"ok\":true,\"x\":<number>,\"y\":<number>,\"label\":\"…\"}`.",
+          "2. In `act`, replace the two strings `\"$X\"` and `\"$Y\"` (quotes included) with the numbers "
+          "`x` and `y` from that result and from nothing else, then send `act` with `browser_batch`. "
+          "That one `left_click` is the only click you ever make.",
+          "3. If `pick` fails with an error containing `KB_CLICK_REFUSED`, `KB_CLICK_NOTFOUND` or "
+          "`KB_TENANT_ROW`: do not send `act`; send the abort actions (section 5); write the batch's "
+          "raw file with status `ok` and the item `{\"visit_id\": …, \"click_error\": \"<the error "
+          "text>\"}`; then skip every later batch with the same `entry` and carry on with the next "
+          "batch of another entry. This is not a stop.", ""]
     for b in calls["batches"]:
+        if b.get("kind") == "click":
+            c = next((v["click"] for v in calls["visits"] if v["visit_id"] == b["visit_ids"][0]), {})
+            what = "the first row link" if c.get("row") else f"\"{c.get('text')}\""
+            L += [f"### {b['batch_id']} — {b['persona']} — click visit {b['visit_ids'][0]} "
+                  f"(entry {b['entry']}, click {b['step']}: {what})", "",
+                  "`pick`:", "", _j(b["pick"]), "", "`act` (substitute `$X`, `$Y`):", "", _j(b["act"]), "",
+                  f"After this batch write `raw/{b['batch_id']}.json` (see section 4), then continue.", ""]
+            continue
         L += [f"### {b['batch_id']} — {b['persona']} — visits {', '.join(b['visit_ids'])}", "",
               _j(b["actions"]), "",
               f"After this batch write `raw/{b['batch_id']}.json` (see section 4), then continue.", ""]
@@ -690,7 +944,8 @@ def capture_md(calls):
           "`status` is one of `ok`, `expired`, `wrong_persona`, `bridge_down`, `no_probe`. `items` are in "
           "visit order, one per visit that completed both its probe and its export; a visit not "
           "reached is simply absent. Copy the probe result verbatim (object, or the text if it came "
-          "back as text) — do not edit it.", "",
+          "back as text) — do not edit it. A click visit's item also carries `\"click\"`: the `kbclick` "
+          "result copied verbatim; a refused one is `{\"visit_id\", \"click_error\"}` only.", "",
           "## 5. Stop rules", "",
           "- An error containing `KB_LOGIN`: status `expired`, write the file, stop.",
           "- An error containing `KB_PERSONA`: status `wrong_persona`, write the file, stop.",
@@ -698,10 +953,13 @@ def capture_md(calls):
           "batch once. If it fails again: status `no_probe`, write the file, stop.",
           "- A transport or bridge error (tool unavailable, extension disconnected): status "
           "`bridge_down`, write the file, stop.",
+          "- A click error (`KB_CLICK_*`, `KB_TENANT_ROW`) is not a stop: see section 3.",
+          "- A tool call denied by a hook (an error naming `KB_GUARD`): you tried something not "
+          "allowed; do not retry it, status `bridge_down`, write the file, stop.",
           "- Otherwise status `ok` and continue with the next batch.", "",
-          "**Abort rule.** After any stop rule above fires (except a bridge error, when the tool "
-          "is unreachable), send this once with `browser_batch` so a half recording is never "
-          "exported later, then write the raw file:", "",
+          "**Abort rule.** After any stop rule above fires or a click is refused (except a bridge "
+          "error, when the tool is unreachable), send this once with `browser_batch` so a half "
+          "recording is never exported later, then write the raw file:", "",
           _j(calls["abort"]), "",
           "## 6. Restore (always, after the last batch or after a stop)", "",
           "Send this once with `browser_batch` so the browser returns to the home portal:", "",
@@ -819,18 +1077,22 @@ def last_frame_png(gif_path, dest):
 
 
 def _fetch_gif(visit, item, downloads_dir, out_dir, timeout_s):
-    """Wait for the exported GIF, move it into shots/gifs/, extract its last
-    frame -> (frame_path, reason)."""
-    if not downloads_dir:
-        return None, "download_missing"
-    src = Path(downloads_dir) / str(item["gif"])
-    status, _ = wait_for_file(src, timeout_s)
-    if status != "ready":
-        return None, _WAIT_REASON[status]
+    """Wait for the exported GIF, COPY it into shots/gifs/ (Downloads is never
+    touched; `cleanup` removes the originals after the owner approves), extract
+    its last frame -> (frame_path, reason)."""
     gifs = out_dir / "gifs"
-    gifs.mkdir(parents=True, exist_ok=True)
     kept = gifs / f"{visit['visit_id']}.gif"
-    shutil.move(str(src), str(kept))
+    if not downloads_dir:
+        if not kept.is_file():
+            return None, "download_missing"
+    else:
+        src = Path(downloads_dir) / str(item["gif"])
+        status, _ = wait_for_file(src, 0.3 if kept.is_file() else timeout_s)
+        if status == "ready":
+            gifs.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(src), str(kept))
+        elif not kept.is_file():                    # a re-ingest finds its earlier copy
+            return None, _WAIT_REASON[status]
     frames = out_dir / "frames"
     frames.mkdir(parents=True, exist_ok=True)
     dest = frames / f"{visit['visit_id']}.png"
@@ -897,6 +1159,26 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
     return entries, None
 
 
+def _screens_missing(calls, screens, shots):
+    """ticket -> {"reason", "detail"}: why a ticket has no (more) screenshots. The
+    first failing screen in visit order wins; needs_write screens come last. A
+    ticket whose screens all loaded but shows none of its labels is label_not_found."""
+    order = [v["visit_id"] for v in calls["visits"]] + [x["visit_id"] for x in calls.get("screens") or []]
+    pos = {vid: i for i, vid in enumerate(order)}
+    missing = {}
+    for sc in sorted(screens, key=lambda x: pos.get(x["visit_id"], len(pos))):
+        if sc.get("reason"):
+            for t in sc["tickets"]:
+                missing.setdefault(t, {"reason": sc["reason"], "detail": sc.get("detail", "")})
+    have = {s_["ticket"] for s_ in shots}
+    for sc in screens:
+        if not sc.get("reason"):
+            for t in sc["tickets"]:
+                if t not in have:
+                    missing.setdefault(t, {"reason": "label_not_found", "detail": ""})
+    return missing
+
+
 def cmd_ingest(a):
     calls = json.loads(Path(a.calls).read_text())
     routes = json.loads(Path(a.routes).read_text())
@@ -912,21 +1194,39 @@ def cmd_ingest(a):
     now = _dt.datetime.now().isoformat(timespec="minutes")
     batch_of = {vid: b for b in calls["batches"] for vid in b["visit_ids"]}
 
-    done, reasons, new = set(), {}, []
-    ingested = set()
+    reasons, new = {}, []
+    ingested, settled, dead = set(), set(), {}
+    screens = {x["visit_id"]: x for x in manifest.get("screens") or []}
     fetched = 0
     for v in calls["visits"]:
         vid = v["visit_id"]
-        key = f"{v['persona']}/{v['surface']}"
-        if vid in items:
+        step = v.get("step", 0)
+        key = f"{v['persona']}/{v['surface']}" + (f"#s{step}" if step else "")
+        screen = {"visit_id": vid, "entry": v.get("entry", vid), "step": step,
+                  "persona": v["persona"], "surface": v["surface"], "tickets": v["tickets"],
+                  "reason": None, "detail": ""}
+        if v.get("entry", vid) in dead:                 # an earlier click of this entry failed
+            settled.add(vid)
+            screens.pop(vid, None)
+            continue
+        it = items.get(vid)
+        cr = click_reason(it.get("click_error")) if it else None
+        if cr:
+            screen.update(reason=cr[0], detail=cr[1])
+            screens[vid] = screen
+            settled.add(vid)
+            dead[v.get("entry", vid)] = cr[0]
+            continue
+        if it:
             timeout = FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S
-            if items[vid].get("gif"):
+            if it.get("gif"):
                 fetched += 1
-            entries, reason = ingest_visit(v, items[vid], calls, demo, out_dir, use_ocr, now,
+            entries, reason = ingest_visit(v, it, calls, demo, out_dir, use_ocr, now,
                                            a.downloads_dir, timeout)
             if reason is None:
                 ingested.add(vid)
-                done.add((v["persona"], v["surface"]))
+                settled.add(vid)
+                screens[vid] = screen
                 new += entries
                 continue
         else:
@@ -934,41 +1234,92 @@ def cmd_ingest(a):
             st = (b or {}).get("status", "ok")
             reason = "not_reached" if not b else (st if st != "ok" else "not_reached")
         reasons[key] = reason
+    for w in calls.get("screens") or []:
+        screens[w["visit_id"]] = dict(w)
 
-    if a.downloads_dir and calls.get("gif_dir"):
-        for d in (Path(a.downloads_dir) / calls["gif_dir"], Path(a.downloads_dir) / DL_ROOT):
-            try:
-                d.rmdir()                                        # only when empty
-            except OSError:
-                pass
+    downloads_left = []
+    if a.downloads_dir:
+        for v in calls["visits"]:
+            if (Path(a.downloads_dir) / v["gif"]).is_file():
+                downloads_left.append(v["gif"])
     kept = [s for s in manifest["shots"] if s.get("visit_id") not in ingested]
     n = max([int(re.sub(r"\D", "", s.get("shot_id", "")) or 0) for s in kept] + [0])
     for e in new:
         n += 1
         kept.append({"shot_id": f"s{n}", **e})
     manifest["shots"] = kept
+    manifest["screens"] = list(screens.values())
+    manifest["missing"] = _screens_missing(calls, manifest["screens"], kept)
     manifest_path.write_text(json.dumps(manifest, indent=1))
     verified = sum(1 for e in new if e["verified"])
 
-    plan = {"run_id": calls.get("run_id"),
-            "capture_plan": [{"persona": v["persona"], "surface": v["surface"], "url": v["url"],
-                              "recipe": [], "tickets": v["tickets"], "session": v.get("session", "unknown")}
-                             for v in calls["visits"]]}
-    rp = resume_plan(plan, done)
-    left = len(rp["capture_plan"])
+    ent = calls.get("entries") or {}
+    left_entries = []
+    for eid in dict.fromkeys(v.get("entry", v["visit_id"]) for v in calls["visits"]):
+        mine = [v for v in calls["visits"] if v.get("entry", v["visit_id"]) == eid]
+        if all(v["visit_id"] in settled for v in mine):
+            continue
+        e = ent.get(eid) or mine[0]
+        row = {"persona": e["persona"], "surface": e["surface"], "url": e["url"], "recipe": [],
+               "tickets": e["tickets"], "session": e.get("session", "unknown")}
+        if e.get("clicks"):
+            row["clicks"] = e["clicks"]
+        if e.get("write_gated"):
+            row["write_gated"] = e["write_gated"]
+        left_entries.append(row)
+    rp = {"run_id": calls.get("run_id"), "capture_plan": left_entries}
+    left = len(left_entries)
+    extra = {"downloads_left": downloads_left,
+             "missing": {t: m["reason"] for t, m in manifest["missing"].items()}}
     resume_path = out_dir / "resume.json"
     if left:
         resume_path.write_text(json.dumps({**rp, "left_reasons": reasons}, indent=1))
         print(f"ingested {len(ingested)} visits · {len(new)} shots · {verified} verified · "
               f"{left} left ({', '.join(sorted(set(reasons.values())))}) -> {resume_path}")
         emit({"ok": False, "action": "ingest", "shots": len(new), "verified": verified,
-              "visits": len(ingested), "left": left, "left_reasons": reasons, "ocr": use_ocr})
+              "visits": len(ingested), "left": left, "left_reasons": reasons, "ocr": use_ocr, **extra})
         return 3
     if resume_path.exists():
         resume_path.unlink()
     print(f"ingested {len(ingested)} visits · {len(new)} shots · {verified} verified")
+    if downloads_left:
+        print(f"{len(downloads_left)} GIF(s) still in Downloads (copied, not moved); "
+              f"`cleanup` removes them once the owner approves")
     emit({"ok": True, "action": "ingest", "shots": len(new), "verified": verified,
-          "visits": len(ingested), "left": 0, "left_reasons": {}, "ocr": use_ocr})
+          "visits": len(ingested), "left": 0, "left_reasons": {}, "ocr": use_ocr, **extra})
+    return 0
+
+
+def cmd_cleanup(a):
+    """Delete this run's exported GIFs (and the canary) from Downloads, then the
+    emptied run folders. Only paths under Downloads/kb-capture are ever touched."""
+    calls = json.loads(Path(a.names_from).read_text())
+    root = (Path(a.downloads_dir) / DL_ROOT).resolve()
+    names = [v["gif"] for v in calls.get("visits", [])]
+    if (calls.get("canary") or {}).get("gif"):
+        names.append(calls["canary"]["gif"])
+    deleted, absent, kept = [], [], []
+    for name in names:
+        p = (Path(a.downloads_dir) / name).resolve()
+        if root not in p.parents:                      # never outside kb-capture/
+            absent.append(name)
+            continue
+        if not p.is_file():
+            absent.append(name)
+            continue
+        try:
+            p.unlink()
+            deleted.append(name)
+        except OSError:                                # Cowork: delete not approved
+            kept.append(name)
+    for d in (Path(a.downloads_dir) / calls.get("gif_dir", DL_ROOT), root):
+        try:
+            d.rmdir()                                  # only when empty
+        except OSError:
+            pass
+    print(f"deleted {len(deleted)} GIF(s) from Downloads"
+          + (f"; {len(kept)} could not be deleted (no delete access): " + ", ".join(kept) if kept else ""))
+    emit({"ok": not kept, "action": "cleanup", "deleted": deleted, "absent": absent, "kept": kept})
     return 0
 
 
@@ -997,7 +1348,8 @@ def cmd_pickup(a):
         print(f"canary failed: {reason}")
         emit({"ok": False, "action": "pickup", "reason": reason, "name": a.name})
         return PICKUP_EXIT[reason]
-    src.unlink()
+    # The canary stays in Downloads: deleting there needs a Cowork approval, so
+    # `cleanup` removes it with the run's GIFs once the owner agrees.
     print(f"canary ok: {size[0]}x{size[1]}")
     emit({"ok": True, "action": "pickup", "width": size[0], "height": size[1], "name": a.name})
     return 0
@@ -1053,6 +1405,8 @@ def main(argv=None):
     s.add_argument("--raw-dir", required=True); s.add_argument("--out-dir", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--no-ocr", action="store_true")
     s.add_argument("--downloads-dir")
+    s = sub.add_parser("cleanup"); s.add_argument("--downloads-dir", required=True)
+    s.add_argument("--names-from", required=True)
     s = sub.add_parser("pickup"); s.add_argument("--downloads-dir", required=True)
     s.add_argument("--name", required=True); s.add_argument("--timeout", type=float, default=20.0)
     s = sub.add_parser("sweep"); s.add_argument("--downloads-dir", required=True)
@@ -1061,7 +1415,7 @@ def main(argv=None):
     try:
         return {"login": cmd_login, "check": cmd_check, "run": cmd_run,
                 "plan-calls": cmd_plan_calls, "ingest": cmd_ingest,
-                "pickup": cmd_pickup, "sweep": cmd_sweep}[a.cmd](a)
+                "pickup": cmd_pickup, "sweep": cmd_sweep, "cleanup": cmd_cleanup}[a.cmd](a)
     except (OSError, json.JSONDecodeError, KeyError) as e:
         emit({"ok": False, "action": a.cmd, "error": f"{type(e).__name__}: {e}"})
         return 1
