@@ -170,7 +170,11 @@ def annotate(frame, click, number=None, caption=None, pad=F.RING_PAD_PX):
         x, y = click["x"], click["y"]
         rw = max(click["w"], 34) // 2 + pad
         rh = max(click["h"], 24) // 2 + pad // 2
-        box = [x - rw, y - rh, x + rw, y + rh]
+        # Keep the ring (and its 3 px halo) inside the frame: a control at the
+        # page edge otherwise gets a ring cut off by the border.
+        m = 5
+        box = [max(m, x - rw), max(m, y - rh),
+               min(img.width - 1 - m, x + rw), min(img.height - 1 - m, y + rh)]
         d.rounded_rectangle(box, radius=F.RING_RADIUS_PX, outline=ACCENT,
                             width=F.RING_WIDTH_PX)
         d.rounded_rectangle([box[0] - 3, box[1] - 3, box[2] + 3, box[3] + 3],

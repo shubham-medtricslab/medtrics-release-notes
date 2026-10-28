@@ -1,5 +1,5 @@
 ---
-description: Draft one Intercom KB article (.docx + PDF + markdown) per shipped legacy FEATURE ticket, in the Medtrics KB format — grouped by persona × surface, screenshots captured live on the demo tenant and ringed by script, prose written by a pinned Sonnet writer per group, every article checked by the format gates G1–G7, history kept in Mem so no ticket is drafted twice. Drafts only; publishing stays a human step.
+description: Draft one Intercom KB article (.docx + PDF + markdown) per shipped legacy FEATURE ticket, in the Medtrics KB format — grouped by persona × surface, screenshots captured live on the demo tenant (recorded as GIFs in your Chrome) and ringed by script, prose written by a pinned Sonnet writer per group, every article checked by the format gates G1–G7, history kept in Mem so no ticket is drafted twice. Drafts only; publishing stays a human step.
 ---
 
 # KB Articles
@@ -59,13 +59,13 @@ needs only Optimus (no GitLab) and Mem:
 ## Pipeline overview
 
 ```
-0  preflight     kb_doctor.py + Mem probe (hard stop) + .env keys + Claude in Chrome check
+0  preflight     kb_doctor.py + Mem probe (hard stop) + .env keys + Claude in Chrome check + Downloads folder (Cowork) + sweep
 1  select        ledger + queue dumps → ids (argv | release archive | queue) → gather (features only,
                  skipped with --from-release) → kb_select filter
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
 3  prepare       kb_select group · kb_ledger match · kb_inputs
 4  preview       plan + estimate → confirm (or stop on dry-run)
-5  capture       plan-calls → kb-capturer (Haiku) in your signed-in Chrome → ingest — exit 3 = some screens left, carry on
+5  capture       plan-calls → canary (you) → kb-capturer (Haiku) in your signed-in Chrome → ingest — exit 3 = some screens left, carry on
 6  write         kb_spec bundle → [kb-writer, Sonnet, all groups in ONE message] → prose/<ticket>.json
 7  assemble      kb_spec assemble (annotate, evidence, gates) → prose retries, ≤2, single article
 8  package       kb_usage report → kb_package (docx + md + ONE soffice batch → PDF + verify, summary, zip)
@@ -109,13 +109,14 @@ produces it.
 "Bash(mkdir:*)",
 "Write(//tmp/kb/**)",
 "Task",
-"mcp__claude-in-chrome__*"
+"mcp__claude-in-chrome__*",
+"mcp__cowork__request_cowork_directory"
 ```
 
 `Write(//tmp/kb/**)` lets the writer agents save their own JSON, so their output
 is not re-typed by the orchestrator (that would pay for it twice). Grant nothing
 broader to them. The `mcp__claude-in-chrome__*` tools are the Claude in Chrome
-extension's; the capture agent (Step 5) and the Step 0 check use them.
+extension's (including `gif_creator`); the capture agent (Step 5), the canary and the Step 0 check use them. `mcp__cowork__request_cowork_directory` is Cowork-only: it mounts your Downloads folder, where the exported GIFs land (Step 0).
 
 ## Flow
 
@@ -146,17 +147,38 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    LibreOffice means no PDF this run. Show any `WARN` line (e.g.
    `CLAUDE_CODE_SUBAGENT_MODEL` overriding the pinned models).
 4. **Claude in Chrome** — one cheap check on every run (skip with `--no-capture`
-   and for `--kb-queue`). Call ToolSearch `select:mcp__claude-in-chrome__tabs_context_mcp`,
-   then call `tabs_context_mcp`. If the tool is missing or the call fails (the
+   and for `--kb-queue`). Call ToolSearch
+   `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__browser_batch,mcp__claude-in-chrome__gif_creator`
+   (the canary in Step 5 needs the last two), then call `tabs_context_mcp`. If the tool is missing or the call fails (the
    extension is not installed or not connected), **ask the user**, once, in these words:
-   "Screenshots are captured in your own Chrome with the Claude in Chrome
+   "Screens are captured in your own Chrome with the Claude in Chrome
    extension, and it is not connected. Install it from the Chrome Web Store,
    connect it to this Claude account, sign in to https://medtrics.medtricslab.com
    in that Chrome, then re-run `/kb-articles`. Or I can continue now with
    `--no-capture` (drafts without screenshots)." Wait for the answer: they
    re-run, or say continue and the run is `--no-capture`. Ask only when the check
    fails; when it passes, say nothing. Claude never signs in for you.
-5. **Collections** — `$KB_PY $K/kb_ledger.py resolve`, then resolve the ledger,
+5. **Downloads folder** — every run, unless `--no-capture` or `--kb-queue`.
+   Capture exports each screen as a GIF with Chrome's download, so the scripts
+   must be able to read your Downloads folder. ToolSearch
+   `select:mcp__cowork__request_cowork_directory`.
+   - **Present (Cowork):** call it with `path: "~/Downloads"` and use the path it
+     **returns** as `DL` — every run, never cached from an earlier session (the
+     mount path changes). If you decline the prompt, ask once: "Approve the
+     Downloads folder (needed to read the screen captures), or continue with
+     `--no-capture`?" Approve → call it again; continue → the run is
+     `--no-capture`.
+   - **Absent (Claude Code):** `DL=~/Downloads`.
+
+   Then sweep leftovers from any crashed earlier run (they may hold tenant data;
+   the sweep moves them, never deletes):
+
+   ```bash
+   $KB_PY $K/kb_capture.py sweep --downloads-dir $DL --into $RUN/shots/stale
+   ```
+
+   Say what it moved, if anything.
+6. **Collections** — `$KB_PY $K/kb_ledger.py resolve`, then resolve the ledger,
    catalogue and queue collections (and, for `since`/`pending`, the release
    archive) by name per the `kb-ledger` skill, and save the dumps under `$RUN/`
    (`ledger_notes.json`, `catalogue_notes.json`, `queue_notes.json`,
@@ -250,12 +272,20 @@ Say: "Chrome must be signed in to medtrics.medtricslab.com; don't use that Chrom
 window until capture finishes." The capture drives one tab of your Chrome, visits
 each page and returns to the Admin portal at the end.
 
+Also say: "Chrome must save downloads to Downloads without asking (Settings →
+Downloads → 'Ask where to save each file' off). GIFs land in
+Downloads/kb-capture/ and are moved out." Add it to the preview only when
+capture will run.
+
 `dry-run` → stop here. Otherwise ask `Draft these N articles? (y/n)` unless `--yes`.
 
 ### Step 5 — Capture
 
-With `--no-capture` (or the Step 0 answer "continue"), write `{"shots": []}` to
-`$RUN/shots/shots.json` and go on. Otherwise:
+With `--no-capture` (or a Step 0 answer that ended in "continue"), write
+`{"shots": []}` to `$RUN/shots/shots.json` and go on. Otherwise each visit is
+recorded with `gif_creator` and exported as a GIF into `$DL/kb-capture/<run_id>/`;
+ingest takes the last frame as the screenshot. No screenshot is taken and the
+capturer never receives an image.
 
 1. Plan the calls (no model, no browser):
 
@@ -263,8 +293,26 @@ With `--no-capture` (or the Step 0 answer "continue"), write `{"shots": []}` to
    $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
    ```
 
-   It writes `shots/calls.json` and `shots/capture.md`.
-2. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
+   It writes `shots/calls.json` (visits, `canary`, `abort`, `gif_dir`) and
+   `shots/capture.md`.
+2. **Canary** — you, not an agent, with the owner present. Send the `canary`
+   actions from `calls.json` in one `browser_batch` (tab from `tabs_context_mcp`,
+   substituted for every `"$TAB"`; first run only: Chrome may show a download or
+   privacy prompt — say so and let the owner allow it). Then:
+
+   ```bash
+   $KB_PY $K/kb_capture.py pickup --downloads-dir $DL --name kb-capture/$RUN_ID/canary.gif --timeout 20
+   ```
+
+   Exit 0 → the GIF arrived and was readable (it prints the frame size and
+   deletes the canary); go on. Exit 1 `download_missing`, 2 `empty_export` or
+   3 `bad_gif` (or the batch itself erroring) → **skip capture with that
+   reason**: write `{"shots": []}` to `$RUN/shots/shots.json`, say why in one
+   line (Chrome download settings — "Ask where to save each file" must be off
+   and Downloads must be the download folder; or a privacy / download prompt
+   that was dismissed) and continue to drafting. Articles then carry
+   missing-screenshot markers.
+3. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
    `model: "haiku"`, prompt
    `Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.` It drives
    your Chrome and writes `raw/<batch_id>.json`. Log usage:
@@ -273,18 +321,23 @@ With `--no-capture` (or the Step 0 answer "continue"), write `{"shots": []}` to
    $KB_PY $K/kb_usage.py add --run-dir $RUN --agent kb-capturer --scope capture --model haiku \
        --tokens <total_tokens> --duration-ms <ms> --tool-uses <n>
    ```
-3. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, follow `$RUN/shots/capture.md`
+4. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, follow `$RUN/shots/capture.md`
    yourself in this session with the same tools and the same rules.
-4. Ingest the raw files (verifies each frame, ringed boxes, tenant screen):
+5. Ingest the raw files (reads each GIF from Downloads, moves it to
+   `shots/gifs/`, takes the last frame, verifies it, places the ringed boxes,
+   runs the tenant screen):
 
    ```bash
-   $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots
+   $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --downloads-dir $DL
    ```
-5. Exit 3 = some screens were left. Read `shots/resume.json` and say which, with
+6. Exit 3 = some screens were left. Read `shots/resume.json` and say which, with
    the reason: `expired` (sign in to the site again in Chrome), `wrong_persona`,
-   `bridge_down`, `no_probe`, `not_reached` (its batch never ran), or `retry` (a blocked or unreadable probe). **Continue** — the
-   shots already taken are kept, the rest become missing-screenshot markers and
-   the summary lists them. `--retry-partial` re-runs them later.
+   `bridge_down`, `no_probe`, `not_reached` (its batch never ran), `retry` (a
+   blocked or unreadable probe), `download_missing` (the GIF never reached
+   Downloads), `empty_export` (the GIF file was empty) or `bad_gif` (it could
+   not be read as an image). **Continue** — the shots already taken are kept,
+   the rest become missing-screenshot markers and the summary lists them.
+   `--retry-partial` re-runs them later.
 
 ### Step 6 — Write
 
@@ -396,7 +449,10 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Wrong portal (`KB_PERSONA`) | Capture stops with `wrong_persona`; the rest is left |
 | Bridge drops mid-run | `bridge_down`; the rest is left, the Chrome tab is not restored; re-run later |
 | Probe blocked or unreadable | That screen is left with reason `retry` |
-| Screenshots unreadable from where the scripts run | Run from Claude Code on the Mac, not the Cowork sandbox |
+| Downloads folder not mounted or declined (Cowork) | Step 0 asks once: approve it, or continue with `--no-capture` |
+| Canary failed (`download_missing`, `empty_export`, `bad_gif`) | Capture skipped with that reason, drafting continues with missing-screenshot markers; check Chrome's download settings ("Ask where to save each file" off, Downloads as the folder) and any privacy / download prompt, then `--retry-partial` |
+| A GIF missing, empty or bad for one screen | That screen is left (`download_missing`, `empty_export`, `bad_gif`), the others are kept; `--retry-partial` re-runs it |
+| Leftover GIFs from a crashed run | Step 0's sweep moves `Downloads/kb-capture/*` into `$RUN/shots/stale/` (never deletes); remove them yourself once checked |
 | tesseract missing | `dom_box` anchors — fine for drafts, refused on publish |
 | LibreOffice missing | No PDFs this run; summary says so; .docx and .md still ship |
 | Capture exits 3 | Continue with what was captured; summary lists the rest |
@@ -415,7 +471,7 @@ PDF warnings, and the token estimate. Offer the files for download.
 - Touch Oracle (ORC) tickets, bugs or work types.
 - Combine tickets, or update an existing article in place.
 - Type a password or sign in for you.
-- Click or type in your account: capture only navigates, waits, hovers to park the pointer, runs a read-only probe and takes screenshots.
+- Click or type in your account: capture only navigates, waits, hovers to park the pointer, runs a read-only probe and records each screen as a GIF.
 - Close your Chrome tabs.
 - Upload to Drive or Intercom.
 

@@ -8,11 +8,22 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
              [--per-batch 3] [--routes kb_routes.json]
           Writes calls.json (install action, visits, batches of browser_batch
           actions, restore) and capture.md (the only input the capturer reads).
-  ingest     --calls calls.json --raw-dir raw/ --out-dir $RUN/shots [--no-ocr]
-             [--routes kb_routes.json]
-          Turns the capturer's raw files (probe JSON + saved screenshot path)
-          into shots.json entries and frames/<visit_id>.jpg. Re-ingest replaces
-          by visit_id. Anything left -> resume.json and exit 3.
+          Each visit is recorded with gif_creator (no screenshot); calls.json also
+          carries `canary`, `abort`, `gif_dir` and a `gif` filename per visit.
+  ingest     --calls calls.json --raw-dir raw/ --out-dir $RUN/shots
+             [--downloads-dir D] [--no-ocr] [--routes kb_routes.json]
+          Turns the capturer's raw files (probe JSON + exported GIF name) into
+          shots.json entries: waits for D/<gif>, moves it to shots/gifs/, takes
+          its last frame as frames/<visit_id>.png. 0.23.0 raw files with a
+          screenshot_path still ingest (frames/<visit_id>.jpg). Re-ingest replaces
+          by visit_id. Anything left -> resume.json and exit 3
+          (download_missing / empty_export / bad_gif / retry / ...).
+  pickup     --downloads-dir D --name kb-capture/<run>/canary.gif [--timeout 20]
+          Waits for the canary GIF, checks it decodes, deletes it. Exit 0 ok,
+          1 download_missing, 2 empty_export, 3 bad_gif.
+  sweep      --downloads-dir D --into DIR
+          Moves leftover D/kb-capture/* folders (crashed runs) into DIR. Never
+          deletes a file.
 
 LEGACY PATH (Playwright; login/check/run, kept working, not documented):
 
@@ -46,6 +57,9 @@ Exit codes: 0 done, 1 configuration error, 3 session expired (resume.json writte
     ---KB_CAPTURE_RESULT---
     {"ok", "action", "shots", "verified", "visits", "left", "error"}
     (ingest adds "left_reasons": {"persona/surface": reason})
+
+wait_for_file is vendored from medtrics-qa-automation 0.17.1
+(skills/qa-screenshot-capture/scripts/poll_download.py) by Charles.
 """
 
 import argparse
@@ -432,6 +446,14 @@ def cmd_run(a):
 PROBE_VERSION = 1
 KEY = "kbp"
 PERSONA_ENTRY_WAIT_S = 2
+DEFAULT_SETTLE_S = 4
+MAX_WAIT_S = 10
+CANARY_WAIT_S = 3
+EXPORT_OPTS = {"showWatermark": False, "showProgressBar": False, "showActionLabels": False,
+               "showClickIndicators": False, "showDragPaths": False, "quality": 1}
+DL_ROOT = "kb-capture"
+FIRST_FILE_TIMEOUT_S = 20.0
+NEXT_FILE_TIMEOUT_S = 5.0
 MAX_ASPECT_DRIFT = 0.02
 STATUSES = ("ok", "expired", "wrong_persona", "bridge_down", "no_probe")
 
@@ -528,17 +550,51 @@ def _wait(n=2):
     return _act("computer", action="wait", duration=n)
 
 
+def _export(filename):
+    return _act("gif_creator", action="export", download=True, filename=filename,
+                options=dict(EXPORT_OPTS))
+
+
+def settle_seconds(demo, surface_wait=None):
+    """Pause after navigate: the surface's wait_s, else demo.settle_s (4), max 10."""
+    w = surface_wait if surface_wait is not None else demo.get("settle_s", DEFAULT_SETTLE_S)
+    try:
+        w = float(w)
+    except (TypeError, ValueError):
+        w = DEFAULT_SETTLE_S
+    w = min(max(w, 0), MAX_WAIT_S)
+    return int(w) if w == int(w) else w
+
+
 def visit_actions(base_url, visit, demo):
+    """One recording per visit, no screenshot: the exported GIF's last frame is
+    the settled page. The probe (javascript_tool) produces no frame."""
     park = demo.get("cursor_park") or [1465, 740]
-    return [_act("navigate", url=base_url + visit["url"]),
-            _wait(),
+    return [_act("gif_creator", action="start_recording"),
+            _act("navigate", url=base_url + visit["url"]),
+            _wait(settle_seconds(demo, visit.get("wait_s"))),
             _act("computer", action="hover", coordinate=list(park)),
             _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
-            _act("computer", action="screenshot", save_to_disk=True, scale=1)]
+            _act("gif_creator", action="stop_recording"),
+            _export(visit["gif"])]
+
+
+def canary_actions(base_url, first_persona, demo, gif):
+    entry = (demo.get("portal_entry") or {}).get(first_persona) or "/"
+    park = demo.get("cursor_park") or [1465, 740]
+    return [_act("gif_creator", action="start_recording"),
+            _act("navigate", url=base_url + entry),
+            _wait(CANARY_WAIT_S),
+            _act("computer", action="hover", coordinate=list(park)),
+            _act("gif_creator", action="stop_recording"),
+            _export(gif)]
 
 
 def build_calls(plan, inputs, routes, per_batch=3):
     demo = routes["demo"]
+    gif_dir = f"{DL_ROOT}/{plan.get('run_id') or 'run'}"
+    surface_wait = {(s.get("persona"), s.get("surface")): s.get("wait_s")
+                    for s in routes.get("surfaces", []) if s.get("wait_s") is not None}
     base = demo["base_url"]
     entry = demo.get("portal_entry") or {}
     labels_of = demo.get("portal_label") or {}
@@ -556,6 +612,10 @@ def build_calls(plan, inputs, routes, per_batch=3):
         v = {"visit_id": f"v{len(visits) + 1:02d}", "persona": c["persona"],
              "surface": c["surface"], "url": c["url"], "tickets": list(c.get("tickets", [])),
              "session": c.get("session", "unknown"), "labels": per_ticket}
+        v["gif"] = f"{gif_dir}/{v['visit_id']}.gif"
+        wait = c.get("wait_s", surface_wait.get((c["persona"], c["surface"])))
+        if wait is not None:
+            v["wait_s"] = wait
         v["args"] = {"v": PROBE_VERSION, "login": demo["login_path"],
                      "portal": labels_of.get(c["persona"]), "labels": flat,
                      "side": demo.get("sidebar_selector", ""),
@@ -580,9 +640,14 @@ def build_calls(plan, inputs, routes, per_batch=3):
                             "visit_ids": [v["visit_id"] for v in chunk], "actions": actions})
     home = (demo.get("portal_entry") or {}).get(demo.get("home_portal", "admin"))
     restore = [_act("navigate", url=base + home), _wait()] if home else []
+    canary_gif = f"{gif_dir}/canary.gif"
     return {"run_id": plan.get("run_id"), "base_url": base, "probe_version": PROBE_VERSION,
-            "install": install_action(), "visits": visits, "batches": batches,
-            "restore": restore}
+            "gif_dir": gif_dir, "install": install_action(), "visits": visits,
+            "batches": batches, "restore": restore,
+            "abort": [_act("gif_creator", action="clear")],
+            "canary": {"gif": canary_gif,
+                       "actions": canary_actions(base, personas[0] if personas else "admin",
+                                                 demo, canary_gif)}}
 
 
 def _j(x):
@@ -598,7 +663,7 @@ def capture_md(calls):
          "1. Load the Chrome tools with ToolSearch (`select:mcp__claude-in-chrome__tabs_context_mcp,"
          "mcp__claude-in-chrome__browser_batch,mcp__claude-in-chrome__javascript_tool,"
          "mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,"
-         "mcp__claude-in-chrome__tabs_create_mcp`). If they do not load, or `tabs_context_mcp` "
+         "mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__gif_creator`). If they do not load, or `tabs_context_mcp` "
          "fails, reply `KB_CAPTURE NO_CHROME_TOOLS` and stop.",
          "2. Call `tabs_context_mcp`; use the tab it returns (create one with `tabs_create_mcp` only "
          "if there is none). That tab's numeric id is `$TAB`.", "",
@@ -607,9 +672,11 @@ def capture_md(calls):
          _j(calls["install"]), ""]
     L += [f"## 3. Batches ({len(calls['batches'])})", "",
           "For each batch, in order, call `browser_batch` with exactly the `actions` array below. "
-          "Visits (ids in the heading) are in order; each visit is navigate, wait, hover, probe, "
-          "screenshot. The probe result is the `javascript_tool` result; the screenshot result "
-          "contains `[Image: source: <path>]`.", ""]
+          "Visits (ids in the heading) are in order; each visit is one `gif_creator` recording: "
+          "start_recording, navigate, wait, hover, probe, stop_recording, export. There are no "
+          "screenshots: never call `computer` with `screenshot`, and you never receive a page "
+          "image. The probe result is the `javascript_tool` result. The `export` result says "
+          "`Downloaded \"<filename>\"`; that filename is the visit's `gif`.", ""]
     for b in calls["batches"]:
         L += [f"### {b['batch_id']} — {b['persona']} — visits {', '.join(b['visit_ids'])}", "",
               _j(b["actions"]), "",
@@ -619,9 +686,9 @@ def capture_md(calls):
           "right after the batch returns, even if it failed:", "",
           _j({"batch_id": "b01", "status": "ok", "error": None,
               "items": [{"visit_id": "v01", "probe": "<the javascript_tool result exactly as returned>",
-                         "screenshot_path": "<path from the screenshot result>"}]}), "",
+                         "gif": "<filename from the export result: Downloaded \"…\">"}]}), "",
           "`status` is one of `ok`, `expired`, `wrong_persona`, `bridge_down`, `no_probe`. `items` are in "
-          "visit order, one per visit that completed both its probe and its screenshot; a visit not "
+          "visit order, one per visit that completed both its probe and its export; a visit not "
           "reached is simply absent. Copy the probe result verbatim (object, or the text if it came "
           "back as text) — do not edit it.", "",
           "## 5. Stop rules", "",
@@ -632,6 +699,10 @@ def capture_md(calls):
           "- A transport or bridge error (tool unavailable, extension disconnected): status "
           "`bridge_down`, write the file, stop.",
           "- Otherwise status `ok` and continue with the next batch.", "",
+          "**Abort rule.** After any stop rule above fires (except a bridge error, when the tool "
+          "is unreachable), send this once with `browser_batch` so a half recording is never "
+          "exported later, then write the raw file:", "",
+          _j(calls["abort"]), "",
           "## 6. Restore (always, after the last batch or after a stop)", "",
           "Send this once with `browser_batch` so the browser returns to the home portal:", "",
           _j(calls["restore"]), "",
@@ -700,17 +771,97 @@ def _load_raw(raw_dir):
     return items, batches
 
 
-def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now):
+def wait_for_file(path, timeout_s=15.0, interval_s=0.25):
+    """Block until `path` exists with a stable size, or timeout.
+
+    Returns (status, exit_code); status in {"ready", "timeout", "empty"}.
+    Vendored from medtrics-qa-automation 0.17.1
+    skills/qa-screenshot-capture/scripts/poll_download.py (Charles); only the
+    interval is in seconds here. Ready = non-empty and unchanged between two
+    consecutive polls, so Chrome has finished writing."""
+    path = Path(path)
+    deadline = time.monotonic() + timeout_s
+    last_size = -1
+    while time.monotonic() < deadline:
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            size = -1
+        if size > 0 and size == last_size:
+            return ("ready", 0)
+        last_size = size
+        time.sleep(interval_s)
+    if last_size == 0:
+        return ("empty", 2)
+    return ("timeout", 1)
+
+
+_WAIT_REASON = {"timeout": "download_missing", "empty": "empty_export"}
+
+
+def last_frame_png(gif_path, dest):
+    """Save the last composited frame of a GIF as an RGB PNG. Raises ValueError
+    when the file is not a decodable GIF."""
+    from PIL import Image, ImageSequence
+    try:
+        with Image.open(gif_path) as im:
+            if im.format != "GIF":
+                raise ValueError("not a GIF")
+            last = None
+            for fr in ImageSequence.Iterator(im):
+                last = fr.convert("RGB")
+        if last is None:
+            raise ValueError("no frames")
+        last.save(dest, "PNG")
+    except (OSError, SyntaxError, EOFError, ValueError) as e:
+        raise ValueError(f"{type(e).__name__}: {e}")
+    return last.size
+
+
+def _fetch_gif(visit, item, downloads_dir, out_dir, timeout_s):
+    """Wait for the exported GIF, move it into shots/gifs/, extract its last
+    frame -> (frame_path, reason)."""
+    if not downloads_dir:
+        return None, "download_missing"
+    src = Path(downloads_dir) / str(item["gif"])
+    status, _ = wait_for_file(src, timeout_s)
+    if status != "ready":
+        return None, _WAIT_REASON[status]
+    gifs = out_dir / "gifs"
+    gifs.mkdir(parents=True, exist_ok=True)
+    kept = gifs / f"{visit['visit_id']}.gif"
+    shutil.move(str(src), str(kept))
+    frames = out_dir / "frames"
+    frames.mkdir(parents=True, exist_ok=True)
+    dest = frames / f"{visit['visit_id']}.png"
+    try:
+        last_frame_png(kept, dest)
+    except ValueError:
+        return None, "bad_gif"
+    return dest, None
+
+
+def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
+                 downloads_dir=None, timeout_s=NEXT_FILE_TIMEOUT_S):
     """-> (entries, reason). reason is None when the visit was ingested."""
     from PIL import Image
     probe = parse_probe(item.get("probe"))
-    src = Path(os.path.expanduser(str(item.get("screenshot_path") or "")))
-    if probe is None or not src.is_file():
+    if probe is None:
         return [], "retry"
-    frames = out_dir / "frames"
-    frames.mkdir(parents=True, exist_ok=True)
-    dest = frames / f"{visit['visit_id']}.jpg"
-    shutil.copyfile(src, dest)
+    src = Path(os.path.expanduser(str(item.get("screenshot_path") or "")))
+    if item.get("gif"):
+        dest, reason = _fetch_gif(visit, item, downloads_dir, out_dir, timeout_s)
+        if reason:
+            return [], reason
+        frame_source = "gif"
+    elif item.get("screenshot_path") and src.is_file():      # 0.23.0 raw files
+        frames = out_dir / "frames"
+        frames.mkdir(parents=True, exist_ok=True)
+        dest = frames / f"{visit['visit_id']}.jpg"
+        shutil.copyfile(src, dest)
+        frame_source = "disk"
+    else:
+        return [], "retry"
     with Image.open(dest) as im:
         im.load()
         problem = frame_problem(im.width, im.height, probe)
@@ -741,6 +892,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now):
                                 "surface": visit["surface"], "frame": str(dest),
                                 "verified": ev is not None, "source": source,
                                 "visit_id": visit["visit_id"], "sidebar": bool(pl.get("sb")),
+                                "frame_source": frame_source,
                                 **(ev or {"label": label})})
     return entries, None
 
@@ -762,11 +914,16 @@ def cmd_ingest(a):
 
     done, reasons, new = set(), {}, []
     ingested = set()
+    fetched = 0
     for v in calls["visits"]:
         vid = v["visit_id"]
         key = f"{v['persona']}/{v['surface']}"
         if vid in items:
-            entries, reason = ingest_visit(v, items[vid], calls, demo, out_dir, use_ocr, now)
+            timeout = FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S
+            if items[vid].get("gif"):
+                fetched += 1
+            entries, reason = ingest_visit(v, items[vid], calls, demo, out_dir, use_ocr, now,
+                                           a.downloads_dir, timeout)
             if reason is None:
                 ingested.add(vid)
                 done.add((v["persona"], v["surface"]))
@@ -778,6 +935,12 @@ def cmd_ingest(a):
             reason = "not_reached" if not b else (st if st != "ok" else "not_reached")
         reasons[key] = reason
 
+    if a.downloads_dir and calls.get("gif_dir"):
+        for d in (Path(a.downloads_dir) / calls["gif_dir"], Path(a.downloads_dir) / DL_ROOT):
+            try:
+                d.rmdir()                                        # only when empty
+            except OSError:
+                pass
     kept = [s for s in manifest["shots"] if s.get("visit_id") not in ingested]
     n = max([int(re.sub(r"\D", "", s.get("shot_id", "")) or 0) for s in kept] + [0])
     for e in new:
@@ -809,6 +972,64 @@ def cmd_ingest(a):
     return 0
 
 
+PICKUP_EXIT = {"download_missing": 1, "empty_export": 2, "bad_gif": 3}
+
+
+def cmd_pickup(a):
+    """Canary check: the exported GIF arrived, is non-empty and decodes."""
+    src = Path(a.downloads_dir) / a.name
+    status, _ = wait_for_file(src, a.timeout)
+    reason = _WAIT_REASON.get(status)
+    size = None
+    if not reason:
+        try:
+            from PIL import Image, ImageSequence
+            with Image.open(src) as im:
+                if im.format != "GIF":
+                    raise ValueError("not a GIF")
+                for fr in ImageSequence.Iterator(im):
+                    size = fr.size
+            if size is None:
+                raise ValueError("no frames")
+        except (OSError, SyntaxError, EOFError, ValueError):
+            reason = "bad_gif"
+    if reason:
+        print(f"canary failed: {reason}")
+        emit({"ok": False, "action": "pickup", "reason": reason, "name": a.name})
+        return PICKUP_EXIT[reason]
+    src.unlink()
+    print(f"canary ok: {size[0]}x{size[1]}")
+    emit({"ok": True, "action": "pickup", "width": size[0], "height": size[1], "name": a.name})
+    return 0
+
+
+def cmd_sweep(a):
+    """Move leftover Downloads/kb-capture/* (crashed runs) into --into. Never
+    deletes a file; only an emptied kb-capture folder is removed."""
+    root = Path(a.downloads_dir) / DL_ROOT
+    moved = []
+    if root.is_dir():
+        into = Path(a.into)
+        for p in sorted(root.iterdir()):
+            into.mkdir(parents=True, exist_ok=True)
+            dest = into / p.name
+            n = 1
+            while dest.exists():
+                n += 1
+                dest = into / f"{p.name}-{n}"
+            shutil.move(str(p), str(dest))
+            moved.append({"from": str(p), "to": str(dest)})
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+    for m in moved:
+        print(f"moved {m['from']} -> {m['to']}")
+    print(f"swept {len(moved)} leftover item(s)")
+    emit({"ok": True, "action": "sweep", "moved": moved})
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -831,10 +1052,16 @@ def main(argv=None):
     s = sub.add_parser("ingest"); s.add_argument("--calls", required=True)
     s.add_argument("--raw-dir", required=True); s.add_argument("--out-dir", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--no-ocr", action="store_true")
+    s.add_argument("--downloads-dir")
+    s = sub.add_parser("pickup"); s.add_argument("--downloads-dir", required=True)
+    s.add_argument("--name", required=True); s.add_argument("--timeout", type=float, default=20.0)
+    s = sub.add_parser("sweep"); s.add_argument("--downloads-dir", required=True)
+    s.add_argument("--into", required=True)
     a = ap.parse_args(argv)
     try:
         return {"login": cmd_login, "check": cmd_check, "run": cmd_run,
-                "plan-calls": cmd_plan_calls, "ingest": cmd_ingest}[a.cmd](a)
+                "plan-calls": cmd_plan_calls, "ingest": cmd_ingest,
+                "pickup": cmd_pickup, "sweep": cmd_sweep}[a.cmd](a)
     except (OSError, json.JSONDecodeError, KeyError) as e:
         emit({"ok": False, "action": a.cmd, "error": f"{type(e).__name__}: {e}"})
         return 1

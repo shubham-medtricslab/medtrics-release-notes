@@ -275,6 +275,13 @@ class Annotate(unittest.TestCase):
         # inside the badge disc, right of the glyph
         self.assertEqual(out.getpixel((int(0.045 * 1440) + 12, 415)), A.ACCENT)
 
+    def test_ring_stays_inside_frame_at_the_edge(self):
+        import qa_annotate as A
+        from PIL import Image
+        im = Image.new("RGB", (1440, 900), "white")
+        out = A.annotate(im, A.anchor_from_box((1330, 200, 110, 34)), number=1)
+        self.assertEqual(out.getpixel((1440 - 1 - 5, 217)), A.ACCENT)
+
     def test_font_is_scalable(self):
         import qa_annotate as A
         from PIL import ImageFont

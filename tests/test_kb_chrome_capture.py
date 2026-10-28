@@ -4,8 +4,9 @@ against a tiny DOM stub when node is on PATH) and `ingest` (raw files ->
 shots.json). Hermetic: no browser, no network, Pillow-generated JPEG frames;
 OCR is never used (--no-ocr / dom_box anchors).
 
-Pins: per-visit action order navigate -> wait -> hover(cursor park) -> probe
-stub -> screenshot; the persona's first batch starts with the portal entry;
+Pins: per-visit action order start_recording -> navigate -> wait -> hover(cursor
+park) -> probe stub -> stop_recording -> export (GIF capture, see
+tests/test_kb_gif_capture.py); the persona's first batch starts with the portal entry;
 batches hold --per-batch visits; labels reach the JS only through json.dumps;
 visits without a URL are not planned; capture.md carries every batch and the
 restore actions; the tenant-screen JS regexes are the Python patterns; ingest
@@ -82,25 +83,25 @@ class PlanCalls(Base):
         b = calls["batches"][0]
         names = [(a["name"], a["input"].get("action")) for a in b["actions"]]
         entry = [("navigate", None), ("computer", "wait")]
-        visit = [("navigate", None), ("computer", "wait"), ("computer", "hover"),
-                 ("javascript_tool", "javascript_exec"), ("computer", "screenshot")]
+        visit = [("gif_creator", "start_recording"), ("navigate", None), ("computer", "wait"),
+                 ("computer", "hover"), ("javascript_tool", "javascript_exec"),
+                 ("gif_creator", "stop_recording"), ("gif_creator", "export")]
         self.assertEqual(names, entry + visit * 3)
         for a in b["actions"]:
             self.assertEqual(a["input"]["tabId"], "$TAB")
         acts = b["actions"]
         self.assertTrue(acts[0]["input"]["url"].endswith("/?portal_change=administration"))
         self.assertEqual(acts[1]["input"]["duration"], 2)
-        self.assertEqual(acts[4]["input"]["coordinate"], [1465, 740])
-        self.assertEqual(acts[2]["input"]["url"], "https://medtrics.medtricslab.com/users/")
-        shot = acts[-1]["input"]
-        self.assertEqual((shot["save_to_disk"], shot["scale"]), (True, 1))
+        self.assertEqual(acts[5]["input"]["coordinate"], [1465, 740])
+        self.assertEqual(acts[3]["input"]["url"], "https://medtrics.medtricslab.com/users/")
+        self.assertNotIn("screenshot", [a["input"].get("action") for a in acts])
 
     def test_per_batch_and_persona_entry(self):
         calls, _ = self.plan_calls(per_batch=2)
         self.assertEqual([b["visit_ids"] for b in calls["batches"]],
                          [["v01", "v02"], ["v03", "v04"], ["v05"]])
         self.assertEqual([b["persona"] for b in calls["batches"]], ["admin", "admin", "faculty"])
-        first = lambda b: b["actions"][0]["input"]["url"]
+        first = lambda b: next(a for a in b["actions"] if a["name"] == "navigate")["input"]["url"]
         self.assertIn("portal_change=administration", first(calls["batches"][0]))
         self.assertIn("/roles/", first(calls["batches"][1]))          # no entry mid-persona
         self.assertIn("portal_change=personal", first(calls["batches"][2]))
@@ -116,7 +117,7 @@ class PlanCalls(Base):
         self.assertEqual((a["portal"], a["login"], a["domain"], a["v"]),
                          ("Admin", "/users/login/", "medtricslab.com", calls["probe_version"]))
         self.assertEqual(calls["visits"][4]["args"]["portal"], "Personal")
-        stub = calls["batches"][0]["actions"][5]["input"]["text"]
+        stub = calls["batches"][0]["actions"][6]["input"]["text"]
         self.assertTrue(stub.endswith(")(" + json.dumps(a) + ")"))
         self.assertIn("KB_NOPROBE", stub)
         self.assertIn("(0,eval)(sessionStorage.getItem('kbp'))", stub)
@@ -144,7 +145,7 @@ class PlanCalls(Base):
         for word in ("$TAB", "raw/", "KB_LOGIN", "KB_PERSONA", "KB_NOPROBE", "bridge_down",
                      "NO_CHROME_TOOLS", "KB_CAPTURE_DONE"):
             self.assertIn(word, md)
-        self.assertEqual(md.count("```json"), len(calls["batches"]) + 3)
+        self.assertEqual(md.count("```json"), len(calls["batches"]) + 4)   # install, abort, raw example, restore
 
     def test_labels_capped(self):
         plan = {"run_id": "r", "capture_plan": [{"persona": "admin", "surface": "S", "url": "/s/",

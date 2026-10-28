@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-28
+
+### Changed
+- **Screenshots now come from GIF recordings, so capture works in Cowork.**
+  In Cowork, `computer screenshot save_to_disk` leaves no file the sandbox can
+  read. This adopts the mechanism of Charles's `medtrics-qa-automation`
+  `qa-screenshot-capture` skill (credit to him): each screen is recorded with
+  `gif_creator`, exported with `download:true` into
+  `~/Downloads/kb-capture/<run>/<visit>.gif` (all overlays off, quality 1), and
+  read through the Downloads folder — mounted with
+  `mcp__cowork__request_cowork_directory` in Cowork (path taken from the mount
+  response every run), `~/Downloads` in Claude Code.
+  - Per screen: start → navigate → wait (`demo.settle_s` = 4, per-surface
+    `wait_s`) → park cursor → probe → stop → export. **No screenshot**: the last
+    GIF frame is the settled page at full viewport size (1470×802), so the
+    Haiku capturer never receives an image.
+  - Step 0 asks for the Downloads folder and sweeps leftover `kb-capture/`
+    folders into the run (never deleted). Step 5 runs a canary GIF + `pickup`
+    while you're present, then the capturer, then `ingest --downloads-dir`,
+    which waits for each file (Charles's `wait_for_file`, vendored with
+    credit), moves it into `shots/gifs/`, takes the last frame as PNG and keeps
+    the `shots.json` contract (`frame_source: gif`). New left reasons:
+    `download_missing`, `empty_export`, `bad_gif`.
+  - 0.23.0 raw files with `screenshot_path` still ingest.
+
+### Fixed
+- Rings next to the page edge were cut off; they now stay inside the frame.
+
+### Verified live (owner's Chrome, Claude Code on the Mac)
+- `gif_creator` inside `browser_batch`; exports 1470×802 with no screenshot
+  taken; subfolder filenames; 5 exports in a row with no Chrome prompt; canary
+  pickup; Haiku capturer → 3 screens → ingest moved all GIFs out of Downloads,
+  6/6 labels verified, rings on the right controls. The Cowork mount call itself
+  is not testable from Claude Code and is unverified.
+
 ## [0.23.0] - 2026-10-28
 
 ### Changed
