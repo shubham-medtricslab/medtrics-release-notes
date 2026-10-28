@@ -173,6 +173,40 @@ class Setup(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("KB_PY=", buf.getvalue())
 
+    def run_check(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = D.main(["--check", "--home", str(self.home)])
+        return rc, buf.getvalue()
+
+    def test_check_without_setup_points_to_setup_command(self):
+        rc, out = self.run_check()
+        self.assertEqual(rc, 2)
+        self.assertIn("/release-note-setup", out)
+        self.assertNotIn("KB_PY=", out)
+
+    def test_check_after_setup_installs_nothing(self):
+        fake = Fake({n: True for n in ALL})
+        with mock.patch.object(D, "probe_all", fake.probe):
+            self.run_setup(fake)
+            fake.calls.clear()
+            rc, out = self.run_check()
+        self.assertEqual(rc, 0)
+        self.assertIn("KB_PY=", out)
+        self.assertEqual(fake.calls, [])
+
+    def test_check_hard_piece_gone_needs_setup(self):
+        fake = Fake({n: True for n in ALL})
+        with mock.patch.object(D, "probe_all", fake.probe):
+            self.run_setup(fake)
+        fake2 = Fake({n: n != "python-docx" for n in ALL})
+        with mock.patch.object(D, "probe_all", fake2.probe):
+            rc, out = self.run_check()
+        self.assertEqual(rc, 2)
+        self.assertIn("reset", out)
+
 
 if __name__ == "__main__":
     unittest.main()

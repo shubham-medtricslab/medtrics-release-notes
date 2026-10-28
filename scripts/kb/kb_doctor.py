@@ -17,6 +17,10 @@ kb_doctor.py — set up, once, everything /kb-articles needs, and remember it.
             Also install Playwright + its Chromium (the legacy screenshot
             path). Off by default: screenshots use the Claude in Chrome
             extension, which needs nothing installed here.
+  --check   What /kb-articles runs every time: reads kb-setup.json and confirms
+            the hard pieces are still on disk. Installs nothing. Exit 2 when
+            setup was never run here or the folder was reset — the command then
+            tells you to run /release-note-setup.
   (none)    Report only, for the current interpreter. Nothing is installed.
 
 <home> is --home, else $KB_HOME, else the current folder (the folder selected
@@ -310,6 +314,31 @@ def cmd_setup(a):
     return 0 if ok else 1
 
 
+def cmd_check(a):
+    """--check: never installs. Exit 0 + KB_PY when setup is done, 2 when not."""
+    env = home(a.home) / ENV_DIR
+    marker = load_marker(env)
+    gone = still_there(marker, env) if marker else []
+    hard = [n for n, (_p, _d, is_hard, _c) in PY_PACKAGES.items() if is_hard]
+    if not marker or any(n in gone for n in hard) or not all(working(marker, n) for n in hard):
+        why = "not done in this folder" if not marker else "incomplete or reset"
+        print(f"KB setup: {why} — run /release-note-setup, then re-run.")
+        print("---KB_DOCTOR_RESULT---")
+        print(json.dumps({"ok": False, "setup": False, "gone": gone}))
+        return 2
+    print(f"KB setup: done ({marker.get('updated')}).")
+    for n in gone:
+        print(f"  WARN {n} is gone since setup — run /release-note-setup to put it back")
+    print(f"KB_PY={marker['py']}")
+    print(f"PLAYWRIGHT_BROWSERS_PATH={marker['browsers']}")
+    for w in _warnings():
+        print(f"  WARN {w}")
+    print("---KB_DOCTOR_RESULT---")
+    print(json.dumps({"ok": True, "setup": True, "py": marker["py"], "items": marker["items"],
+                      "gone": gone, "warnings": _warnings()}))
+    return 0
+
+
 def cmd_report(a):
     """No --setup: what the CURRENT interpreter can do. Installs nothing."""
     def mod(name):
@@ -335,13 +364,17 @@ def cmd_report(a):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--setup", action="store_true")
+    ap.add_argument("--check", action="store_true",
+                    help="confirm setup was done (reads kb-setup.json); installs nothing")
     ap.add_argument("--force", action="store_true", help="with --setup: re-check and retry everything")
     ap.add_argument("--with-playwright", action="store_true",
                     help="with --setup: also install Playwright + Chromium (legacy capture path)")
     ap.add_argument("--home", help="folder that holds .kb-env (default $KB_HOME, else cwd)")
     ap.add_argument("--session-dir", default=os.environ.get("KB_SESSION_DIR") or ".kb-sessions")
     a = ap.parse_args(argv)
-    return cmd_setup(a) if a.setup else cmd_report(a)
+    if a.setup:
+        return cmd_setup(a)
+    return cmd_check(a) if a.check else cmd_report(a)
 
 
 if __name__ == "__main__":

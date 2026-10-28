@@ -201,4 +201,4 @@ capturable yet and its tickets are drafted without screenshots.
 
 `kb_capture.py login`, `check` and `run` (headless Playwright with saved
 sessions) still exist in the script but `/kb-articles` no longer uses them, and
-`kb_doctor.py --setup` installs Playwright only with `--with-playwright`.
+`kb_doctor.py --setup` (run by `/release-note-setup`) installs Playwright only with `--with-playwright`.

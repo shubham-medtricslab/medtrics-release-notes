@@ -59,7 +59,7 @@ needs only Optimus (no GitLab) and Mem:
 ## Pipeline overview
 
 ```
-0  preflight     kb_doctor.py + Mem probe (hard stop) + .env keys + Claude in Chrome check + Downloads folder (Cowork) + sweep
+0  preflight     setup check (kb_doctor --check) + Mem probe (hard stop) + .env keys + Claude in Chrome check + Downloads folder (Cowork) + sweep
 1  select        ledger + queue dumps → ids (argv | release archive | queue) → gather (features only,
                  skipped with --from-release) → kb_select filter
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
@@ -130,22 +130,17 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    line and stop. This applies to `dry-run`.
 2. **.env** — `OPTIMUS_API_KEY`, `GITLAB_TOKEN`, `GITLAB_PROJECT_ID` present, else
    list the missing keys and stop.
-3. **Setup (once per folder)** — `python3 $K/kb_doctor.py --setup`, run from the
-   folder selected in Cowork. The first time, it creates `.kb-env/` there,
-   installs what is missing (Python packages into `.kb-env/`; Playwright and
-   Chromium only with `--with-playwright`, which this command never passes;
-   tesseract, LibreOffice and the Carlito font through apt-get or
-   Homebrew when it is allowed to), and records the result in
-   `.kb-env/kb-setup.json`. Every later run reads that file and only confirms the
-   installed pieces are still on disk — it prints `KB setup: already done … —
-   skipping the checks.` and takes well under a second. It never asks; a piece it
-   could not install is recorded as unavailable and not retried (say so once in
-   the preview; `--setup --force` retries).
+3. **Setup check** — `python3 $K/kb_doctor.py --check`, run from the folder
+   selected in Cowork. It installs nothing: it reads `.kb-env/kb-setup.json`
+   (written by `/release-note-setup`) and confirms the pieces are still on disk,
+   in well under a second. Exit 2 → setup was never run here or the folder was
+   reset: print its line ("run /release-note-setup, then re-run") and stop. Do
+   not install anything yourself.
    Set `KB_PY` to the `KB_PY=` line it prints and run **every** `$K` script below
-   with `$KB_PY`. Exit 1 (python-docx, Pillow or numpy unavailable) → show its
-   output and stop. Otherwise keep it for the preview: no tesseract means draft-only anchors; no
-   LibreOffice means no PDF this run. Show any `WARN` line (e.g.
-   `CLAUDE_CODE_SUBAGENT_MODEL` overriding the pinned models).
+   with `$KB_PY`. Keep the recorded items for the preview: no tesseract means
+   draft-only anchors; no LibreOffice means no PDF this run. Show any `WARN` line
+   (a piece gone since setup, or `CLAUDE_CODE_SUBAGENT_MODEL` overriding the
+   pinned models).
 4. **Claude in Chrome** — one cheap check on every run (skip with `--no-capture`
    and for `--kb-queue`). Call ToolSearch
    `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__browser_batch,mcp__claude-in-chrome__gif_creator`
@@ -441,9 +436,9 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Situation | Behaviour |
 |---|---|
 | Mem not connected | Stop at Step 0 (dry-run too) |
-| Setup could not install python-docx / Pillow / numpy | Stop at Step 0 with its output |
-| Setup could not install tesseract / LibreOffice (no root, no Homebrew) | Recorded once as unavailable; runs continue without OCR / PDF; `kb_doctor.py --setup --force` retries |
-| `.kb-env/` deleted or the sandbox reset | The next run's quick check notices the missing pieces and reinstalls only those |
+| Setup never run in this folder | Stop at Step 0: run `/release-note-setup`, then re-run |
+| Setup could not install tesseract / LibreOffice (no root, no Homebrew) | Recorded once as unavailable; runs continue without OCR / PDF; `/release-note-setup --force` retries |
+| `.kb-env/` deleted or the sandbox reset | The setup check stops the run: run `/release-note-setup` again |
 | Claude in Chrome missing or not connected | Step 0 asks you to install and connect it and sign in, then re-run; or continue with `--no-capture` |
 | Chrome not signed in (`KB_LOGIN`) | Capture stops, shots already taken are kept; sign in again in Chrome; `--retry-partial` re-runs the rest |
 | Wrong portal (`KB_PERSONA`) | Capture stops with `wrong_persona`; the rest is left |

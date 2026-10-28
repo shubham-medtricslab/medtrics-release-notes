@@ -34,6 +34,7 @@ Caps enforced by the lint gate: root ≤ 2,500 chars, each reply ≤ 3,900 chars
 
 | Command | What it does | When to run it |
 |---|---|---|
+| `/release-note-setup` | One-time setup in the folder you run commands from. Today it sets up KB articles: installs the Python packages into `.kb-env/`, tries tesseract / LibreOffice / the Carlito font, checks the Claude in Chrome extension, and ends with a table of what is ready and what you still need to do. More parts will be added here. | Once per folder, and again if a command says so (e.g. after the Cowork sandbox reset). `--force` retries everything. |
 | `/release-slack` | End-to-end combined Monday command. ONE message into `#dream-team` (`SLACK_CHANNEL_INTERNAL`): root index + threaded per-ticket cards, each carrying a client-portable exec lede plus the internal detail (ticket IDs, dev @-mentions, client tags, Optimus URLs). The team ports the lede to clients. | After every production deploy. |
 | `/oracle-release` | End-to-end **Oracle** command, same shape as `/release-slack`: ONE combined message into `SLACK_CHANNEL_ORACLE` (`#pod-oracle`) — root index + per-ticket cards (exec lede + internal detail incl. PR links). Sources: Optimus (ORC tickets) + **GitHub** PRs. Exec ledes IP-guarded as a safety net. | After every medtrics-oracle deploy. |
 | `/notes` | Both note types (deploy / integration) as markdown files in parallel. | Paper-trail backup or when you need both documents at once. |
@@ -320,7 +321,7 @@ There is none on disk. The posted root + replies are archived as one Mem note (s
 
 **How a run stays cheap.** Non-features and tickets the ledger already covers are dropped before any GitLab call. Tickets are placed on a surface by rule (backlog map, URL prefix in the diff, template path, module); only leftovers go to one batched Haiku call. Writers see trimmed inputs (description, acceptance criteria, UI strings added in the diff, routes) and shot *labels*, never images or full diffs; their fixed rules live in the agent body so every call shares the cached prefix. Evidence problems are fixed by script; only prose-gate failures go back to the writer, one article at a time, at most twice. One capture visit per surface, one LibreOffice call for all PDFs.
 
-**Before the first run** (once): install the Claude in Chrome extension from the Chrome Web Store, connect it to your Claude account, and sign in to https://medtrics.medtricslab.com in that Chrome yourself (Claude never types passwords; there is no `.env-kb-login`). `/kb-articles` checks the extension at the start of every run and asks you to do this only if it is missing. In Cowork, approve the Downloads folder prompt each run (the screen captures are exported there as GIFs and read back through it; in Claude Code it uses `~/Downloads` directly). In Chrome, set Settings → Downloads → "Ask where to save each file" to off, so the GIFs save without a dialog; a canary capture at the start of Step 5 checks this and skips capture, with the reason, if it fails. It works in Cowork and in Claude Code. Capture drives one tab of that Chrome and returns it to the Admin portal, so don't use that window until capture finishes. Then seed the ledger from the October hand-run backlog (`kb_ledger.py seed-legacy`) and, when the FAQ Content Planner export is available, the catalogue (`kb_ledger.py seed-catalogue --csv kb2.csv`). Installation is automatic: the first `/kb-articles` run in a folder runs `kb_doctor.py --setup`, which installs what is missing into `<folder>/.kb-env/` (Python packages; Playwright and Chromium only with `--with-playwright`, which the command does not use) and, where it is allowed to, tesseract, LibreOffice and the Carlito font via apt-get or Homebrew, then records the result in `.kb-env/kb-setup.json`. Later runs only confirm the files are still there. Anything it could not install is recorded and skipped (OCR or PDF degrade gracefully); `kb_doctor.py --setup --force` retries.
+**Before the first run** (once): install the Claude in Chrome extension from the Chrome Web Store, connect it to your Claude account, and sign in to https://medtrics.medtricslab.com in that Chrome yourself (Claude never types passwords; there is no `.env-kb-login`). `/kb-articles` checks the extension at the start of every run and asks you to do this only if it is missing. In Cowork, approve the Downloads folder prompt each run (the screen captures are exported there as GIFs and read back through it; in Claude Code it uses `~/Downloads` directly). In Chrome, set Settings → Downloads → "Ask where to save each file" to off, so the GIFs save without a dialog; a canary capture at the start of Step 5 checks this and skips capture, with the reason, if it fails. It works in Cowork and in Claude Code. Capture drives one tab of that Chrome and returns it to the Admin portal, so don't use that window until capture finishes. Then seed the ledger from the October hand-run backlog (`kb_ledger.py seed-legacy`) and, when the FAQ Content Planner export is available, the catalogue (`kb_ledger.py seed-catalogue --csv kb2.csv`). Installation is one command: run `/release-note-setup` once in the folder. It installs what is missing into `<folder>/.kb-env/` (Python packages) and, where it is allowed to, tesseract, LibreOffice and the Carlito font via apt-get or Homebrew, checks the Chrome extension, and records the result in `.kb-env/kb-setup.json`. `/kb-articles` installs nothing: it only reads that record (under a second) and, if setup was never run or the folder was reset, stops and tells you to run `/release-note-setup`. Anything setup could not install is recorded and skipped (OCR or PDF degrade gracefully); `/release-note-setup --force` retries.
 
 **From a release.** `/release-slack --kb` posts the release as usual, then puts its feature tickets on the KB queue and hands them to `/kb-articles` in the same chat, reusing the release's ticket data and client summaries (no second Optimus/GitLab fetch). You see the plan and answer y/n; on no, they wait on the queue for `/kb-articles pending`.
 
@@ -348,10 +349,11 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 2. Select `medtrics-release-notes.plugin`.
 3. Add the `.env` keys above to your host-repo root.
 4. Complete the Slack bot setup above.
+5. Run `/release-note-setup` once in the folder you'll run the commands from.
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.24.0**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.25.0**.
 
 ## Repository layout
 
@@ -359,7 +361,7 @@ Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current vers
 medtrics-release-notes/
 ├── .claude-plugin/plugin.json
 ├── agents/               # kb-writer (Sonnet), kb-classifier (Haiku)
-├── commands/             # /release-slack, /oracle-release, /deploy-notes, /integration-notes, /notes, /kb-articles
+├── commands/             # /release-slack, /oracle-release, /deploy-notes, /integration-notes, /notes, /kb-articles, /release-note-setup
 ├── skills/               # storyteller, internal-storyteller, oracle-storyteller, copy-audit, ip-guard, engineering-to-client, dev-directory, pr-overrides, release-archive, kb-ledger, kb-capture
 ├── scripts/              # gather, prompts, slack resolve users, dev directory (Mem), pr overrides (Mem), release archive (Mem), slack upload (+ permalink), slack lint, ip guard, build
 │   └── kb/               # KB format, gates, renderer, capture, selection, assembly, PDF, packaging, ledger

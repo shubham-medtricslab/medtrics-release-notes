@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-28
+
+### Added
+- **`/release-note-setup`** — one command that sets the plugin up in a folder,
+  once. Today it has one part, `kb`: installs the Python packages into
+  `.kb-env/`, tries tesseract / LibreOffice / the Carlito font, checks the
+  Claude in Chrome extension, and ends with a ready / to-do table. More parts
+  are added as new sections. `/release-note-setup kb` runs only that part;
+  `--force` retries everything.
+- `kb_doctor.py --check` — reads `.kb-env/kb-setup.json` and confirms the
+  pieces are still on disk; installs nothing; exit 2 when setup is missing.
+
+### Changed
+- `/kb-articles` no longer installs anything. Step 0 runs `kb_doctor.py
+  --check` and, if setup was never run here or the folder was reset, stops
+  with "run /release-note-setup, then re-run".
+
 ## [0.24.0] - 2026-10-28
 
 ### Changed
