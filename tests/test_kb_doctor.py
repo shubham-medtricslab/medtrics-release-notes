@@ -5,7 +5,8 @@ downloaded or installed.
 Pins: the first run installs only what is missing and writes the marker; the
 next run reads the marker and skips (no installer called); a piece that
 vanished (reset sandbox) is reinstalled alone; a piece recorded unavailable
-is not retried until --force; Chromium is fetched only once Playwright works;
+is not retried until --force; Playwright and Chromium are installed only with --with-playwright (and
+Chromium only once Playwright works); no .env-kb-login issue is raised;
 the marker carries the environment's python.
 """
 
@@ -56,9 +57,10 @@ class Setup(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.home = Path(self._tmp.name)
 
-    def run_setup(self, fake, force=False):
+    def run_setup(self, fake, force=False, with_playwright=False):
         with mock.patch.object(D, "probe_all", fake.probe):
-            return D.setup(self.home, force=force, installers=fake.installers())
+            return D.setup(self.home, force=force, installers=fake.installers(),
+                           with_playwright=with_playwright)
 
     def test_first_run_installs_missing_and_writes_marker(self):
         present = {n: n in ("Pillow", "numpy", "LibreOffice") for n in ALL}
@@ -67,14 +69,38 @@ class Setup(unittest.TestCase):
         self.assertFalse(skipped)
         self.assertEqual(marker["items"]["Pillow"], "present")
         self.assertEqual(marker["items"]["python-docx"], "installed")
-        self.assertEqual(marker["items"][D.CHROMIUM], "installed")
+        self.assertEqual(marker["items"][D.CHROMIUM], D.NOT_REQUESTED)
+        self.assertEqual(marker["items"]["playwright"], D.NOT_REQUESTED)
         kinds = [k for k, _ in fake.calls]
-        self.assertEqual(kinds, ["packages", "chromium", "system"])
+        self.assertEqual(kinds, ["packages", "system"])
+        self.assertNotIn("playwright", fake.calls[0][1])
         self.assertNotIn("Pillow", fake.calls[0][1])
-        self.assertNotIn("LibreOffice", fake.calls[2][1])
+        self.assertNotIn("LibreOffice", fake.calls[1][1])
         on_disk = json.loads((self.home / D.ENV_DIR / D.MARKER).read_text())
         self.assertEqual(on_disk["items"], marker["items"])
         self.assertIn("py", on_disk)
+
+    def test_with_playwright_installs_playwright_and_chromium(self):
+        present = {n: n in ("Pillow", "numpy", "LibreOffice") for n in ALL}
+        fake = Fake(present)
+        marker, skipped = self.run_setup(fake, with_playwright=True)
+        self.assertFalse(skipped)
+        self.assertEqual(marker["items"][D.CHROMIUM], "installed")
+        self.assertEqual(marker["items"]["playwright"], "installed")
+        self.assertEqual([k for k, _ in fake.calls], ["packages", "chromium", "system"])
+        self.assertIn("playwright", fake.calls[0][1])
+
+    def test_with_playwright_later_adds_only_the_legacy_pieces(self):
+        fake = Fake({n: False for n in ALL})
+        self.run_setup(fake)
+        fake.calls.clear()
+        marker, skipped = self.run_setup(fake, with_playwright=True)
+        self.assertFalse(skipped)
+        self.assertEqual(fake.calls, [("packages", ("playwright",)), ("chromium", (D.CHROMIUM,))])
+        self.assertEqual(marker["items"][D.CHROMIUM], "installed")
+        fake.calls.clear()
+        _, skipped = self.run_setup(fake, with_playwright=True)
+        self.assertTrue(skipped)
 
     def test_second_run_skips_without_installing(self):
         fake = Fake({n: False for n in ALL})
@@ -108,9 +134,34 @@ class Setup(unittest.TestCase):
 
     def test_no_chromium_without_playwright(self):
         fake = Fake({n: False for n in ALL}, fail={"playwright"})
-        marker, _ = self.run_setup(fake)
+        marker, _ = self.run_setup(fake, with_playwright=True)
         self.assertTrue(marker["items"][D.CHROMIUM].startswith("unavailable"))
         self.assertNotIn("chromium", [k for k, _ in fake.calls])
+
+    def test_no_login_file_issue(self):
+        import contextlib
+        import io
+        fake = Fake({n: True for n in ALL})
+        buf = io.StringIO()
+        with mock.patch.object(D, "probe_all", fake.probe), contextlib.redirect_stdout(buf):
+            D.main(["--setup", "--home", str(self.home)])
+        out = buf.getvalue()
+        self.assertNotIn(".env-kb-login", out)
+        self.assertNotIn("ISSUE", out)
+        self.assertEqual(json.loads(out.split("---KB_DOCTOR_RESULT---")[1])["issues"], [])
+
+    def test_cli_with_playwright_flag(self):
+        import contextlib
+        import io
+        fake = Fake({n: False for n in ALL})
+        buf = io.StringIO()
+        with mock.patch.object(D, "probe_all", fake.probe), \
+                mock.patch.object(D, "install_packages", fake.installers()["packages"]), \
+                mock.patch.object(D, "install_chromium", fake.installers()["chromium"]), \
+                mock.patch.object(D, "install_system", fake.installers()["system"]), \
+                contextlib.redirect_stdout(buf):
+            D.main(["--setup", "--with-playwright", "--home", str(self.home)])
+        self.assertIn(("chromium", (D.CHROMIUM,)), fake.calls)
 
     def test_cli_prints_kb_py(self):
         fake = Fake({n: True for n in ALL})

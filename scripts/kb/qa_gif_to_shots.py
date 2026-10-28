@@ -119,6 +119,17 @@ DISCIPLINE_RE = re.compile(
     r"\b(Medicine|Nursing|Veterinary|Pharmacy|Dental|Osteopathic|Allied Health)\b", re.I)
 # a tenant slug: short lowercase alphanumeric run that is not a common word
 SLUG_RE = re.compile(r"\b([a-z]{2,6}(?:med|vet|nurse|univ|edu|test)[a-z0-9]{0,6})\b")
+# Ordinary words SLUG_RE also matches ("sch-edu-le", "na-med", "la-test"). Live on
+# medtrics.medtricslab.com every page tripped it via the "Schedule" header button,
+# so every frame screened BLOCK. These are never tenant slugs.
+SLUG_STOP = frozenset("""
+medtrics medtricslab
+schedule schedules scheduled scheduler scheduling unscheduled rescheduled
+named renamed unnamed armed formed informed reformed performed transformed
+confirmed unconfirmed claimed unclaimed assumed resumed deemed seemed framed
+aimed timed trimmed summed welcomed
+latest fastest greatest contest protest attest detest pretest posttest retest
+""".split())
 NONLATIN_MIN = 3
 EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+\.[\w.-]+)")
 COURSE_CODE_RE = re.compile(r"\b[A-Z]{2,5}\d{3,5}(?:\.[A-Za-z0-9]+)*\b")
@@ -152,7 +163,7 @@ def screen_text(raw, demo_domain="medtrics.dev", client_names=(), allow_strings=
         findings.append({"kind": "discipline_word", "value": m.group(1)})
         break
 
-    slugs = {s for s in SLUG_RE.findall(raw) if s not in ("medtrics",)}
+    slugs = {s for s in SLUG_RE.findall(raw) if s not in SLUG_STOP}
     if slugs:
         findings.append({"kind": "tenant_slug", "value": sorted(slugs)[:6]})
 

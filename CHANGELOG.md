@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-28
+
+### Changed
+- **Screenshots now come from your own Chrome through the Claude in Chrome
+  extension**, where you are already signed in. Claude never types a password;
+  `.env-kb-login` and the Playwright sign-in are no longer used. Flow:
+  `kb_capture.py plan-calls` writes `capture.md` → the new **`kb-capturer`**
+  agent (Haiku) runs it in your Chrome (navigate, read label positions, full-size
+  screenshot; never clicks, types or closes tabs) → `kb_capture.py ingest`
+  builds the unchanged `shots.json`. One account covers admin and faculty
+  (Personal portal); the run returns to Admin at the end.
+- **First run asks you to install and connect Claude in Chrome** when the
+  extension isn't available (or continue with `--no-capture`).
+- `kb_doctor.py --setup` no longer installs Playwright/Chromium unless
+  `--with-playwright` is passed. The Playwright `login/check/run` code stays as
+  unused legacy.
+
+### Fixed
+- The tenant-data check's "tenant slug" pattern matched ordinary words —
+  `schedule` (s-ch-edu-le), `named`, `informed`, `latest` — so every page with the
+  Schedule button screened BLOCK. A shared stop-list now covers both the Python
+  and the in-page check. "Medtrics School of Medicine" added to the demo allowlist.
+
+### Verified live (2026-10-28, owner's Chrome)
+- A Haiku capturer copied the 3.9 KB install script and both batches exactly;
+  4 screens captured (3 admin, 1 faculty via the Personal portal), 8/8 labels
+  found, rings land on the right element.
+
 ## [0.22.3] - 2026-10-26
 
 ### Added

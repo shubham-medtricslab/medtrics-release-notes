@@ -4,7 +4,7 @@ kb_doctor.py — set up, once, everything /kb-articles needs, and remember it.
 
   --setup   The first run in a folder creates a private Python environment in
             <home>/.kb-env, installs what is missing into it (python-docx,
-            Pillow, numpy, pypdf, pytesseract, Playwright + its Chromium), tries
+            Pillow, numpy, pypdf, pytesseract), tries
             the system tools (tesseract, LibreOffice, the Carlito font) with
             apt-get or Homebrew, and writes <home>/.kb-env/kb-setup.json.
             Later runs read that file and only confirm the installed pieces are
@@ -13,12 +13,16 @@ kb_doctor.py — set up, once, everything /kb-articles needs, and remember it.
             recorded as unavailable and not retried; `--setup --force` retries
             everything. Prints `KB_PY=<python>` for the command to run every KB
             script with.
+  --with-playwright
+            Also install Playwright + its Chromium (the legacy screenshot
+            path). Off by default: screenshots use the Claude in Chrome
+            extension, which needs nothing installed here.
   (none)    Report only, for the current interpreter. Nothing is installed.
 
 <home> is --home, else $KB_HOME, else the current folder (the folder selected
 in Cowork). Exit 0 when drafts can be produced (python-docx and Pillow are the
 only hard requirements); everything else degrades: no Playwright -> no
-screenshots, no tesseract -> draft-only dom_box anchors, no LibreOffice -> no
+screenshots (legacy path only), no tesseract -> draft-only dom_box anchors, no LibreOffice -> no
 PDF, no pypdf -> PDFs unverified.
 
 It also warns when CLAUDE_CODE_SUBAGENT_MODEL is set: that variable overrides
@@ -44,7 +48,6 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 ENV_DIR = ".kb-env"
-LOGIN_FILE = ".env-kb-login"   # capture-site credentials; checked every run (cheap)
 MARKER = "kb-setup.json"
 BROWSERS = "ms-playwright"
 
@@ -55,7 +58,7 @@ PY_PACKAGES = {
     "numpy": ("numpy", "numpy", True, "the shot tools do not load"),
     "pypdf": ("pypdf", "pypdf", False, "PDFs are not verified"),
     "pytesseract": ("pytesseract", "pytesseract", False, "anchors are draft-only dom_box"),
-    "playwright": ("playwright", "playwright", False, "no live screenshots"),
+    "playwright": ("playwright", "playwright", False, "no legacy Playwright screenshots"),
 }
 # name -> (binary or font probe, apt packages, brew args, cost when missing)
 SYSTEM = {
@@ -67,6 +70,8 @@ SYSTEM = {
                      "the PDF may substitute Calibri and reflow"),
 }
 CHROMIUM = "chromium"
+OPTIONAL = ("playwright", CHROMIUM)   # legacy path, installed only with --with-playwright
+NOT_REQUESTED = "not requested"
 
 
 def home(arg=None):
@@ -210,7 +215,7 @@ def still_there(marker, env):
             if s in ("installed", "present") and not now.get(n)]
 
 
-def setup(h, force=False, installers=None):
+def setup(h, force=False, installers=None, with_playwright=False):
     """Returns (marker, skipped). installers lets tests replace the real ones."""
     inst = installers or {"packages": install_packages, "chromium": install_chromium,
                           "system": install_system}
@@ -219,9 +224,11 @@ def setup(h, force=False, installers=None):
     marker = None if force else load_marker(env)
     if marker:
         gone = still_there(marker, env)
-        if not gone:
+        late = [n for n in OPTIONAL if with_playwright
+                and marker["items"].get(n, NOT_REQUESTED) == NOT_REQUESTED]
+        todo = gone + [n for n in late if n not in gone]
+        if not todo:
             return marker, True
-        todo = gone
     else:
         now = probe_all(env)
         marker = {"items": {}}
@@ -229,7 +236,14 @@ def setup(h, force=False, installers=None):
             if ok:
                 marker["items"][n] = "present"
         todo = [n for n, ok in now.items() if not ok]
+        if not with_playwright:
+            for n in OPTIONAL:
+                if n in todo:
+                    todo.remove(n)
+                    marker["items"][n] = NOT_REQUESTED
 
+    if not with_playwright:
+        todo = [n for n in todo if n not in OPTIONAL]
     pkgs = [n for n in todo if n in PY_PACKAGES]
     if pkgs:
         marker["items"].update(inst["packages"](env, pkgs))
@@ -269,7 +283,7 @@ def _warnings():
 
 def cmd_setup(a):
     h = home(a.home)
-    marker, skipped = setup(h, force=a.force)
+    marker, skipped = setup(h, force=a.force, with_playwright=a.with_playwright)
     if skipped:
         print(f"KB setup: already done ({marker.get('updated')}) — skipping the checks.")
     else:
@@ -277,13 +291,11 @@ def cmd_setup(a):
             print(f"  {'ok ' if s in ('installed', 'present') else '-- '} {n}: {s}")
     hard = [n for n, (_p, _d, is_hard, _c) in PY_PACKAGES.items() if is_hard]
     ok = all(working(marker, n) for n in hard)
-    missing = [n for n in list(PY_PACKAGES) + list(SYSTEM) + [CHROMIUM] if not working(marker, n)]
+    missing = [n for n in list(PY_PACKAGES) + list(SYSTEM) + [CHROMIUM]
+               if not working(marker, n) and marker["items"].get(n) != NOT_REQUESTED]
     if missing and not skipped:
         print("  missing (recorded, not retried until --setup --force): " + ", ".join(missing))
     issues = []
-    if not (home(a.home) / LOGIN_FILE).exists():
-        issues.append(f"{LOGIN_FILE} not found in {home(a.home)} — screenshots need a saved "
-                      "session; add the file and run kb_capture.py login --env-file")
     for i in issues:
         print(f"  ISSUE {i}")
     print(f"KB_PY={marker['py']}")
@@ -324,6 +336,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--setup", action="store_true")
     ap.add_argument("--force", action="store_true", help="with --setup: re-check and retry everything")
+    ap.add_argument("--with-playwright", action="store_true",
+                    help="with --setup: also install Playwright + Chromium (legacy capture path)")
     ap.add_argument("--home", help="folder that holds .kb-env (default $KB_HOME, else cwd)")
     ap.add_argument("--session-dir", default=os.environ.get("KB_SESSION_DIR") or ".kb-sessions")
     a = ap.parse_args(argv)

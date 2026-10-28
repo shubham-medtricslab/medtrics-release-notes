@@ -5,6 +5,7 @@
   "domain": "medtricslab.com",
   "login_path": "/users/login/",
   "allow_strings": [
+   "Medtrics School of Medicine",
    "Medtrics Medical Center",
    "Medtrics",
    "Geriatric",
@@ -15,7 +16,21 @@
    "admin": "/administration/",
    "faculty": "/",
    "learner": "/"
-  }
+  },
+  "cursor_park": [
+   1465,
+   740
+  ],
+  "portal_entry": {
+   "admin": "/?portal_change=administration",
+   "faculty": "/?portal_change=personal"
+  },
+  "portal_label": {
+   "admin": "Admin",
+   "faculty": "Personal"
+  },
+  "home_portal": "admin",
+  "sidebar_selector": "nav, aside, .sidebar, #sidebar, [class*=sidebar]"
  },
  "personas": {
   "admin": {

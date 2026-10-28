@@ -32,7 +32,7 @@ Flags (combine with any mode):
 | `dry-run` | Stop after the plan preview (Step 4). Spawns nothing. |
 | `--force` | Re-draft tickets the ledger already covers (updates their notes) |
 | `--retry-partial` | Re-draft `partial` tickets (drafts that had missing screenshots) |
-| `--no-capture` | Skip the browser; every article is drafted with missing-screenshot markers |
+| `--no-capture` | Skip Chrome; every article is drafted with missing-screenshot markers |
 | `--yes` | Don't wait for confirmation at the plan preview |
 | `--allow-no-code` | Also draft features that have no merge request (skipped by default as "code missing") |
 | `--from-release` | Set only by `/release-slack --kb` (Step 9c) with an id list: reuse that release's `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` instead of gathering again, and mark the tickets' queue notes drained afterwards |
@@ -59,13 +59,13 @@ needs only Optimus (no GitLab) and Mem:
 ## Pipeline overview
 
 ```
-0  preflight     kb_doctor.py + Mem probe (hard stop) + .env keys
+0  preflight     kb_doctor.py + Mem probe (hard stop) + .env keys + Claude in Chrome check
 1  select        ledger + queue dumps → ids (argv | release archive | queue) → gather (features only,
                  skipped with --from-release) → kb_select filter
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
-3  prepare       kb_capture check · kb_select group · kb_ledger match · kb_inputs
+3  prepare       kb_select group · kb_ledger match · kb_inputs
 4  preview       plan + estimate → confirm (or stop on dry-run)
-5  capture       kb_capture run (Playwright, headless, saved sessions) — exit 3 on expiry, carry on
+5  capture       plan-calls → kb-capturer (Haiku) in your signed-in Chrome → ingest — exit 3 = some screens left, carry on
 6  write         kb_spec bundle → [kb-writer, Sonnet, all groups in ONE message] → prose/<ticket>.json
 7  assemble      kb_spec assemble (annotate, evidence, gates) → prose retries, ≤2, single article
 8  package       kb_usage report → kb_package (docx + md + ONE soffice batch → PDF + verify, summary, zip)
@@ -98,7 +98,6 @@ produces it.
 | `MEM_KB_CATALOGUE_COLLECTION` | catalogue collection name (default `KB Catalogue`) | optional |
 | `MEM_KB_QUEUE_COLLECTION` | queue collection name (default `KB Queue`) | optional |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | release archive, read by `since` / `pending` | optional |
-| `KB_SESSION_DIR` | where the demo sessions are saved (default `.kb-sessions`) | optional |
 | `KB_OUTPUT_DIR` | output root override | optional |
 | `KB_FONT` | TTF used for screenshot badges | optional |
 
@@ -109,12 +108,14 @@ produces it.
 "Bash(date:*)",
 "Bash(mkdir:*)",
 "Write(//tmp/kb/**)",
-"Task"
+"Task",
+"mcp__claude-in-chrome__*"
 ```
 
 `Write(//tmp/kb/**)` lets the writer agents save their own JSON, so their output
 is not re-typed by the orchestrator (that would pay for it twice). Grant nothing
-broader to them.
+broader to them. The `mcp__claude-in-chrome__*` tools are the Claude in Chrome
+extension's; the capture agent (Step 5) and the Step 0 check use them.
 
 ## Flow
 
@@ -130,8 +131,9 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    list the missing keys and stop.
 3. **Setup (once per folder)** — `python3 $K/kb_doctor.py --setup`, run from the
    folder selected in Cowork. The first time, it creates `.kb-env/` there,
-   installs what is missing (Python packages and Playwright's Chromium into
-   `.kb-env/`; tesseract, LibreOffice and the Carlito font through apt-get or
+   installs what is missing (Python packages into `.kb-env/`; Playwright and
+   Chromium only with `--with-playwright`, which this command never passes;
+   tesseract, LibreOffice and the Carlito font through apt-get or
    Homebrew when it is allowed to), and records the result in
    `.kb-env/kb-setup.json`. Every later run reads that file and only confirms the
    installed pieces are still on disk — it prints `KB setup: already done … —
@@ -140,11 +142,21 @@ Set once, via Bash: `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`,
    the preview; `--setup --force` retries).
    Set `KB_PY` to the `KB_PY=` line it prints and run **every** `$K` script below
    with `$KB_PY`. Exit 1 (python-docx, Pillow or numpy unavailable) → show its
-   output and stop. Otherwise keep it for the preview: no Playwright/Chromium
-   means `--no-capture` is implied; no tesseract means draft-only anchors; no
+   output and stop. Otherwise keep it for the preview: no tesseract means draft-only anchors; no
    LibreOffice means no PDF this run. Show any `WARN` line (e.g.
    `CLAUDE_CODE_SUBAGENT_MODEL` overriding the pinned models).
-4. **Collections** — `$KB_PY $K/kb_ledger.py resolve`, then resolve the ledger,
+4. **Claude in Chrome** — one cheap check on every run (skip with `--no-capture`
+   and for `--kb-queue`). Call ToolSearch `select:mcp__claude-in-chrome__tabs_context_mcp`,
+   then call `tabs_context_mcp`. If the tool is missing or the call fails (the
+   extension is not installed or not connected), **ask the user**, once, in these words:
+   "Screenshots are captured in your own Chrome with the Claude in Chrome
+   extension, and it is not connected. Install it from the Chrome Web Store,
+   connect it to this Claude account, sign in to https://medtrics.medtricslab.com
+   in that Chrome, then re-run `/kb-articles`. Or I can continue now with
+   `--no-capture` (drafts without screenshots)." Wait for the answer: they
+   re-run, or say continue and the run is `--no-capture`. Ask only when the check
+   fails; when it passes, say nothing. Claude never signs in for you.
+5. **Collections** — `$KB_PY $K/kb_ledger.py resolve`, then resolve the ledger,
    catalogue and queue collections (and, for `since`/`pending`, the release
    archive) by name per the `kb-ledger` skill, and save the dumps under `$RUN/`
    (`ledger_notes.json`, `catalogue_notes.json`, `queue_notes.json`,
@@ -219,8 +231,7 @@ $KB_PY $K/kb_select.py classifier-merge --placed $RUN/placed.json \
 ### Step 3 — Prepare
 
 ```bash
-$KB_PY $K/kb_capture.py check --out $RUN/sessions.json          # skip with --no-capture / no Playwright
-$KB_PY $K/kb_select.py group --placed $RUN/placed.json --sessions $RUN/sessions.json \
+$KB_PY $K/kb_select.py group --placed $RUN/placed.json \
     --run-id $RUN_ID --date $TODAY --mode <ids|since|pending> --out $RUN/groups.json
 $KB_PY $K/kb_ledger.py match --data $RUN/filtered.json --catalogue-notes $RUN/catalogue_notes.json \
     --ledger-notes $RUN/ledger_notes.json --out $RUN/priors.json
@@ -230,33 +241,50 @@ $KB_PY $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json [--summa
 ### Step 4 — Preview
 
 Show, compactly: tickets kept and skipped (with reasons), writer groups (persona,
-tickets), capture visits per persona and each persona's session state, the
-uncapturable list, prior-article hits, and an estimate — writer calls =
-number of groups, classifier calls = 0 or 1, input size from `kb_inputs`.
+tickets), the capture visits and the surfaces they cover per persona (admin
+first, then faculty through the Personal portal), the uncapturable list,
+prior-article hits, and an estimate — writer calls = number of groups,
+classifier calls = 0 or 1, one capture call, input size from `kb_inputs`.
 
-For every persona whose session is `missing` or `expired`, print the line a
-person (or their scheduler) must run — it signs in from `.env-kb-login`. Never
-run it yourself: Claude does not enter passwords:
-`<folder>/.kb-env/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona <p> --env-file .env-kb-login`
-Without the file, the same command minus `--env-file` opens a browser for a person to sign in:
-`<folder>/.kb-env/bin/python ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona <p>`
-(on a machine with a screen; any Python with Playwright works too).
-Its tickets will be drafted without screenshots this run.
+Say: "Chrome must be signed in to medtrics.medtricslab.com; don't use that Chrome
+window until capture finishes." The capture drives one tab of your Chrome, visits
+each page and returns to the Admin portal at the end.
 
 `dry-run` → stop here. Otherwise ask `Draft these N articles? (y/n)` unless `--yes`.
 
 ### Step 5 — Capture
 
-Skip with `--no-capture` or when Playwright is missing (write `{"shots": []}` to
-`$RUN/shots/shots.json`). Otherwise:
+With `--no-capture` (or the Step 0 answer "continue"), write `{"shots": []}` to
+`$RUN/shots/shots.json` and go on. Otherwise:
 
-```bash
-$KB_PY $K/kb_capture.py run --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
-```
+1. Plan the calls (no model, no browser):
 
-Exit 3 = a session expired: say which persona, and **continue** — the shots
-already taken are kept, the rest become missing-screenshot markers, and the
-summary lists what was left. Never retry the sign-in.
+   ```bash
+   $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
+   ```
+
+   It writes `shots/calls.json` and `shots/capture.md`.
+2. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
+   `model: "haiku"`, prompt
+   `Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.` It drives
+   your Chrome and writes `raw/<batch_id>.json`. Log usage:
+
+   ```bash
+   $KB_PY $K/kb_usage.py add --run-dir $RUN --agent kb-capturer --scope capture --model haiku \
+       --tokens <total_tokens> --duration-ms <ms> --tool-uses <n>
+   ```
+3. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, follow `$RUN/shots/capture.md`
+   yourself in this session with the same tools and the same rules.
+4. Ingest the raw files (verifies each frame, ringed boxes, tenant screen):
+
+   ```bash
+   $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots
+   ```
+5. Exit 3 = some screens were left. Read `shots/resume.json` and say which, with
+   the reason: `expired` (sign in to the site again in Chrome), `wrong_persona`,
+   `bridge_down`, `no_probe`, `not_reached` (its batch never ran), or `retry` (a blocked or unreadable probe). **Continue** — the
+   shots already taken are kept, the rest become missing-screenshot markers and
+   the summary lists them. `--retry-partial` re-runs them later.
 
 ### Step 6 — Write
 
@@ -352,7 +380,7 @@ Perform those `update_note` writes the same way. A ticket that was never queued
 was given: done (with its files and whether screenshots are missing) or not
 done and why (code missing, not a feature, not found in Optimus, already has an
 article, or the error). Then the output folder and zip path, the counts line, the
-uncapturable and left-by-expiry lists, any `login` lines a person must run, the
+uncapturable and left-by-capture lists (with reasons), the
 PDF warnings, and the token estimate. Offer the files for download.
 
 ## Failure modes
@@ -363,16 +391,19 @@ PDF warnings, and the token estimate. Offer the files for download.
 | Setup could not install python-docx / Pillow / numpy | Stop at Step 0 with its output |
 | Setup could not install tesseract / LibreOffice (no root, no Homebrew) | Recorded once as unavailable; runs continue without OCR / PDF; `kb_doctor.py --setup --force` retries |
 | `.kb-env/` deleted or the sandbox reset | The next run's quick check notices the missing pieces and reinstalls only those |
-| Playwright missing | Implied `--no-capture`; drafts carry markers |
+| Claude in Chrome missing or not connected | Step 0 asks you to install and connect it and sign in, then re-run; or continue with `--no-capture` |
+| Chrome not signed in (`KB_LOGIN`) | Capture stops, shots already taken are kept; sign in again in Chrome; `--retry-partial` re-runs the rest |
+| Wrong portal (`KB_PERSONA`) | Capture stops with `wrong_persona`; the rest is left |
+| Bridge drops mid-run | `bridge_down`; the rest is left, the Chrome tab is not restored; re-run later |
+| Probe blocked or unreadable | That screen is left with reason `retry` |
+| Screenshots unreadable from where the scripts run | Run from Claude Code on the Mac, not the Cowork sandbox |
 | tesseract missing | `dom_box` anchors — fine for drafts, refused on publish |
 | LibreOffice missing | No PDFs this run; summary says so; .docx and .md still ship |
-| Session missing / expired | That persona's tickets drafted without screenshots; `login` line printed |
-| Capture exits 3 mid-run | Continue with what was captured; summary lists the rest |
+| Capture exits 3 | Continue with what was captured; summary lists the rest |
 | Writer returns nothing for a ticket | `failed` in summary and ledger; retried next run |
 | Gates still refuse after two retries | `failed`; no file written for it |
 | A ticket has no merge request | Skipped as "code missing"; the run continues; listed in the end table |
 | An id isn't returned by Optimus | Listed as "not found in Optimus"; the run continues |
-| `.env-kb-login` missing | Step 0 reports it as an issue; personas without a saved session get no screenshots |
 | Ledger write fails | One retry, then print the note for a manual paste |
 | Queue drain write fails | One retry, then say so; the next `pending` sees the ledger note and skips the ticket anyway |
 | `--from-release` files missing (`/tmp/release_slack_*` gone) | Fall back to the normal gather for the same ids |
@@ -383,7 +414,9 @@ PDF warnings, and the token estimate. Offer the files for download.
 - Publish anything, or build the publish render.
 - Touch Oracle (ORC) tickets, bugs or work types.
 - Combine tickets, or update an existing article in place.
-- Type a password, run `kb_capture.py login`, or move session files.
+- Type a password or sign in for you.
+- Click or type in your account: capture only navigates, waits, hovers to park the pointer, runs a read-only probe and takes screenshots.
+- Close your Chrome tabs.
 - Upload to Drive or Intercom.
 
 ## Coding standards

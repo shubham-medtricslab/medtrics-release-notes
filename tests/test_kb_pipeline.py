@@ -243,6 +243,11 @@ class Screen(unittest.TestCase):
         self.assertEqual(r["verdict"], "REVIEW")
         self.assertEqual(r["findings"][0]["kind"], "course_codes")
 
+    def test_common_words_are_not_tenant_slugs(self):
+        r = Q.screen_text("Schedule · Scheduled · Named · Latest · Informed", "medtricslab.com")
+        self.assertEqual(r["verdict"], "CLEAR", r["findings"])
+        self.assertEqual(Q.screen_text("lmucvmtest portal")["verdict"], "BLOCK")
+
     def test_worst(self):
         self.assertEqual(Q.worst("CLEAR", "REVIEW"), "REVIEW")
         self.assertEqual(Q.worst("BLOCK", "CLEAR"), "BLOCK")

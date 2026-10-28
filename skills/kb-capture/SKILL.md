@@ -1,115 +1,131 @@
 ---
 name: kb-capture
-description: Live screenshot capture for /kb-articles on the capture site (medtrics.medtricslab.com) with a scripted Playwright browser — the sign-in per persona from .env-kb-login (run by a person or their scheduler, never by Claude), where the saved sessions live, how a run walks persona × surface, what happens when a session expires mid-run, and how to map a new surface or recipe in kb_routes.json. Claude never types a password and never runs the sign-in itself.
+description: Live screenshot capture for /kb-articles on the capture site (medtrics.medtricslab.com) through the Claude in Chrome extension, driving the owner's own Chrome where they have already signed in by hand — one account covers admin and faculty (via the Personal portal), and the run returns to Admin at the end. Covers the flow (plan-calls, the Haiku kb-capturer, ingest), the live-test facts the design depends on, raw files and resume, and how to map a surface in kb_routes.json (a URL only). Claude never types a password.
 ---
 
-# KB Capture (Playwright on the demo tenant)
+# KB Capture (Claude in Chrome on the demo tenant)
 
-Screenshots are the slow, expensive part of a KB article. `scripts/kb/kb_capture.py`
-takes them without a model: one visit per surface, every ticket on that surface
-sharing the frame, and each ring placed from the page's own element box.
+Screenshots are the slow, expensive part of a KB article. Scripts plan the
+capture, a Haiku agent carries it out in the owner's Chrome without looking at
+any page, and scripts verify every frame and place every ring.
 
-## Sign-in — once per persona, from `.env-kb-login`
+## Sign-in
 
-The capture site is `https://medtrics.medtricslab.com` (sign-in page
-`/users/login/`). Credentials live in `.env-kb-login` in the folder selected in
-Cowork (gitignored, never bundled):
+The owner signs in to `https://medtrics.medtricslab.com` **by hand** in the
+Chrome that has the Claude in Chrome extension connected to their Claude
+account. Claude never types a password and there is no credentials file. One
+account covers both personas: the admin screens use the Administration portal
+and the faculty screens use the **Personal** portal, switched by URL
+(`/?portal_change=administration|personal|institution`). There are no learner
+screens in `kb_routes.json`. The run ends on `/?portal_change=administration`,
+so the Chrome is left on Admin.
 
-```
-KB_ADMIN_EMAIL=…        KB_ADMIN_PASSWORD=…
-KB_FACULTY_EMAIL=…      KB_FACULTY_PASSWORD=…
-KB_LEARNER_EMAIL=…      KB_LEARNER_PASSWORD=…
-# or one shared account: KB_EMAIL=…  KB_PASSWORD=…
-```
+`/kb-articles` Step 0 checks the extension on every run (ToolSearch
+`select:mcp__claude-in-chrome__tabs_context_mcp`, then `tabs_context_mcp`) and
+asks the user to install, connect and sign in only when that fails.
 
-A person — or their own scheduler — runs, per persona:
-
-```bash
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py login --persona admin --env-file .env-kb-login
-```
-
-It fills the form headless, waits until the site leaves the sign-in page, and
-saves the session to `$KB_SESSION_DIR/<persona>.json` (default `.kb-sessions/`,
-mode 600). Without `--env-file` it opens a visible browser and waits for a
-person to sign in instead. **Claude never runs `login` and never reads or
-prints the file's values** — `/kb-articles` only checks the file exists (a
-missing file is reported as an issue at Step 0) and prints this command when a
-session is missing or expired.
-
-Session files are credentials:
-- never put them in Mem, the outputs folder, a zip, chat, or git (`.kb-sessions/`
-  is gitignored and excluded from the plugin build);
-- delete them when the capture accounts change.
-
-## Check
+## Flow
 
 ```bash
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py check --out /tmp/kb/<run>/sessions.json
+$KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
+# Task: medtrics-release-notes:kb-capturer (Haiku)  →  $RUN/shots/raw/<batch_id>.json
+$KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots
 ```
 
-One page load per persona → `valid | expired | missing`. The command runs it
-before grouping so the plan preview shows which personas can be captured.
+1. **plan-calls** (no model, no browser) writes `shots/calls.json` (the visits,
+   each batch's exact `browser_batch` actions, the probe install and the
+   `restore` actions) and `shots/capture.md`, the only file the capturer reads.
+   Per visit: `navigate` → `computer wait 2` → `computer hover` at the cursor
+   park → `javascript_tool` probe stub → `computer screenshot`. The first batch
+   of a persona opens with that persona's portal entry URL. Visits with an
+   empty `url` are not planned; they stay uncapturable.
+2. **kb-capturer** loads the Chrome tools, uses the first tab, installs the
+   probe once, sends each batch verbatim and writes one raw file per batch. It
+   never types, clicks or closes tabs, and it does not read page contents.
+   `KB_CAPTURE NO_CHROME_TOOLS` means the orchestrator follows `capture.md`
+   itself.
+3. **ingest** pairs each probe result with its screenshot, maps the probe's
+   element boxes onto the image, verifies the label (OCR when tesseract is
+   present, else a DOM match, which a draft accepts and a publish does not),
+   runs the tenant screen and writes `shots/shots.json` and the frames. Exit 3
+   means some visits were left; `shots/resume.json` holds the rest of the plan
+   and the reason per `persona/surface`: `expired`, `wrong_persona`,
+   `bridge_down`, `no_probe`, `retry` or `not_reached` (its batch never ran).
 
-## Run
+Run it from Claude Code on the Mac. The screenshots are saved on the Mac
+(`~/.claude/projects/…/tool-results/…jpg`) and the Cowork sandbox probably
+cannot read them.
 
-```bash
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py run \
-    --plan /tmp/kb/<run>/groups.json --inputs /tmp/kb/<run>/inputs.json \
-    --out-dir /tmp/kb/<run>/shots
+## Live-test facts the design depends on
+
+- Screenshot at **`scale: 1`** with `save_to_disk: true`. `scale` also shrinks
+  the saved file (0.1 gave 147×80), so anything below 1 ruins the frame. The
+  saved JPEG is exactly `innerWidth × innerHeight` CSS px (1470×802 in the test)
+  and its path comes back as `[Image: source: <path>]`.
+- Page rect → image px is **1:1** (saved width ÷ the probe's `iw` = 1.0), so a
+  box from the probe is a box on the image. `innerHeight` changes between shots
+  (802 → 746), so every probe reads `iw`/`ih` itself.
+- The mouse pointer is drawn into screenshots. A `hover` at the cursor park
+  (`demo.cursor_park`, `[1465, 740]`) before the shot removes it.
+- The first `javascript_tool` right after `navigate` can run on the old page, so
+  every visit waits 2 seconds after navigating.
+- The probe is stored once per tab in `sessionStorage.kbp` and called with a
+  short stub, `(0,eval)(sessionStorage.getItem('kbp'))(<args>)`. The page
+  reloads on navigation but `sessionStorage` survives. A new tab has no probe
+  and the stub throws `KB_NOPROBE`.
+- A JS `throw` stops `browser_batch`, so `KB_LOGIN` (sign-in page or a password
+  field) and `KB_PERSONA` (the active portal button is not the one asked for)
+  end a batch at once. The probe returns plain JSON objects, because the
+  extension can replace a result with `[BLOCKED: Base64 encoded data]`; ingest
+  leaves such a visit as `retry`.
+- Label matching is an exact trimmed `innerText`, visible, first match outside
+  the sidebar (`demo.sidebar_selector`), else the first match anywhere.
+- Demo data includes `@gmail.com` / `@sacredheart.com` addresses. Those frames
+  screen BLOCK and are watermarked. The demo domain is `medtricslab.com`.
+
+## Raw files and resume
+
+`shots/raw/<batch_id>.json`:
+
+```json
+{"batch_id": "b01", "status": "ok|expired|wrong_persona|bridge_down|no_probe", "error": null,
+ "items": [{"visit_id": "v01", "probe": {…as returned…}, "screenshot_path": "<path>"}]}
 ```
 
-Headless, 1440×900 at 2× scale. For each persona with a session, for each surface
-in the capture plan: open the URL, run its recipe, take one frame, then for each
-ticket's candidate labels (from `kb_inputs.py`, at most six per ticket) find the
-first visible element showing the label and record its box.
-
-- **With tesseract:** OCR reads the cropped box; ≥ 0.82 → `label_box` evidence.
-- **Without tesseract:** an exact, visible, unoccluded DOM match → `dom_box`
-  evidence, which the gates accept in a **draft only** (a publish needs OCR).
-- **Tenant screen:** the page's DOM text, plus the frame's OCR when available;
-  the worse verdict wins. The demo's own synthetic names
-  (`demo.allow_strings` in `kb_routes.json`) are ignored so a demo frame is not
-  flagged for the data that makes it safe. Anything not CLEAR is watermarked.
-
-Output: `shots/shots.json` (one entry per candidate label, `verified` true or
-false) and the frames. Only verified shots are offered to the writer.
-
-## Session expiry mid-run
-
-The run stops at the first sign-in page or password field, keeps every shot
-already taken, writes `shots/resume.json` (the rest of the plan) and exits **3**.
-The command then carries on with what it has — tickets whose surfaces were not
-reached are drafted with missing-screenshot markers and recorded as `partial` —
-and the run summary names the persona to sign in again. After signing in:
-
-```bash
-$KB_PY ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_capture.py run --plan /tmp/kb/<run>/shots/resume.json …
-```
-
-or simply re-run `/kb-articles … --retry-partial` later.
+Items are in visit order and a visit the batch did not reach is absent. Ingest
+replaces entries by `visit_id`, so it can be re-run on the same raw folder.
+After a stop the command carries on with what it has: tickets whose surfaces
+were not reached are drafted with missing-screenshot markers and recorded as
+`partial`. Sign in again in Chrome if it was `expired`, then re-run
+`/kb-articles … --retry-partial`.
 
 ## Mapping a surface (`scripts/kb/kb_routes.json`)
 
-Each surface entry:
+A surface is a **URL**, nothing more. There are no recipes: capture is the page
+each URL lands on. Anything the screen needs (a tab, an academic period, a
+filter) must be expressible as a URL; if it isn't, the surface is not
+capturable yet and its tickets are drafted without screenshots.
 
 ```json
 {"surface": "Curriculum > Setup > Migrate", "persona": "admin", "also_personas": [],
  "url": "/administration/curriculum/",
- "recipe": [{"click": "Setup"}, {"wait_for": "Migrate"}],
  "match": {"modules": ["Curriculum & Sessions"], "url_prefixes": ["/administration/curriculum/"],
            "template_globs": ["src/templates/curriculum/setup/*.html"]},
  "known_tickets": {"M1-1520": "Captured"}, "demo_status": "capturable"}
 ```
 
-- `url: ""` → the surface is not mapped yet and its tickets are drafted without
-  screenshots. 20 of the 56 surfaces seeded from the October backlog still need
-  a URL (mostly faculty and learner screens).
-- Recipe steps run after the page loads, in order: `{"click": text}`,
-  `{"dblclick": text}`, `{"wait_for": text}`, `{"select": [label, option]}`,
-  `{"wait_ms": n}`. Use them for the gotchas in the old ADMIN-URL-MAP: tabs that
-  need two clicks, curriculum pages opening on an old academic period, date
-  pickers.
+- `url: ""` → not mapped; the surface is never planned.
+- `persona` is `admin` or `faculty`; faculty visits go through the Personal portal.
 - `match` places NEW tickets: a URL prefix the ticket's diff mentions, a template
   path it changes, or a module only this surface carries.
-- `demo.allow_strings` lists the demo tenant's synthetic names. Keep it short —
-  every entry is text the tenant screen will no longer see.
+- `demo` keys: `allow_strings` (the demo tenant's synthetic names, ignored by the
+  tenant screen; keep it short), `domain` (`medtricslab.com`), `cursor_park`,
+  `portal_entry` (per persona), `portal_label` (the button text, `Admin` /
+  `Personal`), `home_portal` (`admin`, where the run ends) and
+  `sidebar_selector`.
+
+## Legacy: Playwright
+
+`kb_capture.py login`, `check` and `run` (headless Playwright with saved
+sessions) still exist in the script but `/kb-articles` no longer uses them, and
+`kb_doctor.py --setup` installs Playwright only with `--with-playwright`.
