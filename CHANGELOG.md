@@ -7,417 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.28.1] - 2026-10-29
+## [0.21.0] - 2026-10-29
 
-Fixes from the first two 0.28.0 Cowork runs of M1-465 (the real save worked —
-one demo record, no notifications — but 4 of 5 screenshots were dropped).
-
-### Fixed
-- **False client-data alarm.** "schedulers" matched the tenant-slug rule
-  (sch-edu-lers) and turned four screens to BLOCK. The rule now ignores
-  ordinary English words by stem (schedul…, procedur…, …test superlatives,
-  medi…, educat…, and more), in both the page probe and the frame check;
-  real slugs still match. Stored probes are re-screened on re-ingest.
-- **The capture agent couldn't copy the ~40 KB page scripts.** The main chat
-  now installs them once (Step 5.2, and before the form-fill agent); the agents
-  only send short calls and stop with `needs_install` if the scripts are gone.
-- A captured post-save screen no longer reports "needs a save".
-- `confirm --ok none` ships no screenshots.
-- The Downloads sweep skips a file Cowork won't let it move, and carries on.
+KB articles: one Intercom help-centre article per shipped legacy (M1) feature,
+with live screenshots from the demo site. Built and tested over several Cowork
+runs on this branch; this entry replaces the interim 0.21.0–0.28.1 notes.
 
 ### Added
-- `/kb-articles recheck <run_id>`: re-screens a finished run from its own GIFs
-  (`ingest --from-run-gifs`) with the current rules and repackages it — no
-  browser, no new capture, no new demo record.
+- **`/kb-articles`** — one article per feature ticket (.docx + PDF + Intercom
+  .md), never combined.
+  - Modes: an id list (`/kb-articles M1-1520,M1-1256`), `since <date>`,
+    `pending` (the KB queue + released features with no article),
+    `--kb-queue <ids>` (queue only), `dry-run`, `recheck <run_id>` (re-check a
+    finished run with the current rules and repackage, no browser),
+    `demo-data` / `demo-data done <ids>`.
+  - Flags: `--force`, `--retry-partial`, `--no-capture`, `--yes`,
+    `--allow-no-code`.
+  - Features only (Optimus `product_type` feature / critical_feature); a ticket
+    with no merge request or not found in Optimus is skipped, not a stop. The
+    run ends with a table of every ticket given: its files, or why not, and an
+    estimated cost.
+  - History in Mem: KB Article Ledger (one note per ticket + one per run, so
+    nothing is drafted twice), KB Queue, KB Catalogue (an earlier article a new
+    feature follows), KB Demo Data.
+- **`/release-slack --kb`** — posts the release as usual, queues its feature
+  tickets, then offers to draft them in the same chat (y/n; no leaves them
+  queued).
+- **`/release-note-setup`** — one-time setup per folder, modelled on the QA
+  automation plugin's setup: installs Python packages into `.kb-env/` (and
+  tesseract / LibreOffice / Carlito where allowed), checks Claude in Chrome and
+  the `.env` keys, finds or creates the KB Mem collections, approves the
+  Downloads folder in Cowork, and records it all in
+  `.medtrics-release-notes/config.json` in the folder (no absolute paths).
+  `/kb-articles` only checks it.
 
-## [0.28.0] - 2026-10-29
+### How a run works
+- **Where to go.** Each ticket's page and click path come from its MR's QA
+  checklist (`*-manual-qa-checklist.txt`, the file QA automation runs), then
+  the ticket's own URL/Page field or release checklist; a fixed surface map is
+  the fallback. Stale links are caught by a page check before capture
+  (`/administration` ↔ `/vadministration`).
+- **Capture** in your own signed-in Chrome through the Claude in Chrome
+  extension, grouped by sign-in (admin + faculty, then a pause for the learner,
+  the external evaluator link you give, then back to admin). Each screen is a
+  GIF exported to Downloads (the route Charles's QA plugin uses in Cowork); its
+  last frame is the screenshot, ringed and numbered by script. A Haiku agent
+  drives Chrome; the main chat installs the page scripts and takes over if the
+  agent can't.
+- **Writing** by a Sonnet writer per group, checked by format gates G1–G7.
+- **Form fills** for screens behind a save, planned by script from the real
+  form. The first run of a form is a dry run (every write blocked) that learns
+  the dialog and the exact request; later runs save one demo record, letting
+  only that request through, once, on a real click of the safe answer ("No,
+  don't send notifications"). Approved by you every run. Saved records are
+  logged in Mem with a delete-before date; you delete them.
+- **Client copy.** The .docx goes straight to Intercom: no draft marks or
+  internal text; you OK each screenshot on a contact sheet (hash-checked);
+  client-data (BLOCK) frames never ship; a step without a screenshot keeps its
+  text.
+- **Cost.** Estimated $ per agent call, ticket and run (Haiku $0.10/$0.50,
+  Sonnet $2/$10, Opus $4/$20 per 1M input/output tokens; 85 % input assumed;
+  main-chat tokens not included) in the end table, the run summary and Mem.
 
-From the fourth Cowork run (M1-465: 2 of 3 screenshots, red "NOT FOR
-PUBLICATION" banners, form fill failed on a guessed field label) and a
-challenge review before building.
+### Safety
+- A page write guard blocks every non-GET request (fetch, XHR, beacons, form
+  posts, WebSockets, same-origin frames); the one allowed save is armed only by
+  a real click on the checked button, for one learned request, within 10 s.
+- Clicks are picked by a page script that refuses delete / remove / send /
+  publish / portal-switch targets, red buttons and ambiguous matches; a plugin
+  hook blocks typing for the capture agent, Enter for the form-fill agent, any
+  script that isn't the plugin's own, and navigation off the demo site.
+- Claude never types passwords or signs in, never deletes data, and never
+  deletes files (leftover Downloads GIFs are moved or listed).
+- Known limits: an in-page guard can't be airtight against deliberately hostile
+  page code; the tenant-data check is heuristic, which is why you OK every
+  screenshot.
 
 ### Changed
-- **The .docx is the client copy for Intercom.** No banner or frame, no
-  "Generated from" line, no `CX-DRAFT_` file prefix, no missing-screenshot
-  marker (a step without a screenshot keeps its text). Before rendering, the
-  owner OKs screenshots on a numbered **contact sheet**
-  (`kb_package.py contact-sheet` / `confirm`); BLOCK frames and anything not
-  OK'd stay out. The writer never points at an image ("as shown below").
-- **Form fills are planned from the real form**, by script (no model): capture
-  reads the form's fields; date → far-future weekday, times 09:00–10:00,
-  required selects → first "ZZ DEMO" option, optional fields empty. The
-  `kb-data-planner` agent is gone.
-- **Real demo records, in two steps.** The first run of a form is a dry run
-  (all writes blocked) that learns the dialog's buttons and the exact request;
-  later runs save, letting only that one request through, once, after the
-  dialog appears, on the "No, don't send…" answer — never on Save. Flows and
-  records live in the Mem "KB Demo Data" collection with a delete-before date;
-  `/kb-articles demo-data` lists live records, `demo-data done` marks the ones
-  you deleted. Claude never deletes data.
-- **Estimated $ cost** per agent call, per ticket and per run (Haiku
-  $0.10/$0.50, Sonnet $2/$10, Opus $4/$20 per 1M input/output tokens, 85 %
-  input assumed; main-chat tokens not included) in the end table, RUN-SUMMARY,
-  run.json and the Mem ledger/run notes.
-
-### Safety (review + attack test before release)
-- The save allowance is armed only by a real click on the exact checked
-  button inside the open dialog, for 10 s, for one request with the learned
-  method, path and query; a failed or blocked save is logged `not_saved`, never
-  as a live record; the learned request must be the one new write after the
-  answer click; reuse ignores dates (no daily duplicates).
-- Hardened against hostile page code: no readable reference to the browser's
-  raw request functions, XHR method/URL kept inside the guard, the guard's own
-  clock, arming only through a per-run token (`<shots>/.arm_token`, shared by
-  capture and the form-fill brief). An in-page guard still can't be airtight
-  against deliberately hostile same-page code (documented in the kb-capture
-  skill).
-- Contact-sheet OKs are tied to each image's hash; re-packaging clears old files.
-
-### Fixed
-- The step badge sits outside the ring (it covered "Sessions").
-- Ingest no longer crashes on a label outside the frame.
-- The demo's own name ("School of Medicine") is an allow-string; the tenant
-  check now reports the words it matched.
-
-## [0.27.0] - 2026-10-29
-
-From the third Cowork run (M1-465 reached the right page — the data was there —
-but no row could be opened) and a challenge review of the plan.
-
-### Added
-- **Write guard.** The page script installs, on every probe and click, a guard
-  that blocks every non-GET request (fetch, XHR, sendBeacon, form submit) and
-  counts what it blocked. Nothing a run does can store anything on the site.
-- **Form fills (approved each run, nothing saved).** For screens that only
-  appear after a save, `kb_data.py bundle` → one `kb-data-planner` (Sonnet) call
-  → `kb_data.py check` (cancel-type choices only — never Yes/OK/Continue;
-  far-future dates, never tomorrow; audience/venue picked by rule from "ZZ
-  DEMO" options; no personal data) → you approve the exact list (always asked,
-  even with `--yes`; approval is fingerprinted, a changed plan is refused) →
-  `kb-data-maker` (Sonnet) fills the form QA-style (value re-read after every
-  field), presses Save under the guard, captures the dialog, clicks Cancel/No.
-- **Sign-in groups.** Capture runs admin + faculty first, then pauses for you to
-  sign in as the learner, then uses the external evaluator link you give
-  (kept only in the run folder), then asks you to sign back in as admin.
-  `kb-capturer --from-batch` resumes after each pause.
-- `kbopt` page helper for dropdown options; hook lets the form-fill agent type
-  and press only Tab / Escape (the capturer still can't type).
-
-### Fixed
-- **Vue list rows.** Rows that are clickable `<tr>`s without links (the new
-  Sessions page) are now opened; a real row is preferred over a course group.
-- **Vue buttons.** "Add schedule"-style buttons are allowed on Vue pages (the
-  write guard makes the old toggle-only rule unnecessary).
-- **Labels per screen.** Each screen rings the button you press next (the first
-  screen rings the menu item); a dialog with nothing else to ring gets its
-  title ringed (draft-only anchor).
-- **Page check** now `await`s its result (it returned nothing before) and runs
-  before planning (Step 3b).
-- Email-template text is no longer used for labels.
-
-### Safety (from an adversarial review of this release)
-- The write guard is installed before every form fill, blocks an XHR opened
-  before install, blocks WebSocket sends and covers same-origin iframes.
-- The hook now also checks scripts (only the plugin's own `/*KB*/` scripts run)
-  and navigation (demo site only, no delete/logout/portal-switch paths beyond
-  the portal entries), and refuses typed newlines/tabs.
-- More refused click words (notify, invite, resend, copy, duplicate, remind,
-  clone, reset, unpublish, reactivate, enroll); form-fill choices must be
-  cancel-type with no yes/save/confirm/continue anywhere; a form fill's start
-  must be its ticket's checked page; approval requires the checked plan.
-- Known limit: a `fetch` reference page code saved before the guard is not
-  covered (the legacy app uses XHR, which is); the hook does not apply when the
-  main chat follows `capture.md` itself (the page guard still does).
-
-## [0.26.1] - 2026-10-29
-
-Fixes from the second Cowork run (M1-465: the ticket's link was a 404 page).
-
-### Fixed
-- **Stale ticket links.** The route now comes first from the MR's QA checklist
-  (`<branch>-manual-qa-checklist.txt`, attached by the medtrics repo's
-  `sk-manual-qa` skill and run by QA automation), which names the page and UI
-  path as they are in the code — e.g. M1-465 →
-  `/vadministration/curriculum/sessions/` → first session → "Add schedule".
-  New `kb_checklist.py attach` fetches it (read-only); the ticket's own links
-  are the fallback.
-- **404 pages treated as the page.** Before capture, one `route-check-js` call
-  GETs each start page (and its `/administration` ↔ `/vadministration` twin);
-  `route-fix` moves a 404 to the working twin or marks it `page_not_found`.
-  The probe also flags a 404 page as a safety net.
-- **Demo data blocked the first-row click.** "ZZ DEMO" / "ZZDEMO" are demo
-  allow-strings, and only a hard (BLOCK) tenant verdict stops a row click.
-- **Email text as labels.** Labels come from the checklist's button names and
-  the changed templates; acceptance-criteria quotes count only when the same
-  string is in the changed UI code.
-- **LibreOffice leftovers.** PDFs are converted in a temp folder and only the
-  PDF is copied out (Cowork refuses deletes in the selected folder).
-
-## [0.26.0] - 2026-10-28
-
-Fixes from the first Cowork run (M1-1596, M1-465, M1-723: every article came
-back with 0 screenshots although every GIF arrived).
-
-### Fixed
-- **Wrong page.** The URL rule matched a surface whenever its path word
-  (`resources`, `users`, `reports`) appeared anywhere in the diff. It now only
-  matches a URL pattern added in a `urls.py` file.
-- **Unseeable labels.** Code identifiers (CamelCase, UPPER_SNAKE) and email copy
-  are no longer sent to the page probe; labels come from templates, `_()` /
-  gettext and on-screen quotes only.
-- **Cowork paths.** Setup no longer stores an absolute Python path (it pointed
-  at another chat's `/sessions/<name>/`); `KB_PY` is worked out every run. Run
-  files moved from `/tmp/kb` (which agents can't read in Cowork) to
-  `<folder>/.kb-runs/<run_id>/`, which ignores itself in git.
-- **Ledger.** Mem's trailing hard-break `\` is stripped from every note field,
-  so existing notes are updated instead of duplicated and a ticket never lists
-  itself as its own prior article.
-- LibreOffice lock and temp files are removed from the output folders.
-
-### Added
-- **The ticket's own route** (`scripts/kb/kb_route.py`): the start page and
-  click path from the ticket's "URL/Page" field, the release checklist's
-  "Which portal and URL", or a QA checklist — host dropped, record-id links
-  refused. Personal-portal (`/my/`) pages use the faculty persona. The fixed
-  `kb_routes.json` map is now a fallback.
-- **Guarded clicks, one GIF per click step** (the way Charles's QA automation
-  walks a ticket). Each target is picked by the `kbclick` page script, which
-  refuses submit buttons, POST forms, delete/remove/toggle/portal-switch links,
-  red buttons, write words and buttons that are not a modal/tab toggle; a
-  first-row click happens only when the page shows no tenant data. Steps behind
-  a save are described in words (`needs_write`). New reasons: `click_refused`,
-  `click_not_found`, `tenant_row`, `needs_write`, `no_screen` (email-only
-  changes get a note, not a missing-screenshot marker).
-- **Plugin hook** `hooks/kb_guard.py`: blocks typing, key presses, drags and
-  form filling for the `kb-capturer` agent only (allow by default for
-  everything else).
-- `kb_capture.py cleanup` — deletes the run's GIFs (and the canary) from
-  Downloads after you say yes at the end of the run.
-- `scripts/kb/kb_paths.py` — the folder config
-  (`.medtrics-release-notes/config.json`: setup status, Mem collection ids, `.env`
-  key names; no absolute paths), `ensure`, `env-check`, `merge`.
-
-### Changed
-- **`/release-note-setup`** now follows the QA plugin's setup, lighter: install,
-  Chrome check, `.env` key check, find or create the KB Mem collections and
-  save their ids, approve Downloads (Cowork), a ready / to-do table. Re-running
-  only redoes what is missing.
-- Ingest **copies** GIFs out of Downloads (moving needed a Cowork delete
-  approval every run); the canary also stays until the cleanup.
-- Named tickets (`/kb-articles M1-1596`) start without the y/n; `pending`,
-  `since` and the release hand-off still ask.
-- If the Haiku capture agent can't drive Chrome, the main chat follows the
-  same capture file itself.
-
-### Verified
-- Cowork check (`/kb-spike`): a Haiku subagent drives Claude in Chrome and
-  reads/writes the selected folder; a plugin PreToolUse hook fires in the main
-  chat and in subagents and its deny is honoured.
-
-## [0.25.0] - 2026-10-28
-
-### Added
-- **`/release-note-setup`** — one command that sets the plugin up in a folder,
-  once. Today it has one part, `kb`: installs the Python packages into
-  `.kb-env/`, tries tesseract / LibreOffice / the Carlito font, checks the
-  Claude in Chrome extension, and ends with a ready / to-do table. More parts
-  are added as new sections. `/release-note-setup kb` runs only that part;
-  `--force` retries everything.
-- `kb_doctor.py --check` — reads `.kb-env/kb-setup.json` and confirms the
-  pieces are still on disk; installs nothing; exit 2 when setup is missing.
-
-### Changed
-- `/kb-articles` no longer installs anything. Step 0 runs `kb_doctor.py
-  --check` and, if setup was never run here or the folder was reset, stops
-  with "run /release-note-setup, then re-run".
-
-## [0.24.0] - 2026-10-28
-
-### Changed
-- **Screenshots now come from GIF recordings, so capture works in Cowork.**
-  In Cowork, `computer screenshot save_to_disk` leaves no file the sandbox can
-  read. This adopts the mechanism of Charles's `medtrics-qa-automation`
-  `qa-screenshot-capture` skill (credit to him): each screen is recorded with
-  `gif_creator`, exported with `download:true` into
-  `~/Downloads/kb-capture/<run>/<visit>.gif` (all overlays off, quality 1), and
-  read through the Downloads folder — mounted with
-  `mcp__cowork__request_cowork_directory` in Cowork (path taken from the mount
-  response every run), `~/Downloads` in Claude Code.
-  - Per screen: start → navigate → wait (`demo.settle_s` = 4, per-surface
-    `wait_s`) → park cursor → probe → stop → export. **No screenshot**: the last
-    GIF frame is the settled page at full viewport size (1470×802), so the
-    Haiku capturer never receives an image.
-  - Step 0 asks for the Downloads folder and sweeps leftover `kb-capture/`
-    folders into the run (never deleted). Step 5 runs a canary GIF + `pickup`
-    while you're present, then the capturer, then `ingest --downloads-dir`,
-    which waits for each file (Charles's `wait_for_file`, vendored with
-    credit), moves it into `shots/gifs/`, takes the last frame as PNG and keeps
-    the `shots.json` contract (`frame_source: gif`). New left reasons:
-    `download_missing`, `empty_export`, `bad_gif`.
-  - 0.23.0 raw files with `screenshot_path` still ingest.
-
-### Fixed
-- Rings next to the page edge were cut off; they now stay inside the frame.
-
-### Verified live (owner's Chrome, Claude Code on the Mac)
-- `gif_creator` inside `browser_batch`; exports 1470×802 with no screenshot
-  taken; subfolder filenames; 5 exports in a row with no Chrome prompt; canary
-  pickup; Haiku capturer → 3 screens → ingest moved all GIFs out of Downloads,
-  6/6 labels verified, rings on the right controls. The Cowork mount call itself
-  is not testable from Claude Code and is unverified.
-
-## [0.23.0] - 2026-10-28
-
-### Changed
-- **Screenshots now come from your own Chrome through the Claude in Chrome
-  extension**, where you are already signed in. Claude never types a password;
-  `.env-kb-login` and the Playwright sign-in are no longer used. Flow:
-  `kb_capture.py plan-calls` writes `capture.md` → the new **`kb-capturer`**
-  agent (Haiku) runs it in your Chrome (navigate, read label positions, full-size
-  screenshot; never clicks, types or closes tabs) → `kb_capture.py ingest`
-  builds the unchanged `shots.json`. One account covers admin and faculty
-  (Personal portal); the run returns to Admin at the end.
-- **First run asks you to install and connect Claude in Chrome** when the
-  extension isn't available (or continue with `--no-capture`).
-- `kb_doctor.py --setup` no longer installs Playwright/Chromium unless
-  `--with-playwright` is passed. The Playwright `login/check/run` code stays as
-  unused legacy.
-
-### Fixed
-- The tenant-data check's "tenant slug" pattern matched ordinary words —
-  `schedule` (s-ch-edu-le), `named`, `informed`, `latest` — so every page with the
-  Schedule button screened BLOCK. A shared stop-list now covers both the Python
-  and the in-page check. "Medtrics School of Medicine" added to the demo allowlist.
-
-### Verified live (2026-10-28, owner's Chrome)
-- A Haiku capturer copied the 3.9 KB install script and both batches exactly;
-  4 screens captured (3 admin, 1 faculty via the Personal portal), 8/8 labels
-  found, rings land on the right element.
-
-## [0.22.3] - 2026-10-26
-
-### Added
-- **`/kb-articles --kb-queue <ids>`** — adds tickets straight to the KB Queue
-  (no capture, no agents, no GitLab) and prints one row per id: queued, already
-  queued, or why not. `/kb-articles pending` drafts them later. Backed by
-  `gather_notes_data_optimus.py --no-mrs` (Optimus only) and
-  `kb_ledger.py enqueue --ids`.
-- **Sign-in from `.env-kb-login`.** `kb_capture.py login --env-file` fills the
-  capture site's form (`KB_<PERSONA>_EMAIL` / `_PASSWORD`, or `KB_EMAIL` /
-  `KB_PASSWORD`) headless and saves the session. Run by a person or their
-  scheduler — never by `/kb-articles`. A missing file is reported as an issue at
-  Step 0 (`kb_doctor.py --setup`). The file is gitignored and never bundled.
-- **End-of-run table for every ticket the run was given** (in chat and at the
-  top of `RUN-SUMMARY.md`): done with its files and screenshot status, or not
-  done and why — code missing, not a feature, not found in Optimus, already has
-  an article, or the error (`kb_package.py --requested`).
-
-### Changed
-- Capture site is now `https://medtrics.medtricslab.com` (sign-in at
-  `/users/login/`); the surface paths in `kb_routes.json` are unchanged.
-- A feature with no merge request is skipped as "code missing" and the run
-  continues (`--allow-no-code` drafts it anyway); an id Optimus doesn't return is
-  listed as "not found in Optimus" instead of silently vanishing (including when
-  Optimus's search falls back to a different ticket).
-- `gather_notes_data_optimus.py --task-types` records the tickets it dropped
-  (`dropped` in the output) so callers can say why.
-
-## [0.22.2] - 2026-10-26
-
-### Fixed
-- **Every ticket looked typeless to `/kb-articles`.** The Optimus integration
-  API carries the classification as `product_type` (e.g. M1-1609 →
-  `feature`), but `gather_notes_data_optimus.py` only read `type` /
-  `task_type`, so the features-only filters (`--task-types`, `kb_select.py
-  filter`, `kb_ledger.py enqueue`) dropped everything as `type: unknown`. It now
-  reads `product_type` first, keeping the older names as fallbacks.
-
-## [0.22.1] - 2026-10-26
-
-### Added
-- **One-time automatic setup for `/kb-articles`.** Step 0 now runs
-  `kb_doctor.py --setup` in the folder selected in Cowork. The first run creates
-  `.kb-env/` there, installs what is missing (python-docx, Pillow, numpy, pypdf,
-  pytesseract, Playwright and its Chromium into `.kb-env/`; tesseract,
-  LibreOffice and the Carlito font via apt-get or Homebrew when allowed), and
-  records the result in `.kb-env/kb-setup.json`. Later runs read that file and
-  only confirm the installed files are still there (~0.2 s, no imports, no
-  network). Pieces that could not be installed are recorded and not retried
-  until `--setup --force`; pieces that vanished (reset sandbox) are reinstalled
-  alone. Every KB script runs with the printed `KB_PY`.
-- `.kb-env/` is gitignored and excluded from the bundle.
-
-## [0.22.0] - 2026-10-26
-
-### Added
-- **`/release-slack --kb`** — after the post and its Mem archive note (new
-  Step 9c), the release's feature tickets go on the Mem **KB Queue** with the
-  client title and summary the release wrote, and the same chat hands exactly
-  those tickets to `/kb-articles <ids> --from-release`. It reuses
-  `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` (no
-  second Optimus/GitLab fetch), shows its plan and asks y/n. "n" leaves them
-  queued. `--kb` never delays or fails the release; `dry-run --kb` only reports
-  what would be queued. `/notes` is unchanged.
-- `kb_ledger.py`: the queue — `enqueue`, `drain`, `queue-summaries`, and
-  `pending --queue-notes` (queue ∪ released-without-article). Queue notes are
-  marked `drained` after a run, never deleted.
-- `kb_select.py filter --ids` so the hand-off drafts only the ids asked for.
-
-### Changed
-- `/kb-articles` takes a bare ticket list: `/kb-articles M1-1520,M1-1256`
-  (no `tickets` keyword); `since <date>` and `pending` are unchanged.
-- Prose retries run round 1 on Haiku and round 2 on Sonnet; first drafts stay
-  on Sonnet.
-
-## [0.21.0] - 2026-10-26
-
-### Added
-- **`/kb-articles`** — one Intercom KB article draft (.docx + PDF + Intercom
-  markdown) per shipped legacy **feature** ticket, in the Medtrics KB format
-  (`medtrics-kb-article/1.1`). Modes `<ids>` (a bare comma-separated list), `since <date>` (from the
-  Mem release archive) and `pending`; flags `dry-run`, `--force`,
-  `--retry-partial`, `--no-capture`, `--yes`. Plan: `KB-PLAN.md` (v1).
-- **`scripts/kb/`** — the KB format standard brought into the plugin
-  (`kb_format.py`, `kb_validate.py` gates G1–G7, `build_kb_doc.py`,
-  `qa_gif_to_shots.py`, `qa_annotate.py`) plus the pipeline: `kb_select.py`
-  (feature filter, rule placement, persona × surface grouping, ≤ 8 tickets per
-  writer group), `kb_inputs.py` (trimmed writer inputs: AC, added UI strings,
-  routes — never full diffs), `kb_capture.py` (Playwright on the demo tenant with
-  per-persona saved sessions a person signs in to; DOM box anchors; exit 3 +
-  `resume.json` on expiry), `kb_spec.py` (writer bundles, assembly, annotation,
-  evidence-vs-prose failure split, single-article retries), `kb_pdf.py` (one
-  LibreOffice batch + pypdf verification), `kb_package.py` (output folder,
-  `RUN-SUMMARY.md`, zip, `run.json`), `kb_ledger.py` (Mem ledger/catalogue notes,
-  `todo`/`since`/`pending`, prior-article matching, one-time seeds),
-  `kb_usage.py` (token apportioning), `kb_doctor.py` (dependency check), and
-  `kb_routes.json` (56 surfaces seeded from the October hand-run backlog).
-- **`agents/`** — the plugin's first agents, each with a pinned model:
-  `kb-writer` (Sonnet; Read + Write, used only on `/tmp/kb/**`) and
-  `kb-classifier` (Haiku; Read).
-- Skills **`kb-ledger`** and **`kb-capture`**.
-- `gather_notes_data_optimus.py`: `--task-types` drops other task types before
-  any GitLab lookup; each issue now carries `module` (additive).
-- Tests: `test_kb_validate.py` (one deliberate mutation per gate rule),
-  `test_kb_ledger.py`, `test_kb_pipeline.py`; `test_build_plugin.py` extended.
-
-### Changed (relative to the hand-run KB code in `extra/`)
-- Draft renders no longer print the provenance appendix unless `--provenance`
-  is passed; `build_kb_doc.py provenance` writes it as a sidecar.
-- New `dom_box` anchor, accepted in drafts only, for environments without
-  tesseract (G3 refuses it on publish). G7 refuses a publish with a missing
-  screenshot; drafts print `[Screenshot missing — <reason>]`.
-- Rings are orange per `kb_format.py` with no caption bar; red is only the
-  watermark. Badges near the left edge snap onto the sidebar. Fonts fall back
-  through `KB_FONT` → DejaVu → Arial → Pillow's scalable default.
-- Tenant screen: demo allowlist, DOM-text screening, worst-of merge; course
-  codes are now matched on the original-case text (they never matched before
-  because the OCR text was lowercased first).
-- `find_label_box` no longer needs pandas.
-
-### Build
-- `extra/`, `.kb-sessions/` and `KB-PLAN.md` are excluded from the bundle and
-  asserted absent; `scripts/kb/kb_format.py` and `agents/kb-writer.md` are
-  asserted present.
+- Gather reads Optimus `product_type` as the task type and can filter by type
+  (`--task-types`) and skip GitLab (`--no-mrs`).
 
 ## [0.20.0] - 2026-09-03
 

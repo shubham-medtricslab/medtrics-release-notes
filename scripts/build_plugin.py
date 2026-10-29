@@ -172,7 +172,7 @@ def _verify_bundle(plugin_path: Path) -> None:
                 raise BuildError(f"BUILD FAILED: bundle contains {top}/: {entry}")
         # The KB pipeline must ship whole: its format module and writer agent.
         # ...and its click guard: the hook that keeps the capturer read-only.
-        # ...and the demo-data maker (kb_data.py plans by rule, no planner agent since 0.28.0).
+        # ...and the demo-data maker (kb_data.py plans by rule; there is no planner agent).
         for required in ("scripts/kb/kb_format.py", "agents/kb-writer.md",
                          "agents/kb-data-maker.md",
                          "hooks/hooks.json", "hooks/kb_guard.py"):

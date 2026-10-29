@@ -120,7 +120,7 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    `frame_source: gif|disk`. `shots.json` also carries `screens` (one record per
    screen, with its `reason` when it failed) and `missing` (`{ticket: {reason,
    detail}}`), which `kb_spec assemble` turns into the missing-screenshot line;
-   the result carries `downloads_left`. A 0.23.0 raw file with a readable `screenshot_path`
+   the result carries `downloads_left`. An older raw file with a readable `screenshot_path`
    still ingests the old way. Exit 3 means some visits were left;
    `shots/resume.json` holds the rest of the plan and the reason per
    `persona/surface`: `expired`, `wrong_persona`, `bridge_down`, `no_probe`, `needs_install`,
@@ -128,7 +128,7 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    Downloads), `empty_export` (a zero-byte GIF) or `bad_gif` (not readable as an
    image).
 
-## Click visits (0.26.0)
+## Click visits
 
 A capture_plan entry may carry `"clicks": [{"text": "View"}, {"row": true}, …]`
 (from the ticket's route) and `"write_gated"` (a step that only appears after a
@@ -156,7 +156,7 @@ aria-label or text starting with a write verb (save, submit, send, confirm,
 delete, remove, archive, publish, approve, reject, sign); a `<button>` (or
 `role=button`) without `data-bs-toggle`/`data-toggle` of `modal|tab|collapse|dropdown`;
 an `<a>` with no real target (`#`, `javascript:`, none) and no toggle (**both
-dropped on a Vue page**, see below); and a point covered by another element. `{row: true}` (0.27.0) takes the first body row of the
+dropped on a Vue page**, see below); and a point covered by another element. `{row: true}` takes the first body row of the
 largest visible table that holds a GET `<a href>` or is a clickable row (class
 `clickable`, or `cursor: pointer` on the row or its first cell, the session list
 being one: `<tr class="clickable">`, no anchors, Vue click handler). A link wins;
@@ -183,14 +183,14 @@ the article as: `needs_write` → "This step happens after you save; no
 screenshot"; `no_screen` → no marker, a one-line note; `click_*`, `tenant_row`,
 `label_not_found` → a marker with that reason.
 
-**Vue pages (0.27.0).** The page is Vue when `document.querySelector('[data-v-app]')`
+**Vue pages.** The page is Vue when `document.querySelector('[data-v-app]')`
 matches, any element has `__vue_app__`, or `window.__VUE__` is set. There the
 `button_no_toggle` and `anchor_no_target` refusals are dropped (the network write
 guard below makes them unnecessary: "Add schedule" is clickable); every `danger_*`,
 `write_verb`, `submit`, `post_form`, `data_href`, `onclick`, `ajax_link` and
 `occluded` refusal stays. On a non-Vue page nothing changes.
 
-**Network write guard (0.27.0).** The probe, `kbclick` and `kbopt` each install it
+**Network write guard.** The probe, `kbclick` and `kbopt` each install it
 first, on every call (idempotent: every wrapper carries a `__kb` mark, so a
 second install, an SPA route change or a page that swaps its own `fetch` in
 never double-wraps; a full navigation gives a fresh window the next call patches).
@@ -202,20 +202,20 @@ method are blocked too): `fetch` returns a rejected Promise (`KB_WRITE_BLOCKED`)
 `requestSubmit()` does nothing (the submitter's `formmethod` wins over the form's
 method) and its `submit` event is cancelled. Each block adds 1 to
 `window.__kbBlocked` (last `"METHOD /path"` in `window.__kbLast`); the probe
-reports them as `wb` and `wl`. The guard has no off switch in 0.27.0, not even
+reports them as `wb` and `wl`. The guard has no off switch, not even
 in write mode, and the Python mirror (`request_blocked`, `form_blocked`) is
 pinned against the JS by `tests/test_kb_write_guard.py`. Because the guard stays
 on, a page that POSTs to load its data (a search API, a GraphQL call) loads
 without that data during capture; that shows as a missing label, never a write.
 
-**Heading fallback (0.27.0).** The probe also returns `h`: the title of the
+**Heading fallback.** The probe also returns `h`: the title of the
 top-most visible open dialog (`.modal-title`, `[role=dialog] h1-h3`,
 `.swal2-title`; the last one in the document), else the first visible `h1`/`h2`,
 as `{t, b}`. When a click or write visit found none of its labels, ingest anchors
 the shot on `h` as a `dom_box` entry (`"fallback": "heading"`), so the screen is kept
 for the draft. `dom_box` is draft-only: gate G3 already refuses it on publish.
 
-**`kbopt` (0.27.0).** The third stored function (`sessionStorage.kbo`, installed with
+**`kbopt`.** The third stored function (`sessionStorage.kbo`, installed with
 the probe and `kbclick`) takes `{"option": "<exact text>"}` and returns `{ok,x,y,label}`
 of the visible option in an open listbox or dropdown (`[role=listbox] [role=option]`,
 `.multiselect__content li`, `.dropdown-menu .dropdown-item`, `.vs__dropdown-option`,
@@ -231,7 +231,7 @@ only when the caller's `agent_type` contains `kb-capturer`; everyone else and
 any hook error is allowed, and it writes no files. The Cowork spike showed
 plugin hooks fire for subagents and main chat and that a deny is honoured.
 
-**Write mode (0.27.0, the data agent only).** `kbclick` args
+**Write mode (the data agent only).** `kbclick` args
 `{"text": "Save", "write": ["Save", "No, don't send notifications"]}` lift the
 `write_verb`, `submit`, `post_form` and `button_no_toggle` refusals for an element
 whose visible text equals one of the `write` texts exactly (case-insensitive,
@@ -242,10 +242,10 @@ starts with "No" ("No, don't send notifications" is allowed). With `write`, only
 the top-most open dialog is searched (`.modal.show`, `[role=dialog]`,
 `.swal2-popup`, `dialog[open]`) and more than one visible match for the text is
 `KB_CLICK_REFUSED:ambiguous`. A write-mode click can still never persist anything in
-0.27.0: the network write guard blocks the request. The capturer never passes
+The network write guard blocks the request. The capturer never passes
 `write`; `plan-calls` never emits it.
 
-## Per-step labels (0.27.0)
+## Per-step labels
 
 A click entry's screens look for different labels. Start screen: the page's
 menu label (the last non-numeric path segment, title-cased, e.g. `Sessions`) plus
@@ -254,7 +254,7 @@ click's text (the button the reader presses next, ringed). The last screen of
 the entry: the ticket's own inputs labels. Entries without clicks keep the
 ticket's labels.
 
-## Accounts and sign-in (0.27.0)
+## Accounts and sign-in
 
 `calls.json` carries `accounts`: `[{"account": "main", "personas": ["admin",
 "faculty"], "batches": [...]}, {"account": "learner", "personas": ["learner"],
@@ -281,7 +281,7 @@ navigation back to the home portal) and an `accounts` row `{"account": "main",
 starts it again at that batch id (`--from-batch`), which sends the restore. Runs
 that end on the main account get no return batch.
 
-## Write visits (0.27.0)
+## Write visits
 
 `plan-calls --data-plan $RUN/data_plan.json` (the owner-approved plan; one with
 `"approved": false` is ignored) adds, for each ticket record with an `after`
@@ -354,7 +354,7 @@ page after the install:
   short stub, `(0,eval)(sessionStorage.getItem('kbp'))(<args>)`. The page
   reloads on navigation but `sessionStorage` survives. A new tab has no probe
   and the stub throws `KB_NOPROBE`.
-- **The orchestrator installs (0.28.1).** The install is ~40 KB of JS; the Haiku capturer
+- **The orchestrator installs.** The install is ~40 KB of JS; the Haiku capturer
   could not reproduce it in a tool call, so it never sends it. `calls.json` has a top-level
   `install` list (`[{"name": "javascript_tool", "input": {"action": "javascript_exec",
   "tabId": "$TAB", "text": "/*KB*/var S=…;'kbp:'+S.length"}}]`, ready for `browser_batch` with
