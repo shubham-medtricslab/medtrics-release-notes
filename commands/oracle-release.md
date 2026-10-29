@@ -1,5 +1,5 @@
 ---
-description: Combined internal Oracle release post — Optimus ORC tickets + GitHub PRs → ONE #pod-oracle message shaped exactly like /release-slack: a root index plus per-ticket thread cards, each carrying a client-portable exec-voice lede AND the internal detail (ticket ID, developer @-mention, PR links, Optimus URL, client tags). The exec ledes are IP-guarded as a safety net. Previews first; never posts without an explicit yes.
+description: Combined internal Oracle release post — Optimus ORC tickets + GitHub PRs → ONE #pod-oracle message shaped exactly like /release-slack: a root index plus per-ticket thread cards, each carrying a client-portable exec-voice lede AND the internal detail (ticket ID, developer @-mention, PR links, Optimus URL, client tags). The exec ledes are IP-guarded as a safety net. In `tickets` mode it then tells each client pod (Slack channel) which tickets concern its clients, unless `--no-pod` is passed. Previews first; never posts without an explicit yes.
 ---
 
 # Oracle Release Post (combined, /release-slack shape)
@@ -19,9 +19,12 @@ Tickets come from **Optimus** (Oracle product, `ORC-` prefix); code comes from *
 /oracle-release status                         # all Oracle tickets in the five deploy lanes (product=oracle)
 /oracle-release tickets ORC-101 dry-run        # print what would be gathered, then exit
 /oracle-release status dry-run
+/oracle-release tickets ORC-101,ORC-115 --no-pod  # without the client-pod posts (Step 11c)
 ```
 
 You may combine either mode with `dry-run`.
+
+In **`tickets` mode** the command also tells each client pod which tickets concern its clients (Step 11c, `pod-notify` skill) — on by default, with its own preview and its own yes. `--no-pod` skips it and combines with anything; `status` runs never post to pods. `/pod-notify <ids>` does the same step on its own later.
 
 ## Pipeline overview
 
@@ -51,6 +54,9 @@ You may combine either mode with `dry-run`.
     11b. once the post is complete (this session, or the resume run that finishes it): archive ONE Mem
          note for this release session — trace header + the posted root and replies verbatim
          (release-archive skill → release_archive.py record; Mem is the only archive, nothing on disk)
+    11c. only in tickets mode and without --no-pod, after 11b: pod-notify skill — route each posted ticket
+         to the pods whose Optimus clients it links (Mem pod map) → channel checks → ONE preview for all pods
+         → one root + thread per pod → pod log in Mem (never a release failure)
 ```
 
 The Slack shape is **root-post-as-index**: one compact top-level message (numbered `ORC-id · title` lines under `*Enhancements &amp; New Features*` / `*Bug Fixes*`, plus a `Clients to notify:` line), with each ticket's `_For clients:_` paragraph + internal detail in thread cards. **Never post a second top-level message** — overflow spills into additional thread replies deterministically.
@@ -59,6 +65,7 @@ The Slack shape is **root-post-as-index**: one compact top-level message (number
 
 - Slack root post + thread replies to the channel resolved from `SLACK_CHANNEL_ORACLE` (`#pod-oracle`). Posted only after the user confirms.
 - **One Mem note for the release session** in the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`, shared with `/release-slack`; `release-archive` skill) — date, channel, root ts, permalink, the posted ORC list, **and the posted root + every thread reply verbatim**. This is the **only** archive of the post: nothing is written to `.claude/outputs/` or anywhere else on disk. Written once the post is complete (this session, or the resume run that finishes it).
+- **In `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_MAP_COLLECTION` (default `Release Notes Pod Map`; `pod-notify` skill).
 - Working files only in `/tmp/` — the per-ticket summary blocks (`/tmp/oracle_notes_summaries.txt`) and the composed root / reply files (`/tmp/oracle_release_root.txt`, `/tmp/oracle_release_reply_NN.txt`); the archive step reads them.
 
 Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
@@ -74,6 +81,7 @@ Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
 | `ORACLE_REPO_PATH` | Absolute path to a local `medtrics-oracle` checkout — lets analyzers read related source files for context when a diff is sparse | optional |
 | `MEM_PR_OVERRIDES_COLLECTION_ID` | UUID of the Mem collection `Oracle PR Overrides` (human ticket → PR picks). When empty, the command resolves the collection by title and prints the id to pin here | optional |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | Name of the Mem collection that receives the archive note for every posted release (`release-archive` skill). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. The key is optional — the **Mem MCP connection is not** (see Step 1) | optional |
+| `MEM_POD_MAP_COLLECTION` | Name of the Mem collection holding the pod map and pod log (`pod-notify` skill). Defaults to `Release Notes Pod Map`; created only by `/release-note-setup pod`. The bot also needs membership of each pod channel | optional |
 | `SLACK_CHANNEL_ORACLE` | channel id (`C0123ABC`) or `#pod-oracle` | Yes |
 | `SLACK_BOT_TOKEN` | `xoxb-...` token with `chat:write` + `channels:read` scopes (`groups:read` if the channel is private and configured by name) | Yes |
 
@@ -521,6 +529,20 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 4. **Write it:** `create_note({content, collection_ids: [<resolved collection uuid>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
 5. **If the write cannot happen** (collection unresolvable or ambiguous, or `create_note` fails once and again on one immediate retry): print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body from step 3 in a fenced block. Then finish. Never write the note to disk and never re-post to Slack.
 
+### Step 11c — Tell the client pods (pod-notify skill; `tickets` mode, on by default)
+
+Runs only in **`tickets` mode** and only when the user did **not** pass `--no-pod`; never in `status` mode (those tickets have not shipped yet). It runs **after** the post is complete AND Step 11b has run (the archive note written, or its manual-paste fallback printed) — on a resume run, after the resume run's archive step. Nothing in it can surface as a release failure: the post and the archive are authoritative, and any failure is one line in chat.
+
+Follow the bundled `medtrics-release-notes:pod-notify` skill with:
+
+- `{data}` = `/tmp/oracle_notes_data.json`, `{summaries}` = `/tmp/oracle_notes_summaries.txt` (the posted set),
+- `{source}` = `/oracle-release`, `{date}` = the date in the Slack root header,
+- `{link}` = the permalink Step 11b fetched (omit when it failed).
+
+The skill routes each posted ticket to the pods whose clients it is linked to in Optimus (Mem pod map), checks every pod channel, shows **one** preview for all pods and asks `[y]/[n]/[e]/[a]` — a separate yes from the release's own — then posts one root + thread per pod, writes the pod log and reports the tickets that reached no pod. A missing pod map is a one-line skip naming `/release-note-setup pod`.
+
+**`dry-run`:** after the normal dry-run output (and before the `--kb` dry run, if any), run the skill's dry-run: routing table only, nothing posted, nothing written.
+
 ## Failure modes and behavior
 
 | Condition | Behavior |
@@ -552,10 +574,11 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 | Release archive (Step 11b): collection unresolvable or ambiguous, or `create_note` fails after one immediate retry | Print the full rendered note in chat for a manual paste into the named collection (an ambiguous name also lists every candidate id). Never a disk write, never a re-post — the Slack post already succeeded and is authoritative |
 | Replies still outstanding after a partial failure | No archive yet; the resume run that posts the last reply archives the whole release |
 | User declines at preview | No Slack call; summaries + drafts remain on disk |
+| Pods (Step 11c): no pod map, a Mem read fails, a channel check fails, or a pod post fails | One line per problem; a failed pod stops only that pod; never a release failure — the post and archive stand (`pod-notify` skill) |
 
 ## Things this command does NOT do
 
-- Does not produce a separate customer-facing post or document. There is one message, and it goes to `#pod-oracle`. The team ports the exec-voice lede to clients themselves.
+- Does not produce a separate customer-facing post or document. There is one release message, and it goes to `#pod-oracle`; the client pods get only their own short threads (Step 11c). The team ports the exec-voice lede to clients themselves.
 - Does not use the retired `oracle-storyteller` skill or `assemble_oracle_root.py` — composition is handled by the shared `internal-storyteller` skill. Those files remain parked in the repo but unused.
 - Does not query GitLab — the Oracle track is GitHub-only (`gather_notes_data_oracle.py`); the classic GitLab-backed pipelines are untouched.
 - Does not run the classic pipelines (`/release-slack`, `/deploy-notes`, `/integration-notes`) — the tracks are independent on purpose.
@@ -580,5 +603,6 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 - **Confidentiality validation is handled by `ip_guard.py`** over the exec ledes only. Do NOT skip the guard; do NOT extend it over the internal content.
 - **Formatting validation is handled by `slack_lint.py`.** Do NOT skip the lint gate — it runs over the root AND every reply before the human preview.
 - **Slack delivery is handled by `slack_upload.py`.** Do NOT use the Slack MCP for the post itself. One invocation per message: root first, then each reply with the captured `ts` and the resolved channel id from the result block. Never post a second top-level message.
+- **Pod posts are strictly post-archive and failure-isolated.** Step 11c follows the `pod-notify` skill: routing, rendering, dedup and the pod log are `pod_map.py`; channel checks and posts are `slack_upload.py` (`--check-channel`, then one invocation per message, by channel id). Never hand-compose a pod message and never let a pod failure surface as a release failure.
 - **Output filename uses today's date computed via `date +%Y-%m-%d`** — never hardcoded.
 - **Channel resolution is exact-match only.** If `SLACK_CHANNEL_ORACLE` is a name that matches multiple channels, the script will error — surface it and stop.

@@ -49,7 +49,7 @@ EXCLUDE_FILES = {
     ".DS_Store", ".gitignore", ".gitattributes",
     "requirements.txt", "requirements-dev.txt", "CONTRIBUTING.md",
     "PLAN.md", "ORACLE-PLAN.md", "PR-MATCHER-PLAN.md", "RELEASE-ARCHIVE-PLAN.md",
-    "KB-PLAN.md", ".env", ".env.local",
+    "KB-PLAN.md", "POD-NOTIFY-PLAN.md", ".env", ".env.local",
     "build_plugin.py",  # the bundler itself is a dev tool; never ship it
 }
 # Any filename starting with one of these prefixes is excluded (.env, .env.*, ...).

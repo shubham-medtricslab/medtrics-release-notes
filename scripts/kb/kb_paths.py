@@ -26,8 +26,9 @@ folder cannot be written (a read-only Claude Code checkout) it falls back to
 
     {"schema": 1, "created", "updated",
      "kb": {"setup": "done", "items": {name: status}},
+     "pod": {"setup": "done", "pods": n},
      "mem": {"kb_ledger": id, "kb_queue": id, "kb_catalogue": id, "kb_demo": id,
-             "release_archive": id},
+             "release_archive": id, "pod_map": id},
      "env_checked": {"OPTIMUS_API_KEY": true, ...}}
 
 Other scripts import: folder(), kb_py(), runs_dir(), config_path(), load(),

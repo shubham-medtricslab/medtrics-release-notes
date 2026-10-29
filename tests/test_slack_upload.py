@@ -16,6 +16,10 @@ the urllib / slack_call boundary; no network. Covers:
     ok:false / HTTP / network failures -> ok:false, exit 2, permalink null;
     5xx retried (read path); argparse rejects --get-permalink without --ts
     or --channel; the post path's result shape stays backward compatible
+  - --check-channel mode: one conversations.info GET, nothing posted; the
+    channel state lands under "info"; failures carry info:null and exit 2;
+    argparse rejects it combined with a message file; the other modes never
+    carry the "info" key
 """
 
 import contextlib
@@ -598,6 +602,57 @@ class PostPathShapeUnchangedTests(unittest.TestCase):
             self._run_main(self.argv)
         self.assertEqual(len(calls), 1)
         self.assertIn("chat.postMessage", calls[0].full_url)
+
+
+class MainCheckChannelTests(unittest.TestCase):
+    """main() in --check-channel mode: a read of conversations.info only."""
+
+    _run_main = MainResultBlockTests._run_main
+    _parse_result = MainResultBlockTests._parse_result
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.env_path = Path(self._tmp.name) / "nonexistent.env"
+        self.argv = ["--check-channel", "--channel", "C06U322U0F4",
+                     "--env-path", str(self.env_path)]
+
+    def test_success_reports_channel_state_and_posts_nothing(self):
+        calls = []
+        script = [{"ok": True, "channel": {
+            "id": "C06U322U0F4", "name": "impact-pod_chris", "is_archived": False,
+            "is_ext_shared": True, "is_shared": True, "is_private": False,
+            "is_member": True}}]
+        with mock.patch.object(su.urllib.request, "urlopen",
+                               side_effect=_urlopen_from_script(script, calls)):
+            code, out, _ = self._run_main(self.argv)
+        self.assertEqual(code, 0)
+        result = self._parse_result(out)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["channel"], "C06U322U0F4")
+        self.assertEqual(result["info"], {
+            "name": "impact-pod_chris", "is_archived": False, "is_ext_shared": True,
+            "is_pending_ext_shared": False, "is_shared": True, "is_private": False,
+            "is_member": True})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].get_method(), "GET")
+        self.assertIn("conversations.info", calls[0].full_url)
+
+    def test_api_error_is_ok_false_exit_2_info_null(self):
+        script = [{"ok": False, "error": "channel_not_found"}]
+        with mock.patch.object(su.urllib.request, "urlopen",
+                               side_effect=_urlopen_from_script(script)):
+            code, out, _ = self._run_main(self.argv)
+        self.assertEqual(code, 2)
+        result = self._parse_result(out)
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["info"])
+        self.assertIn("channel_not_found", result["error"])
+
+    def test_rejects_message_file(self):
+        with self.assertRaises(SystemExit) as ctx:
+            self._run_main(self.argv + ["--message-file", "x.txt"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":

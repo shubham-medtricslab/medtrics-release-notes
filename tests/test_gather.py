@@ -265,5 +265,61 @@ class TaskTypeTests(unittest.TestCase):
         self.assertEqual(gather.task_to_issue(dict(self.BASE))["task_type"], "")
 
 
+class LinkedClientsTests(unittest.TestCase):
+    """The REST payload's `linked_clients` is kept as `optimus_clients` for
+    pod routing, without touching the `clients` code string of Step 4b."""
+
+    BASE = {"id": "e620e271-0000", "task_identifier": "M1-1601", "title": "T"}
+
+    def test_passes_linked_clients_through(self):
+        issue = gather.task_to_issue({**self.BASE, "linked_clients": [
+            {"client_id": "c-1", "client_name": "Clemson University - College of Veterinary Medicine"},
+            {"client_id": "c-2", "client_name": "Michigan State University - College of Veterinary Medicine"},
+        ]})
+        self.assertEqual(issue["optimus_clients"], [
+            {"id": "c-1", "name": "Clemson University - College of Veterinary Medicine"},
+            {"id": "c-2", "name": "Michigan State University - College of Veterinary Medicine"},
+        ])
+        self.assertNotIn("clients", issue)
+
+    def test_missing_or_empty_is_empty_list(self):
+        self.assertEqual(gather.task_to_issue(dict(self.BASE))["optimus_clients"], [])
+        self.assertEqual(gather.task_to_issue({**self.BASE, "linked_clients": None})
+                         ["optimus_clients"], [])
+
+    def test_nameless_entries_dropped(self):
+        issue = gather.task_to_issue({**self.BASE, "linked_clients": [
+            {"client_id": "c-1"}, "Ross University - School of Medicine"]})
+        self.assertEqual(issue["optimus_clients"],
+                         [{"id": "", "name": "Ross University - School of Medicine"}])
+
+
+class OptimusOnlyEnvTests(unittest.TestCase):
+    """An Optimus-only run (--no-mrs) needs no GitLab keys; the default does."""
+
+    def test_gitlab_keys_optional_only_when_not_required(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        env = Path(d) / ".env"
+        env.write_text("OPTIMUS_API_KEY=k\n")
+        self.assertEqual(gather.load_env(str(env), require_gitlab=False)["OPTIMUS_API_KEY"], "k")
+        with mock.patch.object(gather, "log"), self.assertRaises(SystemExit):
+            gather.load_env(str(env))
+
+
+class ExactIdentifierTests(unittest.TestCase):
+    """--exact never swaps a mistyped id for the closest search hit."""
+
+    def _search(self, *_a, **_k):
+        return {"data": [{"id": "x", "task_identifier": "M1-1605", "title": "T"}]}
+
+    def test_fallback_by_default_skipped_with_exact(self):
+        with mock.patch.object(gather, "optimus_api", side_effect=self._search), \
+                mock.patch.object(gather, "log"):
+            self.assertEqual(len(gather.query_tasks_by_identifiers({}, ["M1-160"])), 1)
+            self.assertEqual(gather.query_tasks_by_identifiers({}, ["M1-160"], exact=True), [])
+            self.assertEqual(len(gather.query_tasks_by_identifiers({}, ["m1-1605"], exact=True)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
