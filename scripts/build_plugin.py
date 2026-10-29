@@ -39,13 +39,17 @@ from pathlib import Path
 EXCLUDE_DIRS_COMMON = {
     ".git", ".mypy_cache", ".ruff_cache", ".pytest_cache", "__pycache__",
     "dist", "build", "node_modules", ".cowork", ".claude",
+    # extra/ is the unshipped KB working area (hand-run pipeline, reference
+    # PDFs); .kb-sessions/ holds demo-site storage states, which are credentials.
+    "extra", ".kb-sessions", ".kb-env",
 }
 EXCLUDE_DIRS_DEFAULT = EXCLUDE_DIRS_COMMON | {"tests"}
 EXCLUDE_DIRS_INCLUDE_TESTS = set(EXCLUDE_DIRS_COMMON)
 EXCLUDE_FILES = {
     ".DS_Store", ".gitignore", ".gitattributes",
     "requirements.txt", "requirements-dev.txt", "CONTRIBUTING.md",
-    "PLAN.md", "ORACLE-PLAN.md", "PR-MATCHER-PLAN.md", "RELEASE-ARCHIVE-PLAN.md", ".env", ".env.local",
+    "PLAN.md", "ORACLE-PLAN.md", "PR-MATCHER-PLAN.md", "RELEASE-ARCHIVE-PLAN.md",
+    "KB-PLAN.md", ".env", ".env.local",
     "build_plugin.py",  # the bundler itself is a dev tool; never ship it
 }
 # Any filename starting with one of these prefixes is excluded (.env, .env.*, ...).
@@ -161,6 +165,19 @@ def _verify_bundle(plugin_path: Path) -> None:
                 raise BuildError(f"BUILD FAILED: bundle contains env file: {entry}")
             if basename.endswith(".pdf"):
                 raise BuildError(f"BUILD FAILED: bundle contains a PDF: {entry}")
+        # Hard assertion: the KB working area and demo sessions never ship.
+        for entry in sorted(names):
+            top = entry.split("/", 1)[0]
+            if top in ("extra", ".kb-sessions", ".kb-env"):
+                raise BuildError(f"BUILD FAILED: bundle contains {top}/: {entry}")
+        # The KB pipeline must ship whole: its format module and writer agent.
+        # ...and its click guard: the hook that keeps the capturer read-only.
+        # ...and the demo-data maker (kb_data.py plans by rule; there is no planner agent).
+        for required in ("scripts/kb/kb_format.py", "agents/kb-writer.md",
+                         "agents/kb-data-maker.md",
+                         "hooks/hooks.json", "hooks/kb_guard.py"):
+            if required not in names:
+                raise BuildError(f"BUILD FAILED: bundle is missing {required}")
         # plugin.json must be present and parseable
         if required_file not in names:
             raise BuildError(f"BUILD FAILED: bundle is missing {required_file}")

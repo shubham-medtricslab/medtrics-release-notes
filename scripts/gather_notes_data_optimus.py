@@ -329,6 +329,14 @@ def resolve_identifier(task):
     return task.get("task_identifier") or task.get("linear_identifier") or task["id"][:8]
 
 
+def _module_name(task):
+    """Optimus has exposed the module as a string or an object; '' when absent."""
+    m = task.get("module") or task.get("module_name") or ""
+    if isinstance(m, dict):
+        m = m.get("name") or m.get("title") or ""
+    return str(m)
+
+
 def task_to_issue(task, include_description=False):
     """Convert an Optimus task to the normalized issue format."""
     identifier = resolve_identifier(task)
@@ -376,7 +384,11 @@ def task_to_issue(task, include_description=False):
         "assignee_name": assignee_name,
         "assignee_email": assignee_email,
         "assignee_id": assignee_id,
-        "task_type": task.get("type") or task.get("task_type") or "",
+        # The integration API names the classification `product_type`; `type` /
+        # `task_type` are kept for older payload shapes.
+        "task_type": task.get("product_type") or task.get("type") or task.get("task_type") or "",
+        # Product module (additive) — /kb-articles places tickets by it.
+        "module": _module_name(task),
         "mrs": [],
     }
 
@@ -510,6 +522,11 @@ def main():
     parser.add_argument("--include-description", action="store_true", help="Include Optimus task descriptions")
     parser.add_argument("--filter-integration", action="store_true", help="Filter diffs to integration-relevant files")
     parser.add_argument("--dry-run", action="store_true", help="Print summary and exit")
+    parser.add_argument("--no-mrs", action="store_true",
+                        help="Optimus only: skip the GitLab MR lookup and diffs")
+    parser.add_argument("--task-types", default="",
+                        help="Comma-separated Optimus task types to keep (e.g. feature,critical_feature); "
+                             "others are dropped BEFORE any GitLab lookup")
     args = parser.parse_args()
 
     if args.mode in ("milestone", "mr", "tickets") and not args.parameter:
@@ -547,6 +564,14 @@ def main():
         log(f"ERROR: Optimus gather failed: {e}")
         sys.exit(1)
 
+    if args.task_types and args.mode != "mr":
+        keep = {t.strip().lower() for t in args.task_types.split(",") if t.strip()}
+        before = len(issues)
+        dropped = [{"identifier": i["identifier"], "task_type": i.get("task_type") or ""}
+                   for i in issues if (i.get("task_type") or "").lower() not in keep]
+        issues = [i for i in issues if (i.get("task_type") or "").lower() in keep]
+        log(f"  --task-types kept {len(issues)} of {before} tasks")
+
     if args.mode == "mr":
         # MR mode: no Optimus query, create a synthetic issue from the MR
         mr_iid = args.parameter
@@ -565,6 +590,19 @@ def main():
             "state": mr_data.get("state", ""),
             "mrs": [],
         })
+
+    # --- Optimus only (no GitLab): enough to classify and queue tickets ---
+    if args.no_mrs and args.mode != "mr":
+        for issue in issues:
+            issue["mrs"] = []
+        output = {"mode": args.mode, "parameter": args.parameter or "", "issues": issues}
+        if args.task_types:
+            output["dropped"] = dropped
+        with open(args.output, "w") as f:
+            json.dump(output, f, indent=2)
+        log(f"\nData written to {args.output} (Optimus only, no MR lookup)")
+        log(f"  {len(issues)} issues")
+        return
 
     # --- Find MRs for each issue ---
     def _mr_entry(mr):
@@ -652,6 +690,8 @@ def main():
         "parameter": args.parameter or "",
         "issues": issues,
     }
+    if args.task_types and args.mode != "mr":
+        output["dropped"] = dropped     # so callers can say why a ticket is absent
     with open(args.output, "w") as f:
         json.dump(output, f, indent=2)
     log(f"\nData written to {args.output}")

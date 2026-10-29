@@ -12,8 +12,8 @@
     {
       "name": "medtrics-release-notes",
       "source": "./",
-      "description": "Slack release-notes for Medtrics. /release-slack and /oracle-release post one combined internal message per deploy (root index + per-ticket cards) and archive every release to Mem, the only archive. Optional Mem dev directory and PR overrides.",
-      "version": "0.20.0",
+      "description": "Release notes and KB articles for Medtrics. /release-slack and /oracle-release post one combined message per deploy and archive it to Mem; /kb-articles (or /release-slack --kb) drafts one Intercom KB article per shipped legacy feature.",
+      "version": "0.21.0",
       "author": {
         "name": "Shubham Jha",
         "email": "shubham@medtricslab.com"

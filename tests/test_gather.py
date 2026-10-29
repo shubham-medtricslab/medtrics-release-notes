@@ -245,5 +245,25 @@ class OptimusRetryTests(unittest.TestCase):
         self.assertEqual(result, {"data": [{"id": "t1"}]})
 
 
+class TaskTypeTests(unittest.TestCase):
+    """The integration API carries the classification as `product_type`
+    (seen on M1-1609); a ticket read without it looked typeless and was
+    dropped by every features-only filter."""
+
+    BASE = {"id": "e620e271-0000", "task_identifier": "M1-1609", "title": "T"}
+
+    def test_reads_product_type(self):
+        issue = gather.task_to_issue({**self.BASE, "product_type": "feature"})
+        self.assertEqual(issue["task_type"], "feature")
+
+    def test_older_shapes_still_read(self):
+        self.assertEqual(gather.task_to_issue({**self.BASE, "type": "bug"})["task_type"], "bug")
+        self.assertEqual(gather.task_to_issue({**self.BASE, "task_type": "feature"})["task_type"],
+                         "feature")
+
+    def test_missing_is_empty(self):
+        self.assertEqual(gather.task_to_issue(dict(self.BASE))["task_type"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-29
+
+KB articles: one Intercom help-centre article per shipped legacy (M1) feature,
+with live screenshots from the demo site. Built and tested over several Cowork
+runs on this branch; this entry replaces the interim 0.21.0–0.28.1 notes.
+
+### Added
+- **`/kb-articles`** — one article per feature ticket (.docx + PDF + Intercom
+  .md), never combined.
+  - Modes: an id list (`/kb-articles M1-1520,M1-1256`), `since <date>`,
+    `pending` (the KB queue + released features with no article),
+    `--kb-queue <ids>` (queue only), `dry-run`, `recheck <run_id>` (re-check a
+    finished run with the current rules and repackage, no browser),
+    `demo-data` / `demo-data done <ids>`.
+  - Flags: `--force`, `--retry-partial`, `--no-capture`, `--yes`,
+    `--allow-no-code`.
+  - Features only (Optimus `product_type` feature / critical_feature); a ticket
+    with no merge request or not found in Optimus is skipped, not a stop. The
+    run ends with a table of every ticket given: its files, or why not, and an
+    estimated cost.
+  - History in Mem: KB Article Ledger (one note per ticket + one per run, so
+    nothing is drafted twice), KB Queue, KB Catalogue (an earlier article a new
+    feature follows), KB Demo Data.
+- **`/release-slack --kb`** — posts the release as usual, queues its feature
+  tickets, then offers to draft them in the same chat (y/n; no leaves them
+  queued).
+- **`/release-note-setup`** — one-time setup per folder, modelled on the QA
+  automation plugin's setup: installs Python packages into `.kb-env/` (and
+  tesseract / LibreOffice / Carlito where allowed), checks Claude in Chrome and
+  the `.env` keys, finds or creates the KB Mem collections, approves the
+  Downloads folder in Cowork, and records it all in
+  `.medtrics-release-notes/config.json` in the folder (no absolute paths).
+  `/kb-articles` only checks it.
+
+### How a run works
+- **Where to go.** Each ticket's page and click path come from its MR's QA
+  checklist (`*-manual-qa-checklist.txt`, the file QA automation runs), then
+  the ticket's own URL/Page field or release checklist; a fixed surface map is
+  the fallback. Stale links are caught by a page check before capture
+  (`/administration` ↔ `/vadministration`).
+- **Capture** in your own signed-in Chrome through the Claude in Chrome
+  extension, grouped by sign-in (admin + faculty, then a pause for the learner,
+  the external evaluator link you give, then back to admin). Each screen is a
+  GIF exported to Downloads (the route Charles's QA plugin uses in Cowork); its
+  last frame is the screenshot, ringed and numbered by script. A Haiku agent
+  drives Chrome; the main chat installs the page scripts and takes over if the
+  agent can't.
+- **Writing** by a Sonnet writer per group, checked by format gates G1–G7.
+- **Form fills** for screens behind a save, planned by script from the real
+  form. The first run of a form is a dry run (every write blocked) that learns
+  the dialog and the exact request; later runs save one demo record, letting
+  only that request through, once, on a real click of the safe answer ("No,
+  don't send notifications"). Approved by you every run. Saved records are
+  logged in Mem with a delete-before date; you delete them.
+- **Client copy.** The .docx goes straight to Intercom: no draft marks or
+  internal text; you OK each screenshot on a contact sheet (hash-checked);
+  client-data (BLOCK) frames never ship; a step without a screenshot keeps its
+  text.
+- **Cost.** Estimated $ per agent call, ticket and run (Haiku $0.10/$0.50,
+  Sonnet $2/$10, Opus $4/$20 per 1M input/output tokens; 85 % input assumed;
+  main-chat tokens not included) in the end table, the run summary and Mem.
+
+### Safety
+- A page write guard blocks every non-GET request (fetch, XHR, beacons, form
+  posts, WebSockets, same-origin frames); the one allowed save is armed only by
+  a real click on the checked button, for one learned request, within 10 s.
+- Clicks are picked by a page script that refuses delete / remove / send /
+  publish / portal-switch targets, red buttons and ambiguous matches; a plugin
+  hook blocks typing for the capture agent, Enter for the form-fill agent, any
+  script that isn't the plugin's own, and navigation off the demo site.
+- Claude never types passwords or signs in, never deletes data, and never
+  deletes files (leftover Downloads GIFs are moved or listed).
+- Known limits: an in-page guard can't be airtight against deliberately hostile
+  page code; the tenant-data check is heuristic, which is why you OK every
+  screenshot.
+
+### Changed
+- Gather reads Optimus `product_type` as the task type and can filter by type
+  (`--task-types`) and skip GitLab (`--no-mrs`).
+
 ## [0.20.0] - 2026-09-03
 
 ### Changed
