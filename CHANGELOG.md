@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-29
+
+From the third Cowork run (M1-465 reached the right page — the data was there —
+but no row could be opened) and a challenge review of the plan.
+
+### Added
+- **Write guard.** The page script installs, on every probe and click, a guard
+  that blocks every non-GET request (fetch, XHR, sendBeacon, form submit) and
+  counts what it blocked. Nothing a run does can store anything on the site.
+- **Form fills (approved each run, nothing saved).** For screens that only
+  appear after a save, `kb_data.py bundle` → one `kb-data-planner` (Sonnet) call
+  → `kb_data.py check` (cancel-type choices only — never Yes/OK/Continue;
+  far-future dates, never tomorrow; audience/venue picked by rule from "ZZ
+  DEMO" options; no personal data) → you approve the exact list (always asked,
+  even with `--yes`; approval is fingerprinted, a changed plan is refused) →
+  `kb-data-maker` (Sonnet) fills the form QA-style (value re-read after every
+  field), presses Save under the guard, captures the dialog, clicks Cancel/No.
+- **Sign-in groups.** Capture runs admin + faculty first, then pauses for you to
+  sign in as the learner, then uses the external evaluator link you give
+  (kept only in the run folder), then asks you to sign back in as admin.
+  `kb-capturer --from-batch` resumes after each pause.
+- `kbopt` page helper for dropdown options; hook lets the form-fill agent type
+  and press only Tab / Escape (the capturer still can't type).
+
+### Fixed
+- **Vue list rows.** Rows that are clickable `<tr>`s without links (the new
+  Sessions page) are now opened; a real row is preferred over a course group.
+- **Vue buttons.** "Add schedule"-style buttons are allowed on Vue pages (the
+  write guard makes the old toggle-only rule unnecessary).
+- **Labels per screen.** Each screen rings the button you press next (the first
+  screen rings the menu item); a dialog with nothing else to ring gets its
+  title ringed (draft-only anchor).
+- **Page check** now `await`s its result (it returned nothing before) and runs
+  before planning (Step 3b).
+- Email-template text is no longer used for labels.
+
+### Safety (from an adversarial review of this release)
+- The write guard is installed before every form fill, blocks an XHR opened
+  before install, blocks WebSocket sends and covers same-origin iframes.
+- The hook now also checks scripts (only the plugin's own `/*KB*/` scripts run)
+  and navigation (demo site only, no delete/logout/portal-switch paths beyond
+  the portal entries), and refuses typed newlines/tabs.
+- More refused click words (notify, invite, resend, copy, duplicate, remind,
+  clone, reset, unpublish, reactivate, enroll); form-fill choices must be
+  cancel-type with no yes/save/confirm/continue anywhere; a form fill's start
+  must be its ticket's checked page; approval requires the checked plan.
+- Known limit: a `fetch` reference page code saved before the guard is not
+  covered (the legacy app uses XHR, which is); the hook does not apply when the
+  main chat follows `capture.md` itself (the page guard still does).
+
 ## [0.26.1] - 2026-10-29
 
 Fixes from the second Cowork run (M1-465: the ticket's link was a 404 page).

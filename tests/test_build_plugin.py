@@ -57,6 +57,8 @@ class BuildPluginTestCase(unittest.TestCase):
         (self.root / "scripts" / "kb" / "kb_format.py").write_text("X = 1\n")
         (self.root / "agents").mkdir()
         (self.root / "agents" / "kb-writer.md").write_text("---\n")
+        (self.root / "agents" / "kb-data-planner.md").write_text("---\n")
+        (self.root / "agents" / "kb-data-maker.md").write_text("---\n")
         (self.root / "hooks").mkdir()
         (self.root / "hooks" / "hooks.json").write_text("{}\n")
         (self.root / "hooks" / "kb_guard.py").write_text("pass\n")
@@ -170,6 +172,8 @@ class BuildPluginTestCase(unittest.TestCase):
         self.assertNotIn("KB-PLAN.md", names)
         self.assertIn("scripts/kb/kb_format.py", names)
         self.assertIn("agents/kb-writer.md", names)
+        self.assertIn("agents/kb-data-planner.md", names)
+        self.assertIn("agents/kb-data-maker.md", names)
         self.assertIn("hooks/hooks.json", names)
         self.assertIn("hooks/kb_guard.py", names)
 
@@ -177,6 +181,13 @@ class BuildPluginTestCase(unittest.TestCase):
         (self.root / "hooks" / "kb_guard.py").unlink()
         with self.assertRaises(build_plugin.BuildError):
             self._build()
+
+    def test_missing_kb_data_agents_fail_the_build(self):
+        for name in ("kb-data-planner.md", "kb-data-maker.md"):
+            self._make_fixture_tree(description=GOOD_DESCRIPTION)
+            (self.root / "agents" / name).unlink()
+            with self.assertRaises(build_plugin.BuildError):
+                self._build()
 
     def test_missing_kb_writer_agent_fails_the_build(self):
         (self.root / "agents" / "kb-writer.md").unlink()

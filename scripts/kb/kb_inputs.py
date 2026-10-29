@@ -51,11 +51,27 @@ def split_ac(description):
     return description[:m.start()].strip(), description[m.end():].strip()
 
 
+EMAIL_DIR_RE = re.compile(r"email|mail|notification")
+EMAIL_FILE_RE = re.compile(r"email[^/]*\.html$|_mail[^/]*\.html$|\.txt$")
+
+
+def is_email_template(path):
+    """True for a file whose strings are email copy: under templates/ with
+    email, mail or notification in its path, an *email*.html / *_mail*.html file,
+    or a .txt template. Its strings are never screen labels."""
+    p = (path or "").lower()
+    if "templates/" in p and EMAIL_DIR_RE.search(p.split("templates/", 1)[1]):
+        return True
+    return bool(EMAIL_FILE_RE.search(p))
+
+
 def added_lines(issue):
     for mr in issue.get("mrs") or []:
         for d in mr.get("diffs") or []:
             path = d.get("new_path") or ""
             if not UI_FILE_RE.search(path) or "/tests/" in path or "/migrations/" in path:
+                continue
+            if is_email_template(path):
                 continue
             for line in (d.get("diff") or "").splitlines():
                 if line.startswith("+") and not line.startswith("+++"):

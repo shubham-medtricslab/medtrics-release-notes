@@ -13,7 +13,7 @@
       "name": "medtrics-release-notes",
       "source": "./",
       "description": "Release notes and KB articles for Medtrics. /release-slack and /oracle-release post one combined message per deploy and archive it to Mem; /kb-articles (or /release-slack --kb) drafts one Intercom KB article per shipped legacy feature.",
-      "version": "0.26.1",
+      "version": "0.27.0",
       "author": {
         "name": "Shubham Jha",
         "email": "shubham@medtricslab.com"

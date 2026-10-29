@@ -278,6 +278,21 @@ class Inputs(unittest.TestCase):
         self.assertNotIn("Friday, March 15th", labels)
         self.assertNotIn("Friday, March 15th", I.build_input(issue("M1-2", description=desc))["labels"])
 
+    def test_email_template_strings_are_not_labels(self):
+        diffs = [("src/templates/emails/session_updated.html", "+<h1>Important Update</h1>"),
+                 ("src/apps/curriculum/templates/curriculum/notification/new_session_email.html",
+                  "+<p>{% trans 'You have been added' %}</p>"),
+                 ("src/templates/curriculum/session_mail_body.html", "+<b>What Changed</b>"),
+                 ("src/templates/mail/x.txt", "+<b>Plain Body</b>"),
+                 ("src/templates/curriculum/sessions.html", "+<button>Add Schedule</button>")]
+        i = issue("M1-465", diffs=diffs)
+        self.assertEqual(I.ui_strings(i), ["Add Schedule"])
+        for path in ("src/templates/emails/a.html", "x/templates/notifications/b.html",
+                     "src/foo/welcome_email.html", "src/foo/body_mail_2.html", "src/foo/a.txt"):
+            self.assertTrue(I.is_email_template(path), path)
+        for path in ("src/templates/curriculum/sessions.html", "src/static/js/app.js"):
+            self.assertFalse(I.is_email_template(path), path)
+
     def test_tests_and_migrations_ignored(self):
         i = issue("M1-1", diffs=[("src/apps/x/tests/test_a.py", "+label='Nope'"),
                                  ("src/apps/x/migrations/0001.py", "+verbose_name='Nope'")])

@@ -137,7 +137,7 @@ class PlanCalls(Base):
         only_first = [b for b in calls["batches"] if ins in [a["input"] for a in b.get("actions", [])]]
         self.assertEqual([b["batch_id"] for b in only_first], ["b01"])
         self.assertTrue(ins["text"].endswith("'kbp:'+S.length"))
-        self.assertTrue(ins["text"].startswith("var S=" + json.dumps(C.probe_source())))
+        self.assertTrue(ins["text"].startswith("/*KB*/var S=" + json.dumps(C.probe_source())))
 
     def test_restore_and_capture_md(self):
         calls, _ = self.plan_calls()
@@ -185,7 +185,8 @@ class ProbeSource(unittest.TestCase):
         self.assertEqual(t["course"], [Q.COURSE_CODE_RE.pattern, ""])
         self.assertIn("var T=" + json.dumps(t) + ";", src)
         self.assertIn(f"nl>={Q.NONLATIN_MIN}", src)
-        self.assertNotIn("__", src)
+        for ph in ("__TENANT__", "__NF__", "__NONLATIN__", "__SLUG_STOP__", "__GUARD__"):
+            self.assertNotIn(ph, src)
         self.assertTrue(src.startswith("(function(a){") and src.endswith("})"))
 
     def test_lengths_reported(self):
@@ -197,6 +198,33 @@ class ProbeSource(unittest.TestCase):
 
 
 NODE = shutil.which("node")
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class GeneratedJsParses(unittest.TestCase):
+    """0.27.0: every JS the plan hands to javascript_tool is syntactically valid."""
+    def check(self, src):
+        r = subprocess.run([shutil.which("node"), "--check", "-"], input=src, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_install_probe_and_click_guard(self):
+        self.check(C.install_action()["text"])
+        self.check("(" + C.click_source() + ")")
+        self.check("(" + C.probe_source() + ")")
+
+    def test_route_check_snippet(self):
+        self.check("(async()=>{return " + C.route_check_source(["/a/"], "/users/login/") + "})()")
+
+
+class StepLabelsReachTheProbe(Base):
+    def test_start_screen_probes_the_page_label_and_next_click(self):
+        plan = {"run_id": "r1", "capture_plan": [
+            {"persona": "admin", "surface": "Sessions", "url": "/vadministration/curriculum/sessions/",
+             "clicks": [{"text": "Add schedule"}], "tickets": ["M1-465"]}]}
+        calls, _ = self.plan_calls(plan)
+        self.assertEqual(calls["visits"][0]["args"]["labels"], ["Sessions", "Add schedule"])
+        self.assertEqual(calls["visits"][1]["args"]["labels"], [])        # no inputs for this ticket
+
 
 DRIVER = r"""
 const fs=require('fs');const sc=JSON.parse(fs.readFileSync(0,'utf8'));

@@ -154,10 +154,22 @@ click; `type=submit`; inside `form[method=post]` unless a plain GET `<a href>`;
 aria-label or text starting with a write verb (save, submit, send, confirm,
 delete, remove, archive, publish, approve, reject, sign); a `<button>` (or
 `role=button`) without `data-bs-toggle`/`data-toggle` of `modal|tab|collapse|dropdown`;
-an `<a>` with no real target (`#`, `javascript:`, none) and no toggle; and a
-point covered by another element. `{row: true}` picks the first `<a href>` in
-the first body row of the largest visible table, and only when the page's tenant
-check is CLEAR (else `KB_TENANT_ROW`). The rules live in `kb_capture.py`
+an `<a>` with no real target (`#`, `javascript:`, none) and no toggle (**both
+dropped on a Vue page**, see below); and a point covered by another element. `{row: true}` (0.27.0) takes the first body row of the
+largest visible table that holds a GET `<a href>` or is a clickable row (class
+`clickable`, or `cursor: pointer` on the row or its first cell, the session list
+being one: `<tr class="clickable">`, no anchors, Vue click handler). A link wins;
+otherwise the click point is the centre of the row's first non-empty text
+`<span>` (else cell), never a button, icon (`triangle`, `expand`, caret) or
+anything the rules above refuse. It runs only when the page's tenant check is
+not BLOCK (else `KB_TENANT_ROW`; REVIEW does not stop it). **Leaf rows first:**
+a row is a group when it holds an `.expand`, `.triangle` or `[aria-expanded]`
+element or its class is `group` / `expandable` / `parent` (optionally `-row`,
+`-header`, `-head`); a link row is always a leaf. The first leaf row wins; when
+only group rows are visible the result is `{ok:true,x,y,label,"group":true}` for the
+first group row. The capturer then clicks it, waits 1 second and sends the same
+`kbclick` once more in the same visit (one retry) to reach a leaf row; a second
+`group` or any error counts as a refused click. The rules live in `kb_capture.py`
 (`CLICK_RX`, `click_refusal()`, which tests pin) and the JS is generated from the
 same constants.
 
@@ -170,11 +182,138 @@ the article as: `needs_write` → "This step happens after you save; no
 screenshot"; `no_screen` → no marker, a one-line note; `click_*`, `tenant_row`,
 `label_not_found` → a marker with that reason.
 
+**Vue pages (0.27.0).** The page is Vue when `document.querySelector('[data-v-app]')`
+matches, any element has `__vue_app__`, or `window.__VUE__` is set. There the
+`button_no_toggle` and `anchor_no_target` refusals are dropped (the network write
+guard below makes them unnecessary: "Add schedule" is clickable); every `danger_*`,
+`write_verb`, `submit`, `post_form`, `data_href`, `onclick`, `ajax_link` and
+`occluded` refusal stays. On a non-Vue page nothing changes.
+
+**Network write guard (0.27.0).** The probe, `kbclick` and `kbopt` each install it
+first, on every call (idempotent: every wrapper carries a `__kb` mark, so a
+second install, an SPA route change or a page that swaps its own `fetch` in
+never double-wraps; a full navigation gives a fresh window the next call patches).
+It wraps `fetch`, `XMLHttpRequest.prototype.open/send`, `navigator.sendBeacon`
+and `HTMLFormElement.prototype.submit/requestSubmit`, and adds a capture-phase
+`submit` listener on `document`. Only `GET` passes (HEAD, OPTIONS and every other
+method are blocked too): `fetch` returns a rejected Promise (`KB_WRITE_BLOCKED`),
+`XHR.send` throws, `sendBeacon` returns `false`, a non-GET form's `submit()` /
+`requestSubmit()` does nothing (the submitter's `formmethod` wins over the form's
+method) and its `submit` event is cancelled. Each block adds 1 to
+`window.__kbBlocked` (last `"METHOD /path"` in `window.__kbLast`); the probe
+reports them as `wb` and `wl`. The guard has no off switch in 0.27.0, not even
+in write mode, and the Python mirror (`request_blocked`, `form_blocked`) is
+pinned against the JS by `tests/test_kb_write_guard.py`. Because the guard stays
+on, a page that POSTs to load its data (a search API, a GraphQL call) loads
+without that data during capture; that shows as a missing label, never a write.
+
+**Heading fallback (0.27.0).** The probe also returns `h`: the title of the
+top-most visible open dialog (`.modal-title`, `[role=dialog] h1-h3`,
+`.swal2-title`; the last one in the document), else the first visible `h1`/`h2`,
+as `{t, b}`. When a click or write visit found none of its labels, ingest anchors
+the shot on `h` as a `dom_box` entry (`"fallback": "heading"`), so the screen is kept
+for the draft. `dom_box` is draft-only: gate G3 already refuses it on publish.
+
+**`kbopt` (0.27.0).** The third stored function (`sessionStorage.kbo`, installed with
+the probe and `kbclick`) takes `{"option": "<exact text>"}` and returns `{ok,x,y,label}`
+of the visible option in an open listbox or dropdown (`[role=listbox] [role=option]`,
+`.multiselect__content li`, `.dropdown-menu .dropdown-item`, `.vs__dropdown-option`,
+`ul[role=listbox] li`). The text match is exact after whitespace collapsing
+(case-insensitive); an option with a `write_danger` word (send, notify, invite,
+publish, approve, delete, remove, archive, destroy; "No, …" is fine) is
+refused; none found is `KB_CLICK_NOTFOUND:<text>`, two is `ambiguous`. Dates are
+typed (data agent), not picked.
+
 **Hook.** `hooks/hooks.json` + `hooks/kb_guard.py` (PreToolUse on
 `computer|form_input`) deny `type`, `key`, `left_click_drag` and `form_input`
 only when the caller's `agent_type` contains `kb-capturer`; everyone else and
 any hook error is allowed, and it writes no files. The Cowork spike showed
 plugin hooks fire for subagents and main chat and that a deny is honoured.
+
+**Write mode (0.27.0, the data agent only).** `kbclick` args
+`{"text": "Save", "write": ["Save", "No, don't send notifications"]}` lift the
+`write_verb`, `submit`, `post_form` and `button_no_toggle` refusals for an element
+whose visible text equals one of the `write` texts exactly (case-insensitive,
+trimmed). `danger_class`, `danger_attr`, `data-href` and `onclick` still refuse,
+and so does `write_danger`: text, title or aria-label with
+delete/remove/archive/destroy/send/notify/invite/publish/approve, unless the text
+starts with "No" ("No, don't send notifications" is allowed). With `write`, only
+the top-most open dialog is searched (`.modal.show`, `[role=dialog]`,
+`.swal2-popup`, `dialog[open]`) and more than one visible match for the text is
+`KB_CLICK_REFUSED:ambiguous`. A write-mode click can still never persist anything in
+0.27.0: the network write guard blocks the request. The capturer never passes
+`write`; `plan-calls` never emits it.
+
+## Per-step labels (0.27.0)
+
+A click entry's screens look for different labels. Start screen: the page's
+menu label (the last non-numeric path segment, title-cased, e.g. `Sessions`) plus
+the first click's text when it is a text click. A click screen: the **next**
+click's text (the button the reader presses next, ringed). The last screen of
+the entry: the ticket's own inputs labels. Entries without clicks keep the
+ticket's labels.
+
+## Accounts and sign-in (0.27.0)
+
+`calls.json` carries `accounts`: `[{"account": "main", "personas": ["admin",
+"faculty"], "batches": [...]}, {"account": "learner", "personas": ["learner"],
+"signin": "learner", "batches": [...]}, {"account": "external", "personas":
+["external"], "signin": "external_link", "batches": [...]}]`. Batches are ordered
+by account, then persona (admin before faculty). The first batch of an account
+with a `signin` carries `needs_signin`. The capturer stops before it and replies
+`KB_CAPTURE_DONE ok=<n> stop=needs_signin:<account>`; the orchestrator has the
+owner sign in by hand (learner; Claude never types a password) or paste the
+emailed link (external), then starts the capturer again with `--from-batch
+<batch_id>` (it sends the install again and carries on). `plan-calls
+--external-link <url>` makes external entries start at that URL's path and query
+(kept in `calls.json` / `capture.md` inside the run folder, which is git-ignored and never copied to
+outputs or Mem: ingest records `external-link`, never the URL, in shots.json, and
+`resume.json` rows for external entries carry an empty `url`). Without it,
+external entries are uncapturable (reason `external_link_missing`, shown as
+"external link not given").
+
+After the last learner or external batch, `plan-calls` appends a final **return
+batch** (`kind: "restore"`, `account: "main"`, `needs_signin: "main"`, the
+navigation back to the home portal) and an `accounts` row `{"account": "main",
+"signin": "main", "return": true}`. The capturer stops before it with
+`stop=needs_signin:main`; the orchestrator has the owner sign back in as admin and
+starts it again at that batch id (`--from-batch`), which sends the restore. Runs
+that end on the main account get no return batch.
+
+## Write visits (0.27.0)
+
+`plan-calls --data-plan $RUN/data_plan.json` (the owner-approved plan; one with
+`"approved": false` is ignored) adds, for each ticket record with an `after`
+block, a visit `{"visit_id": "<entry>-w<k>", "kind": "write", "ticket",
+"record_id", "persona", "labels": after.labels, "gif", "args"}` after the entry's
+click visits, in `calls.json["write_visits"]`. They are in no capture batch: the
+data agent drives them and writes `raw/data-<ticket>.json` items (`probe` + `gif`
++ `blocked`, or `write_error`). Ingest reads their items from any raw file (a
+`data-` file is never a batch; batch ids never start with `data-`); a
+`write_error` or a visit never run is the reason `write_failed` ("the form step
+could not be completed"). A write visit whose `blocked` (or probe `wb`) is 1 or
+more gets `note: "write_blocked_ok"` on its screen: informational, the save was
+blocked as planned and nothing was stored.
+An entry with a write visit no longer gets the `needs_write` screen.
+
+## Limits
+
+The write guard is installed by the page scripts, so it covers what runs in the
+page after the install:
+
+- Covered: `fetch` (rejected), XMLHttpRequest (`send` throws; an XHR opened before
+  the install has no recorded method, so it is blocked too, failing closed),
+  `navigator.sendBeacon`, `form.submit()` / `requestSubmit()`, a capture-phase
+  `submit` listener, `WebSocket.prototype.send` (throws `KB_WRITE_BLOCKED`) and
+  same-origin iframes (installed into `window.frames` on every install, again on
+  each frame's `load`, and by a `MutationObserver` for frames added later; a
+  cross-origin frame cannot be reached).
+- Not covered: a `fetch` function reference that page code saved before the install
+  (`const f = window.fetch` early in the page). The legacy app uses axios / jQuery
+  over XMLHttpRequest, which is covered. EventSource is read-only and is not
+  patched.
+- The hook (`hooks/kb_guard.py`) covers the spawned agents only; it does not apply
+  when the orchestrator follows `capture.md` itself.
 
 ## Live-test facts the design depends on
 

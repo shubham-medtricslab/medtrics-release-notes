@@ -1,6 +1,6 @@
-"""Tests for the 0.26.0 click capture: the kbclick refusal rules (Python mirror
-click_refusal() and the JS built from the same constants, run in node against a
-fake DOM), click visits in plan-calls / capture.md, ingest of click results
+"""Tests for the 0.26.0 click capture (0.27.0: clickable table rows, write mode):
+the kbclick refusal rules (Python mirror click_refusal() / row_target() and the JS
+built from the same constants, run in node against a fake DOM), click visits in plan-calls / capture.md, ingest of click results
 (refused click, skipped rest of the entry, needs_write screens, shots.json
 `missing`), and the kb_guard PreToolUse hook. Hermetic: no browser, no network.
 """
@@ -86,6 +86,71 @@ CASES = [
 ]
 
 
+# 0.27.0: more write words, word start with an un / re prefix. (name, element, refusal on a plain page,
+# refusal on a Vue page)
+NEW_WORD_CASES = [
+    ("Vue: Resend invitation", el("button", "Resend invitation"), "write_verb"),
+    ("Vue: Notify attendees", el("button", "Notify attendees"), "write_verb"),
+    ("Vue: Invite", el("button", "Invite"), "write_verb"),
+    ("Vue: Copy session", el("button", "Copy session"), "write_verb"),
+    ("Vue: Duplicate", el("button", "Duplicate"), "write_verb"),
+    ("Vue: Remind", el("button", "Remind everyone"), "write_verb"),
+    ("Vue: Clone", el("button", "Clone"), "write_verb"),
+    ("Vue: Reset password", el("button", "Reset password"), "write_verb"),
+    ("Vue: Unpublish", el("button", "Unpublish"), "write_verb"),
+    ("Vue: Reactivate", el("button", "Reactivate"), "write_verb"),
+    ("Vue: Enroll", el("button", "Enroll learners"), "write_verb"),
+    ("Vue: Unenroll", el("button", "Unenroll"), "write_verb"),
+    ("Vue: Resend lowercase mid-text", el("button", "Click to resend"), "write_verb"),
+    ("href copy", el(href="/sessions/5/copy"), "danger_attr"),
+    ("href resend", el(href="/sessions/5/resend"), "danger_attr"),
+    ("href unpublish", el(href="/sessions/5/unpublish"), "danger_attr"),
+    ("href duplicate", el(href="/sessions/5/duplicate/"), "danger_attr"),
+    ("href reactivate", el(href="/users/5/reactivate/"), "danger_attr"),
+    ("href notify", el(href="/sessions/5/notify/"), "danger_attr"),
+    ("href invite", el(href="/users/invite/"), "danger_attr"),
+    ("href remind_all", el(href="/x/remind_all/"), "danger_attr"),
+    ("href unenroll", el(href="/x/5/unenroll/"), "danger_attr"),
+    ("data attr resend", el("button", "Open", **{"data-bs-toggle": "modal", "data-url": "/x/resend/"}), "danger_attr"),
+    ("link Assignments stays", el("a", "Assignments", href="/administration/assignments/"), ""),
+    ("button Assignments stays", el("button", "Assignments"), ""),
+    ("Assign stays", el("button", "Assign"), ""),
+    ("Designation stays", el("button", "Designation"), ""),
+    ("Reservations stays", el("button", "Reservations"), ""),
+    ("Preset stays", el("button", "Presets"), ""),
+]
+
+
+class NewWriteWords(unittest.TestCase):
+    def test_mirror(self):
+        for name, e, refusal in NEW_WORD_CASES:
+            with self.subTest(name, vue=True):
+                want = refusal if refusal in ("write_verb", "danger_attr") else ""
+                self.assertEqual(C.click_refusal(e, vue=True), want)
+            if e["tag"] == "a":                                   # links need no Vue exemption
+                with self.subTest(name, vue=False):
+                    self.assertEqual(C.click_refusal(e), refusal)
+
+    def test_word_boundary(self):
+        for t in ("Resend", "resend the email", "Unpublish", "reactivate", "Reset", "Copy", "Notify", "Invite"):
+            self.assertRegex(t, C._CLICK_RE["write"])
+        for t in ("Assign", "Assignments", "Design", "Reservations", "Presets", "Consign"):
+            self.assertNotRegex(t, C._CLICK_RE["write"])
+        for t in ("/x/resend/", "/x/unpublish", "x_copy", "/a/reactivate/", "/b/copy"):
+            self.assertRegex(t, C._CLICK_RE["attr"])
+        for t in ("/x/assignments/", "/x/design/", "/x/reservations/"):
+            self.assertNotRegex(t, C._CLICK_RE["attr"])
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_agrees_with_the_mirror(self):
+        cases = [{"els": [e], "args": {"text": e["text"], "side": "nav"}, "occlude": e["occluded"], "vue": True}
+                 for _, e, _ in NEW_WORD_CASES]
+        for (name, e, refusal), g in zip(NEW_WORD_CASES, run_js(self, cases)):
+            want = refusal if refusal in ("write_verb", "danger_attr") else ""
+            with self.subTest(name):
+                self.assertEqual(g.get("threw", ""), "KB_CLICK_REFUSED:" + want if want else "")
+
+
 class Mirror(unittest.TestCase):
     def test_rules(self):
         for name, e, want in CASES:
@@ -112,7 +177,7 @@ class Mirror(unittest.TestCase):
             self.assertIn(json.dumps(C.CLICK_RX[k])[1:-1], js.replace("\\\\", "\\\\"))
         self.assertTrue(js.rstrip().endswith("})"))
         self.assertNotIn("//", js.replace("javascript:", "").replace("(#|", ""))     # no comments
-        self.assertLess(len(js), 4000)
+        self.assertLess(len(js), 10000)      # 0.27.0: + write guard, Vue rule, groups, dialog scope (was 4000)
 
 
 DRIVER = r"""
@@ -123,14 +188,26 @@ class El{constructor(o){this.o=o;this.tagName=o.tag.toUpperCase();this.innerText
  getAttribute(n){return n in this.o.attrs?String(this.o.attrs[n]):null;}
  hasAttribute(n){return n in this.o.attrs;}
  getBoundingClientRect(){return this.o.visible?{left:100,top:50,width:40,height:20,right:140,bottom:70}:{left:0,top:0,width:0,height:0,right:0,bottom:0};}
- closest(s){if(s==='form')return this.o.in_post_form?{getAttribute:()=>'post'}:null;return this.o.in_sidebar?this:null;}
+ closest(s){if(s==='form')return this.o.in_post_form?{getAttribute:()=>'post'}:null;
+  if(s.indexOf('button')>=0)return this.o.in_control?this:null;return this.o.in_sidebar?this:null;}
+ querySelector(){return this.o.has_control?{}:null;}
  contains(x){return x===this;}
  scrollIntoView(){global.cur=this;}}
 const run=(c)=>{
  const els=c.els.map(e=>new El(e));
+ const specs=!c.table?[]:typeof c.table.row==='number'?[{link:c.table.row}]:c.table.rows||[];
+ const rows=specs.map(r=>{if(r.cells&&r.cells.length)els[r.cells[0]].cursor=r.cell_cursor||'';
+  return {className:r.cls||'',cursor:r.cursor||'',
+  querySelector:s=>s==='a[href]'?(r.link==null?null:els[r.link]):s==='td,th'?(r.cells&&r.cells.length?els[r.cells[0]]:null):s.indexOf('expand')>=0?(r.group?{}:null):null,
+  querySelectorAll:s=>s==='span'?(r.spans||[]).map(i=>els[i]):s==='td,th'?(r.cells||[]).map(i=>els[i]):[]};});
  const tbl=c.table?{getBoundingClientRect:()=>({left:0,top:0,width:900,height:300}),
-   querySelector:s=>s==='tbody tr'?(c.table.row===null?null:{querySelector:()=>els[c.table.row]}):null}:null;
- global.document={querySelectorAll:s=>s==='table'?(tbl?[tbl]:[]):els,
+   querySelectorAll:s=>s==='tbody tr'?rows:[]}:null;
+ const dlg=c.dialog?{getBoundingClientRect:()=>({left:0,top:0,width:500,height:400}),contains:e=>c.dialog.inside.some(i=>els[i]===e)}:null;
+ const opts=(c.options||[]).map(i=>els[i]);
+ global.getComputedStyle=e=>({cursor:e.cursor||''});
+ global.window=global;global.__VUE__=undefined;
+ global.document={querySelectorAll:s=>s==='table'?(tbl?[tbl]:[]):s.indexOf('modal.show')>=0?(dlg?[dlg]:[]):s.indexOf('role=option')>=0?opts:els,
+   querySelector:s=>s==='[data-v-app]'&&c.vue?{}:null,
    elementFromPoint:()=>c.occlude==='parent'?{contains:()=>true}:c.occlude?{contains:()=>false}:global.cur};
  global.sessionStorage={getItem:()=>'(function(a){return {tn:{v:'+JSON.stringify(c.tn||'CLEAR')+'}};})'};
  const f=(0,eval)(sc.src);
@@ -226,6 +303,390 @@ class KbclickRuns(unittest.TestCase):
     def test_row_gate_python_mirror(self):
         self.assertEqual([C.row_tenant_refusal(v) for v in ("CLEAR", "REVIEW", "BLOCK", None)],
                          ["", "", "tenant_row", ""])
+
+
+def run_js(testcase, cases):
+    r = subprocess.run([NODE, "-e", DRIVER], input=json.dumps({"src": C.click_source(), "cases": cases}),
+                       capture_output=True, text=True, timeout=60)
+    testcase.assertEqual(r.returncode, 0, r.stderr)
+    return json.loads(r.stdout)
+
+
+# (name, element, allowed write texts, expected refusal) — 0.27.0 write mode
+SAVE_TOGGLE = {"data-toggle": "modal"}
+WRITE_CASES = [
+    ("save button", el("button", "Save"), ["Save"], ""),
+    ("save submit input", el("input", "Save", type="submit"), ["Save"], ""),
+    ("save in post form", el("button", "Save", in_post_form=True), ["Save"], ""),
+    ("save submit button in post form", el("button", "Save", type="submit", in_post_form=True), ["Save"], ""),
+    ("case and spaces", el("button", "Save"), ["  sAVE "], ""),
+    ("not listed", el("button", "Save"), ["Create"], "write_verb"),
+    ("empty list", el("button", "Save"), [], "write_verb"),
+    ("exact only", el("button", "Save and close"), ["Save"], "write_verb"),
+    ("no-button", el("button", "No, don't send notifications"), ["No, don't send notifications"], ""),
+    ("no-button not listed", el("button", "No, don't send notifications"), ["Save"], "write_verb"),
+    ("no-button in post form", el("button", "No, don't send notifications", in_post_form=True),
+     ["No, don't send notifications"], ""),
+    ("send", el("button", "Send"), ["Send"], "write_danger"),
+    ("notify", el("button", "Notify participants"), ["Notify participants"], "write_danger"),
+    ("yes send", el("button", "Yes, send notifications"), ["Yes, send notifications"], "write_danger"),
+    ("delete", el("button", "Delete"), ["Delete"], "write_danger"),
+    ("approve", el("button", "Approve"), ["Approve"], "write_danger"),
+    ("publish", el("button", "Publish"), ["Publish"], "write_danger"),
+    ("invite", el("button", "Invite"), ["Invite"], "write_danger"),
+    ("archive title", el("button", "Save", title="Archive it"), ["Save"], "write_danger"),
+    ("nothing is not No", el("button", "Notify"), ["Notify"], "write_danger"),
+    ("No, send is not negated", el("button", "No, send notifications"), ["No, send notifications"], "write_danger"),
+    ("No notify is not negated", el("button", "No notify"), ["No notify"], "write_danger"),
+    ("No, invite", el("button", "No, invite everyone"), ["No, invite everyone"], "write_danger"),
+    ("No, delete", el("button", "No, delete it"), ["No, delete it"], "write_danger"),
+    ("Don't notify", el("button", "Don't notify"), ["Don't notify"], ""),
+    ("do not send", el("button", "Do not send anything"), ["Do not send anything"], ""),
+    ("curly don't", el("button", "No, don\u2019t send notifications"), ["No, don\u2019t send notifications"], ""),
+    ("not send", el("button", "Not send"), ["Not send"], ""),
+    ("don't then delete", el("button", "Don't send and delete"), ["Don't send and delete"], "write_danger"),
+    ("don't send or notify", el("button", "Don't send or notify"), ["Don't send or notify"], "write_danger"),
+    ("Cancel", el("button", "Cancel"), ["Cancel"], ""),
+    ("Close", el("button", "Close"), ["Close"], ""),
+    ("bare No", el("button", "No"), ["No"], ""),
+    ("danger class", el("button", "Save", **{"class": "btn btn-danger"}), ["Save"], "danger_class"),
+    ("danger href", el("a", "Save", href="/x/delete/3/"), ["Save"], "danger_attr"),
+    ("danger data attr", el("button", "Save", **{"data-action": "remove"}), ["Save"], "danger_attr"),
+    ("onclick", el("button", "Save", onclick="go()"), ["Save"], "onclick"),
+    ("data-href", el("button", "Save", **{"data-href": "/x/"}), ["Save"], "data_href"),
+    ("occluded", el("button", "Save", occluded=True), ["Save"], "occluded"),
+    ("list does not lift other buttons", el("button", "Add Schedule"), ["Save"], "button_no_toggle"),
+    ("plain link unchanged", el("a", "View"), ["Save"], ""),
+]
+
+
+class WriteMode(unittest.TestCase):
+    def test_mirror(self):
+        for name, e, write, want in WRITE_CASES:
+            with self.subTest(name):
+                self.assertEqual(C.click_refusal(e, write=write), want)
+
+    def test_without_write_nothing_changes(self):
+        for e in (el("button", "Save"), el("input", "Save", type="submit"),
+                  el("button", "No, don't send notifications")):
+            self.assertIn(C.click_refusal(e), ("write_verb", "submit"))
+
+    def test_row_clicks_never_use_write(self):
+        self.assertEqual(C.click_refusal(el(text="Save"), text_click=False, write=["Save"]), "write_verb")
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_agrees_with_the_mirror(self):
+        cases = [{"els": [e], "args": {"text": e["text"], "side": "nav", "write": w}, "occlude": e["occluded"]}
+                 for _, e, w, _ in WRITE_CASES]
+        for (name, e, w, want), got in zip(WRITE_CASES, run_js(self, cases)):
+            with self.subTest(name):
+                self.assertEqual(got.get("threw", ""), "KB_CLICK_REFUSED:" + want if want else "", name)
+                if not want:
+                    self.assertTrue(got["ok"])
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_lifts_only_the_exact_element(self):
+        save, other = el("button", "Save"), el("button", "Save as draft")
+        got = run_js(self, [
+            {"els": [other, save], "args": {"text": "Save", "side": "nav", "write": ["Save"]}},
+            {"els": [other], "args": {"text": "Save as draft", "side": "nav", "write": ["Save"]}},
+        ])
+        self.assertTrue(got[0]["ok"])
+        self.assertEqual(got[1]["threw"], "KB_CLICK_REFUSED:write_verb")
+
+    def test_constants_in_the_js(self):
+        js = C.click_source()
+        self.assertIn("a.write", js)
+        self.assertIn("input[type=submit]", js)
+        self.assertIn(json.dumps(C.CLICK_RX["wd"])[1:-1], js)
+
+
+def spn(text, cls="", **kw):
+    return el("span", text, **({"class": cls} if cls else {}), **kw)
+
+
+NAME = "ZZ DEMO - Clinical Founda\u2026"
+TRIANGLE = spn("", "triangle expand")
+# The live session list: <tr class="clickable"><td><span>name</span><span class="triangle expand"></span></td>…
+ROW_CASES = [
+    ("live session row", [spn("Course Code"), spn(NAME), TRIANGLE], {"cls": "clickable", "spans": [0, 1, 2]}, 0),
+    ("class clickable, name span first", [spn(NAME), TRIANGLE], {"cls": "clickable", "spans": [0, 1]}, 0),
+    ("cursor on the row", [spn(NAME)], {"cursor": "pointer", "spans": [0]}, 0),
+    ("cursor on the first cell", [spn(NAME), el("td", "cell")], {"cell_cursor": "pointer", "spans": [0], "cells": [1]}, 0),
+    ("triangle skipped", [TRIANGLE, spn(NAME)], {"cls": "clickable", "spans": [0, 1]}, 1),
+    ("a span holding a button is skipped", [{**spn("Edit"), "has_control": True}, spn(NAME)],
+     {"cls": "clickable", "spans": [0, 1]}, 1),
+    ("a span inside a button is skipped", [{**spn("Edit"), "in_control": True}, spn(NAME)],
+     {"cls": "clickable", "spans": [0, 1]}, 1),
+    ("refused span is skipped", [spn("Save session"), spn(NAME)], {"cls": "clickable", "spans": [0, 1]}, 1),
+    ("cells when there is no span", [TRIANGLE, el("td", NAME)], {"cls": "clickable", "spans": [0], "cells": [1]}, 1),
+    ("not clickable", [spn(NAME)], {"spans": [0]}, None),
+    ("clickable but nothing to say", [TRIANGLE], {"cls": "clickable", "spans": [0]}, None),
+    ("an a[href] row keeps the old rule", [el("a", "Intro Course"), spn(NAME)],
+     {"link": 0, "cls": "clickable", "spans": [1]}, 0),
+]
+
+
+class ClickableRows(unittest.TestCase):
+    @staticmethod
+    def mirror_row(els, r):
+        return {"link": els[r["link"]] if r.get("link") is not None else None, "class": r.get("cls", ""),
+                "cursor": r.get("cursor", ""), "cell_cursor": r.get("cell_cursor", ""),
+                "spans": [els[i] for i in r.get("spans", [])], "cells": [els[i] for i in r.get("cells", [])]}
+
+    def test_mirror(self):
+        for name, els, r, want in ROW_CASES:
+            with self.subTest(name):
+                got = C.row_target(self.mirror_row(els, r))
+                self.assertIs(got, None if want is None else els[want])
+
+    def test_mirror_all_refused_returns_the_first_so_it_is_refused(self):
+        els = [spn("Save session"), spn("Delete me")]
+        got = C.row_target(self.mirror_row(els, {"cls": "clickable", "spans": [0, 1]}))
+        self.assertIs(got, els[0])
+        self.assertEqual(C.click_refusal(got, text_click=False), "write_verb")
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_agrees_with_the_mirror(self):
+        args = {"row": True, "side": "nav", "pa": {"labels": []}}
+        cases = [{"els": els, "args": args, "table": {"rows": [r]}} for _, els, r, _ in ROW_CASES]
+        for (name, els, r, want), got in zip(ROW_CASES, run_js(self, cases)):
+            with self.subTest(name):
+                if want is None:
+                    self.assertEqual(got, {"threw": "KB_CLICK_NOTFOUND:row"})
+                else:
+                    self.assertEqual(got, {"ok": True, "x": 120, "y": 60, "label": els[want]["text"]})
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_first_candidate_row_wins_and_gates_hold(self):
+        args = {"row": True, "side": "nav", "pa": {"labels": []}}
+        els = [spn("plain"), spn(NAME), spn("later")]
+        rows = [{"spans": [0]}, {"cls": "clickable", "spans": [1]}, {"cls": "clickable", "spans": [2]}]
+        got = run_js(self, [
+            {"els": els, "args": args, "table": {"rows": rows}},
+            {"els": els, "args": args, "table": {"rows": rows}, "tn": "BLOCK"},
+            {"els": els, "args": args, "table": {"rows": rows}, "tn": "REVIEW"},
+            {"els": [spn("Save session")], "args": args, "table": {"rows": [{"cls": "clickable", "spans": [0]}]}},
+            {"els": [spn(NAME)], "args": args, "table": {"rows": [{"cls": "clickable", "spans": [0]}]},
+             "occlude": True},
+            {"els": els, "args": args, "table": {"rows": []}},
+        ])
+        self.assertEqual(got[0]["label"], NAME)
+        self.assertEqual(got[1], {"threw": "KB_TENANT_ROW"})
+        self.assertEqual(got[2]["label"], NAME)
+        self.assertEqual(got[3], {"threw": "KB_CLICK_REFUSED:write_verb"})
+        self.assertEqual(got[4], {"threw": "KB_CLICK_REFUSED:occluded"})
+        self.assertEqual(got[5], {"threw": "KB_CLICK_NOTFOUND:row"})
+
+
+VUE_CASES = [
+    ("Add schedule button", el("button", "Add schedule"), "button_no_toggle", ""),
+    ("button role", el("div", "Add schedule", role="button"), "button_no_toggle", ""),
+    ("typed button", el("button", "Add schedule", type="button"), "button_no_toggle", ""),
+    ("anchor #", el("a", "More", href="#"), "anchor_no_target", ""),
+    ("anchor js", el("a", "More", href="javascript:void(0)"), "anchor_no_target", ""),
+    ("anchor no href", {**el("a", "More"), "attrs": {}}, "anchor_no_target", ""),
+    # every other refusal stays on a Vue page
+    ("submit", el("button", "Go", type="submit"), "submit", "submit"),
+    ("post form", el("button", "Add", in_post_form=True), "post_form", "post_form"),
+    ("onclick", el("button", "Add", onclick="go()"), "onclick", "onclick"),
+    ("data-href", el("button", "Add", **{"data-href": "/x/"}), "data_href", "data_href"),
+    ("btn-danger", el("button", "Add", **{"class": "btn btn-danger"}), "danger_class", "danger_class"),
+    ("delete href", el(href="/x/delete/3/"), "danger_attr", "danger_attr"),
+    ("danger data attr", el("button", "Open", **{"data-action": "archive"}), "danger_attr", "danger_attr"),
+    ("ajax link", el(**{"class": "js-open"}), "ajax_link", "ajax_link"),
+    ("write verb", el("button", "Save changes"), "write_verb", "write_verb"),
+    ("write verb title", el("button", "Open", title="Delete it"), "write_verb", "write_verb"),
+    ("occluded", el("button", "Add schedule", occluded=True), "button_no_toggle", "occluded"),
+]
+
+
+class VueRule(unittest.TestCase):
+    """Vue pages (the write guard makes the two structural refusals unnecessary)."""
+    def test_detection_rule(self):
+        self.assertFalse(C.is_vue_page())
+        for kw in ({"has_data_v_app": True}, {"has_vue_app_prop": True}, {"has_global": True}):
+            self.assertTrue(C.is_vue_page(**kw))
+
+    def test_mirror(self):
+        for name, e, plain, vue in VUE_CASES:
+            with self.subTest(name):
+                self.assertEqual(C.click_refusal(e), plain)
+                self.assertEqual(C.click_refusal(e, vue=True), vue)
+
+    def test_add_schedule_is_allowed_only_on_a_vue_page(self):
+        b = el("button", "Add schedule")
+        self.assertEqual((C.click_refusal(b), C.click_refusal(b, vue=True)), ("button_no_toggle", ""))
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_agrees_with_the_mirror(self):
+        cases = [{"els": [e], "args": {"text": e["text"], "side": "nav"}, "occlude": e["occluded"], "vue": v}
+                 for _, e, _, _ in VUE_CASES for v in (False, True)]
+        got = iter(run_js(self, cases))
+        for name, e, plain, vue in VUE_CASES:
+            for want in (plain, vue):
+                g = next(got)
+                with self.subTest(name, vue=want == vue):
+                    self.assertEqual(g.get("threw", ""), "KB_CLICK_REFUSED:" + want if want else "")
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_vue_detection_sources(self):
+        src = C.click_source()
+        for needle in ("[data-v-app]", "__VUE__", "__vue_app__"):
+            self.assertIn(needle, src)
+        [off, on] = run_js(self, [{"els": [el("button", "Add schedule")], "args": {"text": "Add schedule", "side": "nav"}},
+                                  {"els": [el("button", "Add schedule")], "args": {"text": "Add schedule", "side": "nav"},
+                                   "vue": True}])
+        self.assertEqual(off["threw"], "KB_CLICK_REFUSED:button_no_toggle")
+        self.assertTrue(on["ok"])
+
+
+GROUP_ROWS = [
+    # (name, elements, rows, expected (element index, group))
+    ("only group rows: first group row", [spn("Course A"), spn("Course B")],
+     [{"cls": "clickable", "spans": [0], "group": True}, {"cls": "clickable", "spans": [1], "group": True}], (0, True)),
+    ("a leaf after groups wins", [spn("Course A"), spn("Session 1")],
+     [{"cls": "clickable", "spans": [0], "group": True}, {"cls": "clickable", "spans": [1]}], (1, False)),
+    ("first leaf wins", [spn("Session 1"), spn("Session 2")],
+     [{"cls": "clickable", "spans": [0]}, {"cls": "clickable", "spans": [1]}], (0, False)),
+    ("group by class", [spn("Course A")], [{"cls": "clickable group-header", "spans": [0]}], (0, True)),
+    ("a class that merely starts with group is not a group", [spn("Session 1")], [{"cls": "clickable grouped", "spans": [0]}], (0, False)),
+    ("a link row is a leaf even with a triangle", [el("a", "Intro"), spn("x")],
+     [{"link": 0, "cls": "clickable", "spans": [1], "group": True}], (0, False)),
+    ("no candidates", [spn("x")], [{"spans": [0]}], (None, False)),
+]
+
+
+class GroupRows(unittest.TestCase):
+    @staticmethod
+    def mirror(els, r):
+        return {"link": els[r["link"]] if r.get("link") is not None else None, "class": r.get("cls", ""),
+                "spans": [els[i] for i in r.get("spans", [])], "group": r.get("group", False)}
+
+    def test_mirror(self):
+        for name, els, rows, (idx, grp) in GROUP_ROWS:
+            with self.subTest(name):
+                e, g = C.row_pick([self.mirror(els, r) for r in rows])
+                self.assertIs(e, None if idx is None else els[idx])
+                self.assertEqual(g, grp)
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_agrees_with_the_mirror(self):
+        args = {"row": True, "side": "nav", "pa": {"labels": []}}
+        cases = [{"els": els, "args": args, "table": {"rows": rows}} for _, els, rows, _ in GROUP_ROWS]
+        for (name, els, rows, (idx, grp)), got in zip(GROUP_ROWS, run_js(self, cases)):
+            with self.subTest(name):
+                if idx is None:
+                    self.assertEqual(got, {"threw": "KB_CLICK_NOTFOUND:row"})
+                    continue
+                want = {"ok": True, "x": 120, "y": 60, "label": els[idx]["text"]}
+                self.assertEqual(got, {**want, "group": True} if grp else want)
+
+    def test_group_selector_is_in_the_js(self):
+        self.assertIn(C.GROUP_SEL, C.click_source())
+        for part in (".expand", ".triangle", "[aria-expanded]"):
+            self.assertIn(part, C.GROUP_SEL)
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_group_click_is_still_guarded(self):
+        args = {"row": True, "side": "nav", "pa": {"labels": []}}
+        rows = [{"cls": "clickable", "spans": [0], "group": True}]
+        got = run_js(self, [
+            {"els": [spn("Course A")], "args": args, "table": {"rows": rows}, "tn": "BLOCK"},
+            {"els": [spn("Delete course")], "args": args, "table": {"rows": rows}},
+            {"els": [spn("Course A")], "args": args, "table": {"rows": rows}, "occlude": True}])
+        self.assertEqual([g["threw"] for g in got],
+                         ["KB_TENANT_ROW", "KB_CLICK_REFUSED:write_verb", "KB_CLICK_REFUSED:occluded"])
+
+
+class WriteScope(unittest.TestCase):
+    """args.write: only the top-most open dialog is searched; two matches are ambiguous."""
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_dialog_scope_and_ambiguity(self):
+        page_save, dlg_save = el("button", "Save"), el("button", "Save")
+        wa = {"text": "Save", "side": "nav", "write": ["Save"]}
+        got = run_js(self, [
+            {"els": [page_save, dlg_save], "args": wa, "dialog": {"inside": [1]}},       # only the dialog's Save
+            {"els": [page_save, dlg_save], "args": wa},                                  # no dialog: two matches
+            {"els": [page_save, dlg_save], "args": wa, "dialog": {"inside": [0, 1]}},    # both inside
+            {"els": [page_save], "args": wa},                                            # one match, no dialog
+            {"els": [page_save], "args": wa, "dialog": {"inside": []}},                  # dialog, Save outside it
+            {"els": [page_save, dlg_save], "args": {"text": "Save", "side": "nav"}},    # not write mode
+        ])
+        self.assertTrue(got[0]["ok"])
+        self.assertEqual(got[1], {"threw": "KB_CLICK_REFUSED:ambiguous"})
+        self.assertEqual(got[2], {"threw": "KB_CLICK_REFUSED:ambiguous"})
+        self.assertTrue(got[3]["ok"])
+        self.assertEqual(got[4], {"threw": "KB_CLICK_NOTFOUND:Save"})
+        self.assertEqual(got[5], {"threw": "KB_CLICK_REFUSED:write_verb"})                # unchanged
+
+    def test_selector_constants(self):
+        for part in (".modal.show", "[role=dialog]", ".swal2-popup"):
+            self.assertIn(part, C.DIALOG_SEL)
+            self.assertIn(part, C.click_source())
+
+
+OPT_SELECTORS = ["[role=listbox] [role=option]", ".multiselect__content li",
+                 ".dropdown-menu .dropdown-item", ".vs__dropdown-option", "ul[role=listbox] li"]
+
+
+class Kbopt(unittest.TestCase):
+    def run_opt(self, cases):
+        drv = DRIVER.replace("sc.src", "sc.src")        # same fake DOM; the source is the option picker
+        r = subprocess.run([NODE, "-e", drv], input=json.dumps({"src": C.option_source(), "cases": cases}),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_selectors_and_install(self):
+        for sel in OPT_SELECTORS:
+            self.assertIn(sel, C.OPTION_SEL)
+        self.assertIn(C.OPTION_SEL, C.option_source())
+        text = C.install_action()["text"]
+        self.assertIn("sessionStorage.setItem('kbo',O)", text)
+        self.assertIn(json.dumps(C.option_source()), text)
+        self.assertTrue(C.stub({"option": "x"}, C.KBO_KEY).startswith("/*KB*/(sessionStorage.getItem('kbo')?"))
+
+    def test_mirror(self):
+        for t, want in (("ZZ DEMO Venue", ""), ("Cancel", ""), ("No, don't send notifications", ""),
+                        ("No, send notifications", "write_danger"), ("No notify", "write_danger"),
+                        ("Don't send", ""), ("Do not notify", ""), ("No, invite everyone", "write_danger"),
+                        ("Send notifications", "write_danger"), ("Invite everyone", "write_danger"),
+                        ("Delete", "write_danger"), ("Publish", "write_danger"), ("Approve", "write_danger"),
+                        ("Notify participants", "write_danger"), ("Archive", "write_danger")):
+            self.assertEqual(C.option_refusal(t), want, t)
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js(self):
+        a, b = el("li", "ZZ DEMO Venue A"), el("li", "ZZ DEMO Venue B")
+        hid = el("li", "ZZ DEMO Venue A", visible=False)
+        a2 = el("li", "ZZ DEMO Venue A")
+        send = el("li", "Send notifications")
+        no = el("li", "No, don't send notifications")
+        o = lambda opt, els, **k: {"els": els, "args": {"option": opt}, "options": list(range(len(els))), **k}
+        got = self.run_opt([
+            o("ZZ DEMO Venue B", [a, b]),
+            o("zz demo  venue b", [a, b]),                 # trimmed / case-insensitive, still exact
+            o("ZZ DEMO Venue", [a, b]),                    # a prefix is not a match
+            o("ZZ DEMO Venue A", [hid]),                   # invisible
+            o("ZZ DEMO Venue A", [a, a2]),                 # two matches
+            o("Send notifications", [send]),
+            o("No, don't send notifications", [no]),
+            o("ZZ DEMO Venue A", [a], occlude=True),
+            o("ZZ DEMO Venue A", [a], options=[]),         # not inside an open listbox
+            o("", [a]),
+        ])
+        self.assertEqual(got[0], {"ok": True, "x": 120, "y": 60, "label": "ZZ DEMO Venue B"})
+        self.assertEqual(got[1], got[0])
+        self.assertEqual([g.get("threw") for g in got[2:]],
+                         ["KB_CLICK_NOTFOUND:ZZ DEMO Venue", "KB_CLICK_NOTFOUND:ZZ DEMO Venue A",
+                          "KB_CLICK_REFUSED:ambiguous", "KB_CLICK_REFUSED:write_danger", None,
+                          "KB_CLICK_REFUSED:occluded", "KB_CLICK_NOTFOUND:ZZ DEMO Venue A",
+                          "KB_CLICK_NOTFOUND:option"])
+        self.assertTrue(got[6]["ok"])                      # "No, ..." is allowed
+
+    def test_error_codes_map(self):
+        self.assertEqual(C.click_reason("Error: KB_CLICK_REFUSED:write_danger"), ("click_refused", "write_danger"))
 
 
 CLICK_PLAN = {"run_id": "r1", "capture_plan": [
@@ -423,7 +884,7 @@ class Hook(unittest.TestCase):
                          "tool_input": {"actions": actions}})
 
     def test_batch_with_typing_is_denied_for_the_capturer(self):
-        ok = [{"name": "navigate", "input": {"url": "x"}},
+        ok = [{"name": "navigate", "input": {"url": "/x/"}},
               {"name": "computer", "input": {"action": "hover", "coordinate": [1, 2]}}]
         self.assertEqual(self.batch(ok), (0, ""))
         for bad in ({"name": "computer", "input": {"action": "type", "text": "x"}},
@@ -435,6 +896,127 @@ class Hook(unittest.TestCase):
         self.assertEqual(self.batch(ok + [{"name": "computer", "input": {"action": "type"}}], agent="general-purpose"),
                          (0, ""))
 
+    def maker(self, tool, action=None, text=None, agent="medtrics-release-notes:kb-data-maker"):
+        inp = {}
+        if action:
+            inp["action"] = action
+        if text is not None:
+            inp["text"] = text
+        return run_hook({"tool_name": f"mcp__claude-in-chrome__{tool}", "agent_type": agent,
+                         "tool_input": inp})
+
+    def denied(self, result):
+        rc, out = result
+        self.assertEqual(rc, 0)
+        o = json.loads(out)["hookSpecificOutput"]
+        self.assertEqual(o["permissionDecision"], "deny")
+        self.assertIn("KB_GUARD", o["permissionDecisionReason"])
+
+    def test_data_maker_may_type_fill_and_tab(self):
+        self.assertEqual(self.maker("computer", "type", "ZZ KB DEMO"), (0, ""))
+        self.assertEqual(self.maker("form_input"), (0, ""))
+        self.assertEqual(self.maker("computer", "key", "Tab"), (0, ""))
+        self.assertEqual(self.maker("computer", "key", "Escape"), (0, ""))
+        for action in ("left_click", "hover", "wait", "scroll"):
+            self.assertEqual(self.maker("computer", action), (0, ""))
+
+    def test_data_maker_cannot_press_other_keys_or_drag(self):
+        for text in ("Enter", "Return", "Tab Enter", "Escape Enter", "tab", "escape", "Esc", "ctrl+a", "Backspace",
+                     "Delete", "", None):
+            self.denied(self.maker("computer", "key", text))
+        self.denied(self.maker("computer", "left_click_drag"))
+
+    def test_data_maker_batch(self):
+        ok = [{"name": "computer", "input": {"action": "type", "text": "x"}},
+              {"name": "form_input", "input": {"ref": "r", "value": "x"}},
+              {"name": "computer", "input": {"action": "key", "text": "Tab"}},
+              {"name": "computer", "input": {"action": "key", "text": "Escape"}}]
+        agent = "medtrics-release-notes:kb-data-maker"
+        self.assertEqual(self.batch(ok, agent=agent), (0, ""))
+        for bad in ({"name": "computer", "input": {"action": "key", "text": "Enter"}},
+                    {"name": "computer", "input": {"action": "left_click_drag"}}):
+            self.denied(self.batch(ok + [bad], agent=agent))
+        # the capturer rules did not loosen
+        self.denied(self.batch(ok))
+
+    AGENTS = ("medtrics-release-notes:kb-capturer", "medtrics-release-notes:kb-data-maker")
+
+    def tool(self, name, inp, agent):
+        return run_hook({"tool_name": f"mcp__claude-in-chrome__{name}", "agent_type": agent, "tool_input": inp})
+
+    def test_typed_text_with_newline_return_or_tab_is_denied(self):
+        for agent in self.AGENTS:
+            for text in ("a\nb", "a\rb", "a\tb", "\n", "x\r\n"):
+                self.denied(self.tool("computer", {"action": "type", "text": text}, agent))
+                self.denied(self.batch([{"name": "computer", "input": {"action": "type", "text": text}}], agent=agent))
+        maker = self.AGENTS[1]
+        for text in ("ZZ DEMO", "09:00", "2026-12-31", "two words", ""):
+            self.assertEqual(self.tool("computer", {"action": "type", "text": text}, maker), (0, ""), text)
+        self.assertEqual(self.tool("computer", {"action": "type", "text": "a\nb"}, "general-purpose"), (0, ""))
+
+    def test_javascript_needs_the_marker(self):
+        good = {"action": "javascript_exec", "text": C.stub({"x": 1})}
+        for agent in self.AGENTS:
+            self.assertEqual(self.tool("javascript_tool", good, agent), (0, ""))
+            self.assertEqual(self.tool("javascript_tool", {"text": C.install_action()["text"]}, agent), (0, ""))
+            self.assertEqual(self.tool("javascript_tool",
+                                       {"text": C.route_check_source(["/a/"], "/users/login/")}, agent), (0, ""))
+            for bad in ("document.cookie", " /*KB*/x", "x /*KB*/", "/* KB */x", "//*KB*/\nx", "", None):
+                self.denied(self.tool("javascript_tool", {"action": "javascript_exec", "text": bad}, agent))
+            self.denied(self.tool("javascript_tool", {"action": "javascript_exec"}, agent))
+            self.denied(self.batch([{"name": "javascript_tool", "input": {"text": "fetch('/x',{method:'POST'})"}}],
+                                   agent=agent))
+            self.assertEqual(self.batch([{"name": "javascript_tool", "input": good}], agent=agent), (0, ""))
+        self.assertEqual(self.tool("javascript_tool", {"text": "document.cookie"}, "general-purpose"), (0, ""))
+        self.assertEqual(self.tool("javascript_tool", {"text": "document.cookie"}, None), (0, ""))
+
+    def test_generated_scripts_all_carry_the_marker(self):
+        import kb_data as D
+        self.assertTrue(C.install_action()["text"].startswith(C.JS_MARKER))
+        self.assertEqual(C.JS_MARKER, "/*KB*/")
+        for key in (C.KEY, C.KBC_KEY, C.KBO_KEY):
+            self.assertTrue(C.stub({}, key).startswith("/*KB*/"))
+        self.assertTrue(C.route_check_source(["/a/"], "/l/").startswith("/*KB*/await "))
+        self.assertTrue(D.field_js("A", "b").startswith("/*KB*/"))
+        self.assertTrue(D.field_js("A", mode="read").startswith("/*KB*/"))
+
+    def test_navigate_stays_on_the_demo_site(self):
+        routes = json.loads((HOOK.parent.parent / "scripts" / "kb" / "kb_routes.json").read_text())["demo"]
+        host = routes["base_url"]
+        entries = list(routes["portal_entry"].values())
+        ok = ["/", "/administration/", "/vadministration/curriculum/sessions/", host + "/administration/",
+              host + "/x/?a=1#frag", "http://medtrics.medtricslab.com/x/", "medtrics.medtricslab.com/x/"] + \
+             entries + [host + e for e in entries]
+        bad = ["https://evil.example/", "http://evil.example/administration/", "//evil.example/x", "/\\evil.example",
+               "https://medtrics.medtricslab.com.evil.example/", "https://medtrics.medtricslab.com@evil.example/",
+               "evil.example/x", "x", "", "javascript:alert(1)", "data:text/html,x", "file:///etc/passwd",
+               "ftp://medtrics.medtricslab.com/", "/x/\n", host + "/x/\n"]
+        for agent in self.AGENTS:
+            for u in ok:
+                self.assertEqual(self.tool("navigate", {"url": u}, agent), (0, ""), (agent, u))
+            for u in bad:
+                self.denied(self.tool("navigate", {"url": u}, agent))
+                self.denied(self.batch([{"name": "navigate", "input": {"url": u}}], agent=agent))
+            self.denied(self.tool("navigate", {}, agent))
+        self.assertEqual(self.tool("navigate", {"url": "https://evil.example/"}, "general-purpose"), (0, ""))
+
+    def test_navigate_refuses_danger_paths_except_the_portal_entries(self):
+        routes = json.loads((HOOK.parent.parent / "scripts" / "kb" / "kb_routes.json").read_text())["demo"]
+        host = routes["base_url"]
+        bad = ["/users/logout/", "/users/signout", "/x/delete/3/", "/x/remove/3/", "/x/%64elete/3/", "/x/LOGOUT/",
+               "/?portal_change=other", "/?portal_change=administration&x=1", "/?portal_change=personal#x",
+               "/administration/?portal_change=administration", "/x/?next=/users/logout/",
+               host + "/users/logout/", host + "/?portal_change=evil", "/?portal_change=ADMINISTRATION"]
+        for agent in self.AGENTS:
+            for u in bad:
+                if u.endswith("#x"):          # the fragment never reaches the server: the entry itself
+                    continue
+                self.denied(self.tool("navigate", {"url": u}, agent))
+            for u in (routes["portal_entry"]["admin"], routes["portal_entry"]["personal"] if "personal" in routes["portal_entry"]
+                      else routes["portal_entry"]["faculty"], host + routes["portal_entry"]["admin"],
+                      routes["portal_entry"]["admin"] + "#top"):
+                self.assertEqual(self.tool("navigate", {"url": u}, agent), (0, ""), u)
+
     def test_never_crashes(self):
         for raw in ("", "not json", "[]", "null", '{"tool_name": 5, "agent_type": ["kb-capturer"]}',
                     '{"agent_type": "kb-capturer", "tool_input": null, "tool_name": "x__computer"}'):
@@ -444,7 +1026,8 @@ class Hook(unittest.TestCase):
     def test_hooks_json(self):
         h = json.loads(HOOKS_JSON.read_text())["hooks"]["PreToolUse"][0]
         self.assertEqual(h["matcher"], "mcp__claude-in-chrome__computer|mcp__claude-in-chrome__form_input"
-                                       "|mcp__claude-in-chrome__browser_batch")
+                                       "|mcp__claude-in-chrome__browser_batch|mcp__claude-in-chrome__javascript_tool"
+                                       "|mcp__claude-in-chrome__navigate")
         self.assertIn("${CLAUDE_PLUGIN_ROOT}/hooks/kb_guard.py", h["hooks"][0]["command"])
 
     def test_hook_writes_nothing(self):

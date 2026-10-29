@@ -6,6 +6,7 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
 
   plan-calls --plan groups.json --inputs inputs.json --out-dir $RUN/shots
              [--per-batch 3] [--routes kb_routes.json]
+             [--data-plan data_plan.json] [--external-link URL]
           Writes calls.json (install action, visits, batches of browser_batch
           actions, restore) and capture.md (the only input the capturer reads).
           Each visit is recorded with gif_creator (no screenshot); calls.json also
@@ -15,8 +16,26 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
           guard installed with the probe) picks the point, the capturer clicks
           it, then the usual settle/probe/export. A click batch has `pick` and
           `act` (with "$X","$Y"). "write_gated" becomes a needs_write screen.
+          {"row": true} takes the first link row or clickable <tr> (0.27.0).
+          Per-step labels: start screen = page label + first click text, click
+          screen = the next click's text, last screen = the ticket's labels.
+          calls.json["accounts"] groups batches by sign-in (main: admin+faculty,
+          learner, external); the first batch of an account with a "signin"
+          carries needs_signin. --external-link sets the external entries' start
+          (path+query, run only). --data-plan (approved) adds "write_visits"
+          (<entry>-w<k>), outside every batch; they replace needs_write.
+          kbclick also takes {"text", "write": [texts]} (write mode, data agent).
+          0.27.0 page script: the probe, kbclick and kbopt install a network write
+          guard first (only GET leaves the page; blocks counted in window.__kbBlocked,
+          reported as probe `wb`); Vue pages drop button_no_toggle/anchor_no_target;
+          {"row": true} prefers leaf rows (group rows return "group": true, the
+          capturer retries once); the probe's `h` (dialog title / first h1-h2) lets
+          ingest keep a click/write screen as a draft-only dom_box; kbopt
+          {"option": text} picks a listbox/dropdown option; write mode searches only
+          the top-most open dialog and refuses >1 match (ambiguous). After a
+          learner/external account a final `restore` batch needs_signin:main.
   route-check-js --plan groups.json [--routes kb_routes.json]
-          Prints one javascript_tool snippet for the signed-in tab: fetch()es each
+          Prints one javascript_tool snippet (starts with `await`) for the signed-in tab: fetch()es each
           distinct start URL (and its /administration <-> /vadministration
           alternate; max 20) and returns a JSON string
           [{url, status, final, login, nf}].
@@ -31,7 +50,9 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
           shots.json entries: waits for D/<gif>, COPIES it to shots/gifs/ (Downloads
           is not touched), takes its last frame as frames/<visit_id>.png. shots.json
           also gets `screens` and `missing` ({ticket: {reason, detail}}); the result
-          carries `downloads_left`. 0.23.0 raw files with a
+          carries `downloads_left`. Write visits (calls["write_visits"]) are read from any
+          raw file (raw/data-<ticket>.json); `write_error` or no item -> reason write_failed.
+          0.23.0 raw files with a
           screenshot_path still ingest (frames/<visit_id>.jpg). Re-ingest replaces
           by visit_id. Anything left -> resume.json and exit 3
           (download_missing / empty_export / bad_gif / retry / ...).
@@ -84,6 +105,7 @@ wait_for_file is vendored from medtrics-qa-automation 0.17.1
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -499,12 +521,74 @@ NF_RE = re.compile(NF_SOURCE, re.I)
 def is_not_found(text):
     return bool(NF_RE.search(str(text or "")))
 
+# ── network write guard (0.27.0) ─────────────────────────────────────────────
+# Installed by the probe, kbclick and kbopt on EVERY call. Nothing may reach the
+# server with a method other than GET: fetch is rejected, XHR.send throws,
+# sendBeacon returns false, form.submit()/requestSubmit() do nothing and a
+# capture-phase submit listener cancels any non-GET form. Each block counts in
+# window.__kbBlocked (last "METHOD /path" in window.__kbLast). Idempotent: every
+# wrapper carries a __kb mark, so a second install (each stub call runs it, SPA
+# route changes keep the window) wraps nothing twice; a full navigation gives a
+# fresh window that the next call patches again. Never lifted in 0.27.0.
+# Also: an XHR that was opened before the install (no recorded method) is blocked on
+# send (fail closed); WebSocket.prototype.send throws; the guard installs into every
+# same-origin iframe (window.frames, re-installed on the frame's load, and a
+# MutationObserver for frames added later). Not covered: a fetch reference page code
+# saved before the install (the legacy app uses axios / jQuery over XHR).
+_GUARD_JS = r"""
+(function G(W){
+var D=W.document;
+W.__kbBlocked=W.__kbBlocked||0;
+var note=function(m,u){W.__kbBlocked=(W.__kbBlocked||0)+1;var p='';try{p=new URL(String(u),W.location.href).pathname;}catch(x){p=String(u||'').slice(0,60);}W.__kbLast=String(m).trim().toUpperCase()+' '+p;};
+var get=function(m){return String(m||'GET').trim().toUpperCase()==='GET';};
+var fm=function(f,s){return String((s&&s.formMethod)||(f&&f.method)||'get').trim().toLowerCase();};
+var F=W.fetch;
+if(typeof F==='function'&&!F.__kb){var nf=function(i,o){var m=(o&&o.method)||(i&&i.method)||'GET';if(!get(m)){note(m,(i&&i.url)||i);return Promise.reject(new TypeError('KB_WRITE_BLOCKED'));}return F.apply(this,arguments);};nf.__kb=1;W.fetch=nf;}
+var X=W.XMLHttpRequest&&W.XMLHttpRequest.prototype;
+if(X&&X.open&&!X.open.__kb){var xo=X.open,xs=X.send;X.open=function(m,u){this.__kbm=m;this.__kbu=u;return xo.apply(this,arguments);};X.open.__kb=1;X.send=function(){if(this.__kbm===undefined||!get(this.__kbm)){note(this.__kbm||'OPEN?',this.__kbu);throw new Error('KB_WRITE_BLOCKED');}return xs.apply(this,arguments);};X.send.__kb=1;}
+var N=W.navigator;
+if(N&&typeof N.sendBeacon==='function'&&!N.sendBeacon.__kb){var nb=function(u){note('POST',u);return false;};nb.__kb=1;try{N.sendBeacon=nb;}catch(x){}}
+var H=W.HTMLFormElement&&W.HTMLFormElement.prototype;
+if(H&&H.submit&&!H.submit.__kb){var hs=H.submit,hr=H.requestSubmit;H.submit=function(){if(fm(this)!=='get'){note(fm(this),this.action);return;}return hs.apply(this,arguments);};H.submit.__kb=1;
+if(hr){H.requestSubmit=function(s){if(fm(this,s)!=='get'){note(fm(this,s),this.action);return;}return hr.apply(this,arguments);};H.requestSubmit.__kb=1;}}
+var S=W.WebSocket&&W.WebSocket.prototype;
+if(S&&S.send&&!S.send.__kb){S.send=function(){note('WS',this.url);throw new Error('KB_WRITE_BLOCKED');};S.send.__kb=1;}
+if(D&&D.addEventListener&&!D.__kbS){D.__kbS=1;D.addEventListener('submit',function(e){var f=e.target;if(fm(f,e.submitter)!=='get'){e.preventDefault();if(e.stopImmediatePropagation)e.stopImmediatePropagation();note(fm(f,e.submitter),f&&f.action);}},true);}
+var hk=function(f){try{if(f.contentWindow&&f.contentWindow.document)G(f.contentWindow);}catch(x){}try{if(!f.__kbL&&f.addEventListener){f.__kbL=1;f.addEventListener('load',function(){try{G(f.contentWindow);}catch(x){}});}}catch(x){}};
+var fr=function(n){try{if(n&&n.tagName==='IFRAME')hk(n);else if(n&&n.querySelectorAll)Array.prototype.forEach.call(n.querySelectorAll('iframe'),hk);}catch(x){}};
+try{for(var i=0;i<W.frames.length;i++){try{var c=W.frames[i];if(c&&c.document)G(c);}catch(x){}}}catch(x){}
+fr(D);
+if(D&&!D.__kbM&&W.MutationObserver){D.__kbM=1;try{new W.MutationObserver(function(ms){Array.prototype.forEach.call(ms,function(m){Array.prototype.forEach.call(m.addedNodes||[],fr);});}).observe(D,{childList:true,subtree:true});}catch(x){}}
+})(window);
+"""
+
+
+def guard_source():
+    """The write guard as one JS statement (an IIFE), lines joined by spaces."""
+    return " ".join(l.strip() for l in _GUARD_JS.strip().splitlines())
+
+
+def request_blocked(method=None, request_method=None):
+    """Python mirror of the guard's fetch/XHR rule: only GET passes. `method` is
+    init.method / the XHR method; `request_method` a Request object's method (used
+    when `method` is empty). No method at all = GET."""
+    m = method or request_method or "GET"
+    return str(m).strip().upper() != "GET"
+
+
+def form_blocked(form_method=None, submitter_method=None):
+    """Python mirror of the guard's form rule: the submitter's formmethod, else the
+    form's method, else get; anything but get (post, dialog, ...) is blocked."""
+    m = submitter_method or form_method or "get"
+    return str(m).strip().lower() != "get"
+
 
 # Plain JS, no comments, every statement ends with ';' (lines are joined with
 # spaces). __TENANT__ and __NONLATIN__ are filled from the Python side.
 _PROBE_JS = r"""
 (function(a){
 var D=document,W=window;
+__GUARD__
 var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
 if(location.pathname.indexOf(a.login)>=0||D.querySelector('input[type=password]'))throw new Error('KB_LOGIN');
 var pl=Array.prototype.slice.call(D.querySelectorAll('a[href*="portal_change"]'));
@@ -522,6 +606,10 @@ var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0
 var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
 var iw=W.innerWidth,ih=W.innerHeight;
 var rd=function(n){return Math.round(n*10)/10;};
+var hb=function(e){var r=e.getBoundingClientRect();return {t:norm(e.innerText),b:[rd(r.left),rd(r.top),rd(r.width),rd(r.height)]};};
+var hv=function(l){return l.filter(function(e){return vis(e)&&norm(e.innerText)&&!inSb(e);});};
+var dt=hv(Array.prototype.slice.call(D.querySelectorAll('.modal-title,[role=dialog] h1,[role=dialog] h2,[role=dialog] h3,.swal2-title')));
+var ht=dt.length?dt[dt.length-1]:hv(Array.prototype.slice.call(D.querySelectorAll('h1,h2')))[0];
 var labels=a.labels.map(function(l){
 var want=norm(l);
 var m=all.filter(function(e){return String(e.textContent||'').indexOf(l)>=0&&norm(e.innerText)===want&&vis(e);});
@@ -549,7 +637,7 @@ var STOP=__SLUG_STOP__; while((m3=re2.exec(low))){if(STOP.indexOf(m3[1])<0)add('
 var nl=0;
 for(var i=0;i<low.length;i++){if(low.charCodeAt(i)>0x3FF)nl++;}
 if(nl>=__NONLATIN__)add('non_latin_script',true);
-return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k}};
+return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k}};
 })
 """
 
@@ -557,43 +645,86 @@ return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelR
 # ── click guard (kbclick): refusal rules, Python mirror + the JS built from them ─
 # The same constants feed both, so tests of click_refusal() pin what the page runs.
 WRITE_VERBS = ("save", "submit", "send", "confirm", "delete", "remove", "archive",
-               "publish", "approve", "reject", "sign")
+               "publish", "approve", "reject", "sign", "notify", "invite", "resend", "copy",
+               "duplicate", "remind", "clone", "reset", "unpublish", "reactivate", "enroll",
+               "unenroll")
+WORD_START = r"(?:^|[^a-z])(?:un|re)?"       # word start; "resend", "unpublish", "reactivate" match
 CLICK_RX = {
-    "write": r"\b(?:" + "|".join(WRITE_VERBS) + r")",        # prefix match: "signed", "sending"
+    "write": WORD_START + r"(?:" + "|".join(WRITE_VERBS) + r")",     # prefix match: "signed", "sending"
     "cls": r"btn-danger|text-danger|delete|remove",
     "attr": (r"delete|remove|destroy|toggle|archive|portal_change|logout|signout|"
-             r"(?<![a-z])(?:approve|reject|publish|activate|deactivate|enable|disable|"
+             + WORD_START + r"(?:approve|reject|publish|activate|deactivate|enable|disable|"
              r"impersonate|login[-_]?as|switch|reset|unlock|cancel|withdraw|send|sign|"
-             r"submit|confirm|save)"),                     # word-start: "assign" stays allowed
+             r"submit|confirm|save|notify|invite|resend|copy|duplicate|remind|clone|"
+             r"unpublish|reactivate|enroll|unenroll)"),   # word-start: "assign" stays allowed
     "tok": r"^(?:js-.+|ajax.*|post)$",                     # class tokens of script-driven links
     "dat": r"^data-(?:method|remote|ajax)$",
     "tog": r"^(?:modal|tab|collapse|dropdown)$",
+    "wd": r"\b(?:delete|remove|archive|destroy|invite|publish|approve)",   # write mode: always dangerous
+    "sn": r"\b(?:send|notify)",                            # write mode: dangerous unless negated
+    "neg": r"(?:\bdon['\u2019]?t|\bdo not|\bnot)[\s,]*$",       # ... by don't / do not / not just before it
+    "icon": r"triangle|expand|icon|caret|chevron",         # row cell parts that are never the click
+    "ctl": r"^(?:button|a|i|svg|input)$",
+    "grp": r"(?:^|\s)(?:group|expandable|parent)(?:-(?:row|header|head))?(?:\s|$)",   # a row class that marks a group header
 }
+# Selectors shared by the JS and the docs. A row is a group when it holds a
+# GROUP_SEL element or a class matched by CLICK_RX["grp"].
+GROUP_SEL = ".expand,.triangle,[aria-expanded]"
+DIALOG_SEL = ".modal.show,[role=dialog],.swal2-popup,dialog[open]"
+OPTION_SEL = ("[role=listbox] [role=option],.multiselect__content li,.dropdown-menu .dropdown-item,"
+              ".vs__dropdown-option,ul[role=listbox] li")
 _CLICK_RE = {k: re.compile(v, re.I if k != "tog" else 0) for k, v in CLICK_RX.items()}
 KBC_KEY = "kbc"
+KBO_KEY = "kbo"
 KBC_ERRORS = {"KB_CLICK_REFUSED": "click_refused", "KB_CLICK_NOTFOUND": "click_not_found",
               "KB_TENANT_ROW": "tenant_row"}
 
 
-def click_refusal(el, text_click=True):
+def _write_ok(el, write):
+    """Write mode: the element's visible text equals one of the allowed texts
+    (case-insensitive, trimmed, exact)."""
+    t = " ".join(str(el.get("text") or "").split()).lower()
+    return bool(t) and t in [" ".join(str(w).split()).lower() for w in (write or [])]
+
+
+def write_danger(text):
+    """Write mode / kbopt: True when the words say delete/remove/archive/destroy/invite/
+    publish/approve anywhere, or send/notify not directly preceded by don't / do not /
+    not (a bare "No" no longer excuses them: "No, send notifications" is refused)."""
+    t = " ".join(str(text or "").split())
+    if _CLICK_RE["wd"].search(t):
+        return True
+    return any(not _CLICK_RE["neg"].search(t[:m.start()]) for m in _CLICK_RE["sn"].finditer(t))
+
+
+def click_refusal(el, text_click=True, write=None, vue=False):
     """Why kbclick refuses `el`, or "" when the click is allowed (Python mirror of
     the JS). el: {"tag", "attrs": {name: value, incl. data-*, type, href, class, title,
     aria-label, onclick, role}, "text", "visible", "in_sidebar", "in_post_form", "occluded"}.
-    text_click is False for a {"row": true} click (sidebar elements refused)."""
+    text_click is False for a {"row": true} click (sidebar elements refused).
+    write: the texts of args.write; an element whose text equals one exactly skips
+    the submit / post_form / write_verb / button_no_toggle refusals (never the danger
+    ones) and gets write_danger when its words say send/notify/invite/publish/
+    approve/delete/remove/archive/destroy ("send" / "notify" pass only right after
+    don't / do not / not).
+    vue: the page is a Vue app (see is_vue_page); the network write guard makes the
+    button_no_toggle and anchor_no_target refusals unnecessary there, so they are
+    dropped. Every danger_* / write_verb / submit / post_form refusal stays."""
     at = el.get("attrs") or {}
     g = lambda n: str(at.get(n, "") or "")
     tag = str(el.get("tag") or "").lower()
     ty, href = g("type").lower(), g("href")
     plain_get = tag == "a" and href and not re.match(r"(#|javascript:)", href, re.I)
+    wr = text_click and _write_ok(el, write)
     if not el.get("visible", True):
         return "not_visible"
     if el.get("in_sidebar") and not text_click:
         return "sidebar"
     if not text_click and not str(el.get("text") or "").strip():
         return "icon_only"                       # a row link with no words: can't tell what it does
-    if ty == "submit":
+    if ty == "submit" and not wr:
         return "submit"
-    if el.get("in_post_form") and not plain_get:
+    if el.get("in_post_form") and not plain_get and not wr:
         return "post_form"
     if "data-href" in at:
         return "data_href"
@@ -608,39 +739,111 @@ def click_refusal(el, text_click=True):
             n.lower().startswith("data-") and _CLICK_RE["attr"].search(str(v or ""))
             for n, v in at.items()):
         return "danger_attr"
-    w = _CLICK_RE["write"]
-    if w.search(g("title")) or w.search(g("aria-label")) or w.search(str(el.get("text") or "")):
+    words = (g("title"), g("aria-label"), str(el.get("text") or ""))
+    if wr:
+        if any(write_danger(t) for t in words):
+            return "write_danger"
+    elif any(_CLICK_RE["write"].search(t) for t in words):
         return "write_verb"
     ok = bool(_CLICK_RE["tog"].search(g("data-bs-toggle") or g("data-toggle")))
-    if (tag == "button" or ty == "button" or g("role") == "button") and not ok:
+    if (tag == "button" or ty == "button" or g("role") == "button") and not ok and not wr and not vue:
         return "button_no_toggle"
-    if tag == "a" and not ok and (not href or re.match(r"(#|javascript:)", href, re.I)):
+    if tag == "a" and not ok and not vue and (not href or re.match(r"(#|javascript:)", href, re.I)):
         return "anchor_no_target"
     if el.get("occluded"):
         return "occluded"
     return ""
 
 
+def row_group(row):
+    """Python mirror of the group test: the row holds an .expand/.triangle/
+    [aria-expanded] element (row["has_expand"]) or its class says group/expandable/parent.
+    row["group"] is accepted as a precomputed answer."""
+    return bool(row.get("group") or row.get("has_expand")
+                or _CLICK_RE["grp"].search(str(row.get("class") or "")))
+
+
+def row_pick(rows):
+    """Python mirror of the row loop -> (element, group). A leaf row (a GET link row,
+    or a clickable row that is not a group) wins over any group row; if only group
+    rows are visible the first group row's element comes back with group=True (the
+    capturer clicks it, then asks for a row again to reach a leaf). (None, False)
+    when no row is a candidate."""
+    grp = None
+    for r in rows:
+        e = row_target(r)
+        if e is None:
+            continue
+        if row_group(r) and not r.get("link"):
+            grp = grp or e
+        else:
+            return e, False
+    return (grp, True) if grp is not None else (None, False)
+
+
+def is_vue_page(has_data_v_app=False, has_vue_app_prop=False, has_global=False):
+    """Python mirror of the JS Vue test: [data-v-app] present, any element with
+    __vue_app__, or window.__VUE__."""
+    return bool(has_data_v_app or has_vue_app_prop or has_global)
+
+
+def option_refusal(text):
+    """kbopt: a menu option whose words say send/notify/invite/publish/approve/delete/
+    remove/archive/destroy is refused (write_danger); "send" / "notify" pass only right
+    after don't / do not / not (the same rule as write mode and kb_data's choose rule)."""
+    return "write_danger" if write_danger(text) else ""
+
+
+def row_target(row):
+    """Python mirror of the row pick. row: {"link": el|None (a GET <a href> in the
+    row), "class", "cursor", "cell_cursor", "spans": [el], "cells": [el]} with el as
+    for click_refusal plus "has_control" / "in_control" (a/button inside or around).
+    -> the element kbclick would click, or None when the row is not a candidate.
+    A link wins; else a clickable row (class "clickable" or cursor:pointer on the row
+    or its first cell) gives its first non-empty text span (else cell) that is no
+    icon/control and that click_refusal() allows."""
+    if row.get("link"):
+        return row["link"]
+    clickable = (re.search(r"(?:^|\s)clickable(?:\s|$)", str(row.get("class") or ""))
+                 or row.get("cursor") == "pointer" or row.get("cell_cursor") == "pointer")
+    if not clickable:
+        return None
+
+    def usable(e):
+        return (e.get("visible", True) and str(e.get("text") or "").strip()
+                and not _CLICK_RE["ctl"].search(str(e.get("tag") or ""))
+                and not _CLICK_RE["icon"].search(str((e.get("attrs") or {}).get("class", "")))
+                and not e.get("has_control") and not e.get("in_control"))
+    cand = [e for e in (row.get("spans") or []) + (row.get("cells") or []) if usable(e)]
+    return next((e for e in cand if not click_refusal(e, text_click=False)), cand[0] if cand else None)
+
+
 # Plain JS like the probe: no comments, every statement ends with ';'.
 _CLICK_JS = r"""
 (function(a){
-var D=document,R=__RX__;
+var D=document,W=window,R=__RX__,S=__SEL__;
+__GUARD__
 var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
-var WR=new RegExp(R.write,'i'),CR=new RegExp(R.cls,'i'),AR=new RegExp(R.attr,'i'),TR=new RegExp(R.tog),KR=new RegExp(R.tok),DR=new RegExp(R.dat);
+var WR=new RegExp(R.write,'i'),CR=new RegExp(R.cls,'i'),AR=new RegExp(R.attr,'i'),TR=new RegExp(R.tog),KR=new RegExp(R.tok),DR=new RegExp(R.dat),WD=new RegExp(R.wd,'i'),IC=new RegExp(R.icon,'i'),CT=new RegExp(R.ctl,'i'),GR=new RegExp(R.grp,'i');
+var SN=new RegExp(R.sn,'ig'),NG=new RegExp(R.neg,'i');
+var dng=function(s){if(WD.test(s))return true;SN.lastIndex=0;var m;while((m=SN.exec(s))){if(!NG.test(s.slice(0,m.index)))return true;}return false;};
+var WL=(a.write||[]).map(function(t){return norm(t).toLowerCase();});
 var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
 var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
 var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
 var txt=function(e){return norm(e.innerText||e.value||e.textContent);};
+var vue=!!(D.querySelector('[data-v-app]')||W.__VUE__||Array.prototype.some.call(D.querySelectorAll('*'),function(e){return e.__vue_app__;}));
 var why=function(e,tc){
 var tag=String(e.tagName||'').toLowerCase();
 var g=function(n){var v=e.getAttribute(n);return v===null||v===undefined?'':String(v);};
 var ty=g('type').toLowerCase(),href=g('href'),plain=tag==='a'&&href&&!/^(#|javascript:)/i.test(href);
+var wr=tc&&WL.indexOf(txt(e).toLowerCase())>=0;
 if(!vis(e))return 'not_visible';
 if(inSb(e)&&!tc)return 'sidebar';
 if(!tc&&!txt(e))return 'icon_only';
-if(ty==='submit')return 'submit';
+if(ty==='submit'&&!wr)return 'submit';
 var f=e.closest('form');
-if(f&&/^post$/i.test(f.getAttribute('method')||'')&&!plain)return 'post_form';
+if(f&&/^post$/i.test(f.getAttribute('method')||'')&&!plain&&!wr)return 'post_form';
 if(e.hasAttribute('data-href'))return 'data_href';
 if(e.hasAttribute('onclick'))return 'onclick';
 if(CR.test(String(e.className||'')))return 'danger_class';
@@ -650,25 +853,44 @@ if(tag==='a'&&(tk||da))return 'ajax_link';
 var bad=AR.test(href);
 Array.prototype.forEach.call(e.attributes,function(t){if(/^data-/i.test(t.name)&&AR.test(t.value))bad=true;});
 if(bad)return 'danger_attr';
-if(WR.test(g('title'))||WR.test(g('aria-label'))||WR.test(txt(e)))return 'write_verb';
+var ws=[g('title'),g('aria-label'),txt(e)];
+if(wr){if(ws.some(dng))return 'write_danger';}
+else if(ws.some(function(s){return WR.test(s);}))return 'write_verb';
 var ok=TR.test(g('data-bs-toggle')||g('data-toggle'));
-if((tag==='button'||ty==='button'||g('role')==='button')&&!ok)return 'button_no_toggle';
-if(tag==='a'&&!ok&&(!href||/^(#|javascript:)/i.test(href)))return 'anchor_no_target';
+if((tag==='button'||ty==='button'||g('role')==='button')&&!ok&&!wr&&!vue)return 'button_no_toggle';
+if(tag==='a'&&!ok&&!vue&&(!href||/^(#|javascript:)/i.test(href)))return 'anchor_no_target';
 return '';
 };
-var el=null;
+var pickRow=function(r){
+var l=r.querySelector('a[href]');
+if(l)return {e:l,g:false};
+var c=r.querySelector('td,th');
+if(!(/(^|\s)clickable(\s|$)/.test(String(r.className||''))||getComputedStyle(r).cursor==='pointer'||(c&&getComputedStyle(c).cursor==='pointer')))return null;
+var ok=function(e){return vis(e)&&txt(e)&&!CT.test(e.tagName)&&!IC.test(String(e.className||''))&&!e.querySelector('a,button,[role=button]')&&!e.closest('a,button,[role=button]');};
+var cd=Array.prototype.slice.call(r.querySelectorAll('span')).filter(ok).concat(Array.prototype.slice.call(r.querySelectorAll('td,th')).filter(ok));
+var e=cd.filter(function(e){return !why(e,false);})[0]||cd[0];
+return e?{e:e,g:!!r.querySelector(S.grp)||GR.test(String(r.className||''))}:null;
+};
+var el=null,grp=false;
 if(a.row){
 var p=(0,eval)(sessionStorage.getItem('kbp'));
 if(p(a.pa).tn.v==='BLOCK')throw new Error('KB_TENANT_ROW');
 var tb=Array.prototype.slice.call(D.querySelectorAll('table')).filter(vis).sort(function(x,y){var u=x.getBoundingClientRect(),v=y.getBoundingClientRect();return v.width*v.height-u.width*u.height;})[0];
-var tr=tb&&tb.querySelector('tbody tr');
-el=tr&&tr.querySelector('a[href]');
-if(!el)throw new Error('KB_CLICK_NOTFOUND:row');
+var rs=tb?Array.prototype.slice.call(tb.querySelectorAll('tbody tr')):[];
+var lf=null,gp=null;
+for(var i=0;i<rs.length&&!lf;i++){var pk=pickRow(rs[i]);if(!pk)continue;if(pk.g){if(!gp)gp=pk;}else{lf=pk;}}
+var ch=lf||gp;
+if(!ch)throw new Error('KB_CLICK_NOTFOUND:row');
+el=ch.e;grp=!lf;
 }else{
-if(WR.test(a.text))no('write_verb');
+var wt=WL.indexOf(norm(a.text).toLowerCase())>=0;
+if(WR.test(a.text)&&!wt)no('write_verb');
 var want=norm(a.text).toLowerCase();
-var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]')).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want;});
+var dls=WL.length?Array.prototype.slice.call(D.querySelectorAll(S.dlg)).filter(vis):[];
+var dlg=dls.length?dls[dls.length-1]:null;
+var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]'+(WL.length?',input[type=submit]':''))).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want&&(!dlg||dlg.contains(e));});
 if(!all.length)throw new Error('KB_CLICK_NOTFOUND:'+a.text);
+if(WL.length&&all.length>1)no('ambiguous');
 var pool=all.filter(function(e){return !inSb(e);});
 var okOf=function(l){return l.filter(function(e){return !why(e,true);});};
 var good=okOf(pool);
@@ -683,14 +905,54 @@ el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
 var r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;
 var t=D.elementFromPoint(x,y);
 if(!t||!(t===el||el.contains(t)))no('occluded');
-return {ok:true,x:Math.round(x),y:Math.round(y),label:txt(el).slice(0,60)};
+var out={ok:true,x:Math.round(x),y:Math.round(y),label:txt(el).slice(0,60)};
+if(grp)out.group=true;
+return out;
+})
+"""
+
+# kbopt: coordinates of one visible option of an open listbox / dropdown / menu.
+_OPT_JS = r"""
+(function(a){
+var D=document,W=window,R=__RX__,S=__SEL__;
+__GUARD__
+var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
+var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
+var want=norm(a.option).toLowerCase();
+if(!want)throw new Error('KB_CLICK_NOTFOUND:option');
+var WD=new RegExp(R.wd,'i'),SN=new RegExp(R.sn,'ig'),NG=new RegExp(R.neg,'i');
+var dng=function(s){if(WD.test(s))return true;SN.lastIndex=0;var m;while((m=SN.exec(s))){if(!NG.test(s.slice(0,m.index)))return true;}return false;};
+if(dng(want))no('write_danger');
+var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
+var all=Array.prototype.slice.call(D.querySelectorAll(S.opt)).filter(function(e){return vis(e)&&norm(e.innerText||e.textContent).toLowerCase()===want;});
+if(!all.length)throw new Error('KB_CLICK_NOTFOUND:'+a.option);
+if(all.length>1)no('ambiguous');
+var el=all[0];
+el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
+var r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;
+var t=D.elementFromPoint(x,y);
+if(!t||!(t===el||el.contains(t)))no('occluded');
+return {ok:true,x:Math.round(x),y:Math.round(y),label:norm(el.innerText||el.textContent).slice(0,60)};
 })
 """
 
 
+def _sel_json():
+    return json.dumps({"grp": GROUP_SEL, "dlg": DIALOG_SEL, "opt": OPTION_SEL})
+
+
 def click_source():
     """kbclick as one JS function expression (evaluates to a function)."""
-    src = _CLICK_JS.replace("__RX__", json.dumps(CLICK_RX))
+    src = _CLICK_JS.replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
+                   .replace("__GUARD__", guard_source())
+    return " ".join(l.strip() for l in src.strip().splitlines())
+
+
+def option_source():
+    """kbopt as one JS function expression: args {"option": "<exact text>"} ->
+    {ok,x,y,label} of the visible option in an open listbox/dropdown/menu."""
+    src = _OPT_JS.replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
+                 .replace("__GUARD__", guard_source())
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
@@ -710,9 +972,15 @@ def click_reason(error_text):
     return None
 
 
+# Every javascript_tool text the plugin generates starts with this marker; the
+# kb_guard hook denies any other javascript_tool text for the Chrome agents.
+JS_MARKER = "/*KB*/"
+
+
 def probe_source():
     """The probe as one JS function expression (evaluates to a function)."""
-    src = _PROBE_JS.replace("__TENANT__", json.dumps(tenant_regexes())) \
+    src = _PROBE_JS.replace("__GUARD__", guard_source()) \
+                   .replace("__TENANT__", json.dumps(tenant_regexes())) \
                    .replace("__NF__", json.dumps(NF_SOURCE)) \
                    .replace("__NONLATIN__", str(Q.NONLATIN_MIN)) \
                    .replace("__SLUG_STOP__", json.dumps(sorted(Q.SLUG_STOP)))
@@ -720,17 +988,18 @@ def probe_source():
 
 
 def install_action():
-    """javascript_tool input that stores the probe (kbp) and the click guard (kbc)
-    in sessionStorage. Sent first in the first batch of every run."""
-    text = (f"var S={json.dumps(probe_source())};sessionStorage.setItem('{KEY}',S);"
+    """javascript_tool input that stores the probe (kbp), the click guard (kbc) and the
+    option picker (kbo) in sessionStorage. Sent first in the first batch of every run."""
+    text = (f"{JS_MARKER}var S={json.dumps(probe_source())};sessionStorage.setItem('{KEY}',S);"
             f"var K={json.dumps(click_source())};sessionStorage.setItem('{KBC_KEY}',K);"
+            f"var O={json.dumps(option_source())};sessionStorage.setItem('{KBO_KEY}',O);"
             f"'{KEY}:'+S.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
 
 
 def stub(args, key=KEY):
     """Short per-visit call: runs the stored function, throws KB_NOPROBE if absent."""
-    return (f"(sessionStorage.getItem('{key}')?(0,eval)(sessionStorage.getItem('{key}'))"
+    return (f"{JS_MARKER}(sessionStorage.getItem('{key}')?(0,eval)(sessionStorage.getItem('{key}'))"
             f":()=>{{throw new Error('KB_NOPROBE')}})({json.dumps(args)})")
 
 
@@ -802,6 +1071,59 @@ def canary_actions(base_url, first_persona, demo, gif):
             _export(gif)]
 
 
+# Sign-in accounts: admin and faculty share one (portal switch); the learner has
+# its own (the owner signs in by hand); an external evaluator arrives by an emailed link.
+ACCOUNT_OF = {"admin": "main", "faculty": "main", "learner": "learner", "external": "external"}
+ACCOUNT_ORDER = ("main", "learner", "external")
+SIGNIN_OF = {"learner": "learner", "external": "external_link"}      # by account
+PERSONA_ORDER = ("admin", "faculty", "learner", "external")
+REASON_NO_EXTERNAL_LINK = "external_link_missing"      # kb_format words: "external link not given"
+RETURN_SIGNIN = "main"              # after a learner/external batch the owner signs back in as admin
+
+
+def account_of(persona):
+    return ACCOUNT_OF.get(persona, "main")
+
+
+def persona_order(personas):
+    """Personas grouped by account (main, learner, external), admin before faculty."""
+    def key(p):
+        po = PERSONA_ORDER.index(p) if p in PERSONA_ORDER else len(PERSONA_ORDER)
+        return (ACCOUNT_ORDER.index(account_of(p)), po, personas.index(p))
+    return sorted(personas, key=key)
+
+
+def page_label(url):
+    """The menu/page label of a start URL: the last non-numeric path segment,
+    title-cased ("/vadministration/curriculum/sessions/" -> "Sessions")."""
+    path = str(url or "").split("#", 1)[0].split("?", 1)[0]
+    segs = [x for x in path.split("/") if x and not x.isdigit()]
+    return re.sub(r"[-_]+", " ", segs[-1]).strip().title() if segs else ""
+
+
+def step_labels(clicks, step, page, last):
+    """Labels the screen after `step` clicks should show. Start screen: the page's
+    menu label + the first click's text; a middle screen: the NEXT click's text (the
+    button the reader presses next, ringed); the last screen: `last` (the ticket's
+    inputs labels). No clicks: `last`, as before."""
+    if not clicks:
+        return list(last)
+    nxt = clicks[step] if step < len(clicks) else None
+    nxt_text = [nxt["text"]] if nxt and nxt.get("text") else []
+    if step == 0:
+        return ([page] if page else []) + nxt_text
+    if nxt is None:
+        return list(last)
+    return nxt_text
+
+
+def external_start(link):
+    """path+query of the emailed external link (host, hash dropped); "" if none."""
+    from urllib.parse import urlsplit
+    u = urlsplit(str(link or "").strip())
+    return (u.path or "/") + ("?" + u.query if u.query else "") if (u.path or u.query) else ""
+
+
 def _click_spec(c):
     """Normalise a capture_plan click to {"text"} or {"row": True}."""
     if isinstance(c, dict) and c.get("row"):
@@ -810,7 +1132,38 @@ def _click_spec(c):
     return {"text": str(text)}
 
 
-def build_calls(plan, inputs, routes, per_batch=3):
+def _write_visits(data_plan, entries, args_of, gif_dir):
+    """Visits for the approved data plan's records that carry an "after" block (the
+    screen after Save). Not in any capture batch: the data agent drives them.
+    {"visit_id": "<eid>-w<k>", "kind": "write", ...}, ordered by entry then k."""
+    out, count = [], {}
+    order = {eid: i for i, eid in enumerate(entries)}
+    for tid, recs in (data_plan.get("tickets") or {}).items():
+        for rec in (recs or {}).get("records") or []:
+            after = rec.get("after")
+            if not isinstance(after, dict):
+                continue
+            mine = [eid for eid, e in entries.items() if tid in e["tickets"]]
+            eid = next((x for x in mine if entries[x]["persona"] == rec.get("persona")),
+                       mine[0] if mine else None)
+            if eid is None:
+                continue
+            e = entries[eid]
+            count[eid] = k = count.get(eid, 0) + 1
+            labels = [str(x) for x in (after.get("labels") or [])][:MAX_LABELS]
+            vid = f"{eid}-w{k}"
+            v = {"visit_id": vid, "kind": "write", "entry": eid, "ticket": tid, "tickets": [tid],
+                 "record_id": rec.get("id"), "persona": rec.get("persona") or e["persona"],
+                 "surface": e["surface"], "url": rec.get("start") or e["url"],
+                 "session": e.get("session", "unknown"), "labels": labels,
+                 "gif": f"{gif_dir}/{vid}.gif", "args": {**args_of[eid], "labels": labels}}
+            if e.get("private"):
+                v["private"] = True
+            out.append(v)
+    return sorted(out, key=lambda v: (order[v["entry"]], int(v["visit_id"].rsplit("-w", 1)[1])))
+
+
+def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link=None):
     demo = routes["demo"]
     gif_dir = f"{DL_ROOT}/{plan.get('run_id') or 'run'}"
     surface_wait = {(s.get("persona"), s.get("surface")): s.get("wait_s")
@@ -818,40 +1171,57 @@ def build_calls(plan, inputs, routes, per_batch=3):
     base = demo["base_url"]
     entry = demo.get("portal_entry") or {}
     labels_of = demo.get("portal_label") or {}
-    visits, entries, screens = [], {}, []
+    ext_url = external_start(external_link)
+    visits, entries, screens, args_of = [], {}, [], {}
     for c in plan["capture_plan"]:
-        if not c.get("url"):
+        url, private = c.get("url"), False
+        if c["persona"] == "external":                # reached by the emailed link only
+            if not ext_url:
+                screens.append({"visit_id": f"x{len(screens) + 1:02d}-ext", "entry": "",
+                                "persona": c["persona"], "surface": c["surface"],
+                                "tickets": list(c.get("tickets", [])),
+                                "reason": REASON_NO_EXTERNAL_LINK, "detail": ""})
+                continue
+            url, private = ext_url, True
+        if not url:
             continue
         if c.get("skip_reason"):                      # route-fix: the page does not exist
             screens.append({"visit_id": f"x{len(screens) + 1:02d}-skip", "entry": "",
                             "persona": c["persona"], "surface": c["surface"],
                             "tickets": list(c.get("tickets", [])),
-                            "reason": c["skip_reason"], "detail": c["url"]})
+                            "reason": c["skip_reason"], "detail": url})
             continue
         per_ticket = {t: list((inputs.get(t) or {}).get("labels", []))[:MAX_LABELS]
                       for t in c.get("tickets", [])}
-        flat = []
-        for ls in per_ticket.values():
-            for l in ls:
-                if l not in flat:
-                    flat.append(l)
         eid = f"v{len(entries) + 1:02d}"
         clicks = [_click_spec(k) for k in (c.get("clicks") or [])]
         wait = c.get("wait_s", surface_wait.get((c["persona"], c["surface"])))
         args = {"v": PROBE_VERSION, "login": demo["login_path"],
-                "portal": labels_of.get(c["persona"]), "labels": flat,
+                "portal": labels_of.get(c["persona"]),
                 "side": demo.get("sidebar_selector", ""),
                 "allow": list(demo.get("allow_strings", [])), "domain": demo["domain"]}
-        entries[eid] = {"persona": c["persona"], "surface": c["surface"], "url": c["url"],
+        entries[eid] = {"persona": c["persona"], "surface": c["surface"], "url": url,
                         "tickets": list(c.get("tickets", [])), "session": c.get("session", "unknown"),
                         "clicks": clicks, "write_gated": c.get("write_gated") or ""}
+        if private:
+            entries[eid]["private"] = True
+        args_of[eid] = args
+        page = page_label(url)
         for step in range(len(clicks) + 1):
             vid = (f"{eid}-s{step}" if clicks else eid)
+            per_step = {t: step_labels(clicks, step, page, ls) for t, ls in per_ticket.items()}
+            flat = []
+            for ls in per_step.values():
+                for l in ls:
+                    if l not in flat:
+                        flat.append(l)
             v = {"visit_id": vid, "entry": eid, "step": step,
                  "kind": "click" if step else "start",
-                 "persona": c["persona"], "surface": c["surface"], "url": c["url"],
+                 "persona": c["persona"], "surface": c["surface"], "url": url,
                  "tickets": list(c.get("tickets", [])), "session": c.get("session", "unknown"),
-                 "labels": per_ticket, "gif": f"{gif_dir}/{vid}.gif", "args": dict(args)}
+                 "labels": per_step, "gif": f"{gif_dir}/{vid}.gif", "args": {**args, "labels": flat}}
+            if private:
+                v["private"] = True
             if wait is not None:
                 v["wait_s"] = wait
             if step:
@@ -866,12 +1236,12 @@ def build_calls(plan, inputs, routes, per_batch=3):
             screens.append({"visit_id": f"{eid}-write", "entry": eid, "persona": c["persona"],
                             "surface": c["surface"], "tickets": list(c.get("tickets", [])),
                             "reason": "needs_write", "detail": c["write_gated"]})
+    write_visits = _write_visits(data_plan, entries, args_of, gif_dir) if data_plan else []
+    covered = {w["entry"] for w in write_visits}      # an approved record replaces the needs_write screen
+    screens = [x for x in screens if not (x.get("reason") == "needs_write" and x["entry"] in covered)]
     batches, seen = [], set()
     install_sent = []
-    personas = []
-    for v in visits:
-        if v["persona"] not in personas:
-            personas.append(v["persona"])
+    personas = persona_order(list(dict.fromkeys(v["persona"] for v in visits)))
 
     def flush(persona, chunk):
         if not chunk:
@@ -903,12 +1273,33 @@ def build_calls(plan, inputs, routes, per_batch=3):
             if len(chunk) >= max(1, per_batch) or v.get("has_clicks"):
                 flush(persona, chunk)       # an entry's clicks follow its start page directly
         flush(persona, chunk)
+    accounts, ret = [], None
+    for ac in ACCOUNT_ORDER:
+        ps = [p for p in personas if account_of(p) == ac]
+        mine = [b for b in batches if b["persona"] in ps]
+        if not mine:
+            continue
+        row = {"account": ac, "personas": ps}
+        if ac in SIGNIN_OF:
+            row["signin"] = SIGNIN_OF[ac]
+            mine[0]["needs_signin"] = SIGNIN_OF[ac]       # the capturer stops before this batch
+        accounts.append({**row, "batches": [b["batch_id"] for b in mine]})
+    for b in batches:
+        b["account"] = account_of(b["persona"])
     home = (demo.get("portal_entry") or {}).get(demo.get("home_portal", "admin"))
     restore = [_act("navigate", url=base + home), _wait()] if home else []
+    if accounts and accounts[-1]["account"] != "main":     # the browser ends signed in as the learner/evaluator
+        ret = {"batch_id": f"b{len(batches) + 1:02d}", "persona": demo.get("home_portal", "admin"),
+               "kind": "restore", "account": "main", "needs_signin": RETURN_SIGNIN,
+               "visit_ids": [], "actions": restore}
+        batches.append(ret)
+        accounts.append({"account": "main", "personas": [ret["persona"]], "signin": RETURN_SIGNIN,
+                         "return": True, "batches": [ret["batch_id"]]})
     canary_gif = f"{gif_dir}/canary.gif"
     return {"run_id": plan.get("run_id"), "base_url": base, "probe_version": PROBE_VERSION,
             "gif_dir": gif_dir, "install": install_action(), "visits": visits,
-            "entries": entries, "screens": screens,
+            "entries": entries, "screens": screens, "accounts": accounts,
+            "write_visits": write_visits,
             "batches": batches, "restore": restore,
             "abort": [_act("gif_creator", action="clear")],
             "canary": {"gif": canary_gif,
@@ -918,6 +1309,34 @@ def build_calls(plan, inputs, routes, per_batch=3):
 
 def _j(x):
     return "```json\n" + json.dumps(x, indent=1) + "\n```"
+
+
+def _accounts_md(calls):
+    """capture.md text for the account groups (no JSON block): which batches belong to
+    which sign-in, the stop before an account that needs one, and --from-batch."""
+    L = ["## Accounts and sign-in", "",
+         "Batches are ordered by account, then persona (admin before faculty). The accounts, in order:", ""]
+    for a in calls.get("accounts") or []:
+        L.append(f"- `{a['account']}` — personas {', '.join(a['personas'])}; "
+                 + (f"sign-in `{a['signin']}`; " if a.get("signin") else "no sign-in step; ")
+                 + f"batches {', '.join(a['batches'])}")
+    L += ["",
+          "When the next batch to send is the first batch of an account that has a `signin` "
+          "(its heading says so), you are stopping unless the orchestrator started you at or after "
+          "it: write the raw files for the batches already done, do **not** send the restore, and "
+          "reply `KB_CAPTURE_DONE ok=<n> stop=needs_signin:<account>`. The orchestrator then has the "
+          "owner sign in (learner) or gives the emailed link (external) and starts you again with "
+          "`--from-batch <batch_id>`.", "",
+          "**Return batch.** If the last batch is a `restore` batch (heading says so), it comes after "
+          "a learner/external account: the browser is signed in as that user, so it is the first batch of "
+          "account `main` with sign-in `main` and the same stop rule applies "
+          "(`stop=needs_signin:main`); when you are started at it, send its `actions` (the navigation back "
+          "to the home portal) and write `raw/<batch_id>.json` with no items.", "",
+          "**Start at batch X.** If the prompt you were given says `--from-batch <id>`, skip every batch "
+          "before `<id>` (their raw files already exist; do not rewrite them), send the install action "
+          "from section 2 once before the first batch you send, and carry on from there. Everything "
+          "else (stop rules, abort, restore) is unchanged.", ""]
+    return L
 
 
 def capture_md(calls):
@@ -954,15 +1373,31 @@ def capture_md(calls):
           "2. In `act`, replace the two strings `\"$X\"` and `\"$Y\"` (quotes included) with the numbers "
           "`x` and `y` from that result and from nothing else, then send `act` with `browser_batch`. "
           "That one `left_click` is the only click you ever make.",
-          "3. If `pick` fails with an error containing `KB_CLICK_REFUSED`, `KB_CLICK_NOTFOUND` or "
+          "3. **Group rows.** If the `pick` result has `\"group\":true`, the row it found is a group "
+          "header that expands to its sessions: send `act`'s first action (the `left_click`) alone, wait "
+          "1 second, then send the `kbclick` action again (the last action of `pick`, nothing else) **once** "
+          "in the same visit to get a leaf row, and use that result's `x`,`y` for the real `act`. If the "
+          "second result is still `group` or an error, treat it as a refused click (step 4). The recording "
+          "keeps running through all this.",
+          "4. If `pick` fails with an error containing `KB_CLICK_REFUSED`, `KB_CLICK_NOTFOUND` or "
           "`KB_TENANT_ROW`: do not send `act`; send the abort actions (section 5); write the batch's "
           "raw file with status `ok` and the item `{\"visit_id\": …, \"click_error\": \"<the error "
           "text>\"}`; then skip every later batch with the same `entry` and carry on with the next "
           "batch of another entry. This is not a stop.", ""]
+    L += _accounts_md(calls)
     for b in calls["batches"]:
+        if b.get("needs_signin"):
+            L += [f"> **First batch of account `{b['account']}` (sign-in `{b['needs_signin']}`).** "
+                  f"Do not send it unless you were started with `--from-batch {b['batch_id']}` "
+                  f"or a later batch; otherwise stop here (see \"Accounts and sign-in\").", ""]
+        if b.get("kind") == "restore":
+            L += [f"### {b['batch_id']} — return to the {b['persona']} portal (restore batch)", "",
+                  "Send once, after the owner has signed back in as admin:", "", _j(b["actions"]), "",
+                  f"Then write `raw/{b['batch_id']}.json` with an empty `items` list and reply as in section 6.", ""]
+            continue
         if b.get("kind") == "click":
             c = next((v["click"] for v in calls["visits"] if v["visit_id"] == b["visit_ids"][0]), {})
-            what = "the first row link" if c.get("row") else f"\"{c.get('text')}\""
+            what = "the first row" if c.get("row") else f"\"{c.get('text')}\""
             L += [f"### {b['batch_id']} — {b['persona']} — click visit {b['visit_ids'][0]} "
                   f"(entry {b['entry']}, click {b['step']}: {what})", "",
                   "`pick`:", "", _j(b["pick"]), "", "`act` (substitute `$X`, `$Y`):", "", _j(b["act"]), "",
@@ -997,11 +1432,21 @@ def capture_md(calls):
           "error, when the tool is unreachable), send this once with `browser_batch` so a half "
           "recording is never exported later, then write the raw file:", "",
           _j(calls["abort"]), "",
-          "## 6. Restore (always, after the last batch or after a stop)", "",
+          "## 6. Restore (after the last batch or after a status stop)", "",
           "Send this once with `browser_batch` so the browser returns to the home portal:", "",
           _j(calls["restore"]), "",
-          "Reply `KB_CAPTURE_DONE ok=<batches written with status ok> stop=<first non-ok status|none>`.", ""]
+          "Send it only when you reached the end or a status stop; not for `needs_signin`.", "",
+          "Reply `KB_CAPTURE_DONE ok=<batches written with status ok> stop=<first non-ok status|needs_signin:<account>|none>`.", ""]
     return "\n".join(L)
+
+
+def data_plan_sha256(plan):
+    """sha256 of the approved content: the plan's tickets only, canonical JSON. The
+    same function as kb_data.plan_hash (a test pins that they agree); kb_data imports
+    this module, so the few lines are repeated here rather than imported back."""
+    body = json.dumps({"tickets": (plan or {}).get("tickets") or {}}, sort_keys=True,
+                      ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def cmd_plan_calls(a):
@@ -1010,14 +1455,24 @@ def cmd_plan_calls(a):
     routes = json.loads(Path(a.routes).read_text())
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    calls = build_calls(plan, inputs, routes, a.per_batch)
+    data_plan, note = None, ""
+    if a.data_plan:
+        data_plan = json.loads(Path(a.data_plan).read_text())
+        if data_plan.get("approved") is not True:     # the owner has not said y: no write visits
+            data_plan, note = None, " (data plan not approved: no write visits)"
+        elif data_plan.get("approved_sha256") != data_plan_sha256(data_plan):
+            data_plan, note = None, " (data plan changed after approval: no write visits)"
+    calls = build_calls(plan, inputs, routes, a.per_batch, data_plan, a.external_link)
     (out_dir / "calls.json").write_text(json.dumps(calls, indent=1))
     (out_dir / "capture.md").write_text(capture_md(calls))
     skipped = sum(1 for c in plan["capture_plan"] if not c.get("url") or c.get("skip_reason"))
     print(f"planned {len(calls['visits'])} visits in {len(calls['batches'])} batches "
-          f"({skipped} without a URL skipped) -> {out_dir / 'capture.md'}")
+          f"({skipped} without a URL skipped), {len(calls['accounts'])} account(s), "
+          f"{len(calls['write_visits'])} write visit(s){note} -> {out_dir / 'capture.md'}")
     emit({"ok": True, "action": "plan-calls", "visits": len(calls["visits"]),
           "batches": len(calls["batches"]), "skipped": skipped,
+          "accounts": [x["account"] for x in calls["accounts"]],
+          "write_visits": len(calls["write_visits"]),
           "calls": str(out_dir / "calls.json"), "capture_md": str(out_dir / "capture.md")})
     return 0
 
@@ -1076,8 +1531,9 @@ def route_check_urls(plan, cap=ROUTE_CHECK_MAX):
 
 def route_check_source(urls, login_path):
     """javascript_tool text: fetch()es every URL in the signed-in tab and returns a
-    JSON string [{url,status,final,login,nf}]."""
-    return (_ROUTE_CHECK_JS.strip().replace("\n", " ")
+    JSON string [{url,status,final,login,nf}]. It starts with the /*KB*/ marker, then `await`: the tool
+    evaluates like a REPL, and an un-awaited async IIFE hands back its Promise."""
+    return (JS_MARKER + "await " + _ROUTE_CHECK_JS.strip().replace("\n", " ")        # javascript_tool: REPL, top-level await
             + f"({json.dumps(urls)},{json.dumps(login_path)},{json.dumps(NF_SOURCE)})")
 
 
@@ -1184,16 +1640,23 @@ def frame_problem(img_w, img_h, probe):
     return None
 
 
+DATA_RAW_PREFIX = "data-"
+
+
 def _load_raw(raw_dir):
-    """visit_id -> item, batch_id -> raw (later files / items win)."""
+    """visit_id -> item, batch_id -> raw (later files / items win). The data agent's
+    files (raw/data-<ticket>.json, DATA_RAW_PREFIX) only contribute items: they are
+    no batch, and a batch id never starts with "data-"."""
     items, batches = {}, {}
     for f in sorted(Path(raw_dir).glob("*.json")):
         try:
             r = json.loads(f.read_text())
         except ValueError:
             continue
-        bid = r.get("batch_id") or f.stem
-        batches[bid] = r
+        if not isinstance(r, dict):
+            continue
+        if not f.name.startswith(DATA_RAW_PREFIX):
+            batches[r.get("batch_id") or f.stem] = r
         for it in r.get("items") or []:
             if it.get("visit_id"):
                 items[it["visit_id"]] = it
@@ -1307,7 +1770,9 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                         allow_strings=demo["allow_strings"])["verdict"]
         by_label = {l.get("l"): l for l in probe["labels"]}
         entries = []
-        source = f"chrome:{calls['base_url'].split('//')[-1]}{probe.get('u', visit['url'])} {now}"
+        host = calls['base_url'].split('//')[-1]
+        source = (f"chrome:{host} external-link {now}" if visit.get("private")      # never the link
+                  else f"chrome:{host}{probe.get('u', visit['url'])} {now}")
         for tid in visit["tickets"]:
             for label in (visit["labels"].get(tid) or []):
                 pl = by_label.get(label)
@@ -1327,6 +1792,20 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                 "visit_id": visit["visit_id"], "sidebar": bool(pl.get("sb")),
                                 "frame_source": frame_source,
                                 **(ev or {"label": label})})
+        h = probe.get("h") if isinstance(probe.get("h"), dict) else None
+        if visit.get("kind") in ("click", "write") and not problem and h and h.get("t") and h.get("b"):
+            have = {e["ticket"] for e in entries}
+            x, y, w, hh = h["b"]
+            box = to_image_box({"x": x, "y": y, "width": w, "height": hh}, scale)
+            for tid in visit["tickets"]:
+                if tid in have or not (visit["labels"].get(tid) or []):
+                    continue                  # a label was found, or this ticket wants no shot here
+                ev = shot_evidence(h["t"], h["t"], box, None, False, tenant_dom, tenant_ocr)
+                entries.append({"ticket": tid, "persona": visit["persona"],
+                                "surface": visit["surface"], "frame": str(dest),
+                                "verified": True, "source": source,
+                                "visit_id": visit["visit_id"], "sidebar": False,
+                                "frame_source": frame_source, "fallback": "heading", **ev})
     return entries, None
 
 
@@ -1334,7 +1813,8 @@ def _screens_missing(calls, screens, shots):
     """ticket -> {"reason", "detail"}: why a ticket has no (more) screenshots. The
     first failing screen in visit order wins; needs_write screens come last. A
     ticket whose screens all loaded but shows none of its labels is label_not_found."""
-    order = [v["visit_id"] for v in calls["visits"]] + [x["visit_id"] for x in calls.get("screens") or []]
+    order = ([v["visit_id"] for v in calls["visits"]] + [w["visit_id"] for w in calls.get("write_visits") or []]
+             + [x["visit_id"] for x in calls.get("screens") or []])
     pos = {vid: i for i, vid in enumerate(order)}
     missing = {}
     for sc in sorted(screens, key=lambda x: pos.get(x["visit_id"], len(pos))):
@@ -1390,7 +1870,8 @@ def cmd_ingest(a):
             continue
         pr = parse_probe(it.get("probe")) if it else None
         if pr and pr.get("nf"):                         # the 404 page: no shot, no label misses
-            screen.update(reason="page_not_found", detail=pr.get("u") or v["url"])
+            screen.update(reason="page_not_found",
+                          detail=v["surface"] if v.get("private") else pr.get("u") or v["url"])
             screens[vid] = screen
             settled.add(vid)
             dead[v.get("entry", vid)] = "page_not_found"
@@ -1412,12 +1893,36 @@ def cmd_ingest(a):
             st = (b or {}).get("status", "ok")
             reason = "not_reached" if not b else (st if st != "ok" else "not_reached")
         reasons[key] = reason
+    for w in calls.get("write_visits") or []:        # the data agent's screens (raw/data-<ticket>.json)
+        vid, tid = w["visit_id"], w["ticket"]
+        wv = {**w, "labels": {tid: list(w.get("labels") or [])}, "tickets": [tid]}
+        screen = {"visit_id": vid, "entry": w.get("entry", vid), "step": 0, "persona": w["persona"],
+                  "surface": w["surface"], "tickets": [tid], "reason": None, "detail": ""}
+        it = items.get(vid)
+        if not it:
+            screen.update(reason="write_failed", detail="not run")
+        elif it.get("write_error"):
+            screen.update(reason="write_failed", detail=str(it["write_error"])[:80])
+        else:
+            if it.get("gif"):
+                fetched += 1
+            entries, reason = ingest_visit(wv, it, calls, demo, out_dir, use_ocr, now, a.downloads_dir,
+                                           FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S)
+            if reason is None:
+                ingested.add(vid)
+                new += entries
+                pr = parse_probe(it.get("probe")) or {}
+                if int(it.get("blocked") or pr.get("wb") or 0) >= 1:
+                    screen["note"] = "write_blocked_ok"    # informational: the save was blocked, as planned
+            else:
+                screen.update(reason="write_failed", detail=reason)
+        screens[vid] = screen
     for w in calls.get("screens") or []:
         screens[w["visit_id"]] = dict(w)
 
     downloads_left = []
     if a.downloads_dir:
-        for v in calls["visits"]:
+        for v in calls["visits"] + (calls.get("write_visits") or []):
             if (Path(a.downloads_dir) / v["gif"]).is_file():
                 downloads_left.append(v["gif"])
     kept = [s for s in manifest["shots"] if s.get("visit_id") not in ingested]
@@ -1438,7 +1943,8 @@ def cmd_ingest(a):
         if all(v["visit_id"] in settled for v in mine):
             continue
         e = ent.get(eid) or mine[0]
-        row = {"persona": e["persona"], "surface": e["surface"], "url": e["url"], "recipe": [],
+        row = {"persona": e["persona"], "surface": e["surface"],
+               "url": "" if e.get("private") else e["url"], "recipe": [],     # the external link stays in the run
                "tickets": e["tickets"], "session": e.get("session", "unknown")}
         if e.get("clicks"):
             row["clicks"] = e["clicks"]
@@ -1473,7 +1979,7 @@ def cmd_cleanup(a):
     emptied run folders. Only paths under Downloads/kb-capture are ever touched."""
     calls = json.loads(Path(a.names_from).read_text())
     root = (Path(a.downloads_dir) / DL_ROOT).resolve()
-    names = [v["gif"] for v in calls.get("visits", [])]
+    names = [v["gif"] for v in calls.get("visits", []) + calls.get("write_visits", [])]
     if (calls.get("canary") or {}).get("gif"):
         names.append(calls["canary"]["gif"])
     deleted, absent, kept = [], [], []
@@ -1579,6 +2085,8 @@ def main(argv=None):
     s.add_argument("--inputs", required=True); s.add_argument("--out-dir", required=True)
     s.add_argument("--per-batch", type=int, default=3)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES))
+    s.add_argument("--data-plan", help="the owner-approved data_plan.json: adds write visits")
+    s.add_argument("--external-link", help="the emailed evaluator link (path+query used in the run only)")
     s = sub.add_parser("route-check-js"); s.add_argument("--plan", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES))
     s = sub.add_parser("route-fix"); s.add_argument("--plan", required=True)

@@ -1,4 +1,5 @@
-"""Tests for the 0.26.1 page check: route-check-js / route-fix (a start page that
+"""Tests for the 0.26.1 page check (0.27.0: the snippet starts with `await`, so
+javascript_tool returns the resolved JSON string, not a Promise): route-check-js / route-fix (a start page that
 is a 404 moves to /vadministration/... or is marked page_not_found), the probe's
 `nf` flag and its ingest (reason page_not_found, no shot), and the ZZ DEMO
 allow-strings. Hermetic: no browser, no network; node only for the JS checks.
@@ -66,6 +67,7 @@ class RouteCheckJs(Base):
         self.assertIn("credentials:'same-origin'", src)
         self.assertIn(json.dumps(ROUTES["demo"]["login_path"]), src)
         self.assertLess(len(src), 2000)
+        self.assertTrue(src.startswith("/*KB*/await "))      # javascript_tool is a REPL: no bare Promise
         if NODE:
             r = subprocess.run([NODE, "--check", "-"], input="(async()=>{await " + src + "})()",
                                capture_output=True, text=True)
@@ -83,7 +85,7 @@ global.DOMParser.prototype.parseFromString=function(t){const pw=/password/.test(
  const m=t.match(/<h[12]>(.*?)<\/h[12]>/);
  return {title:'',body:{textContent:t.replace(/<[^>]+>/g,' ')},
   querySelectorAll:()=>[],querySelector:s=>s.indexOf('password')>=0?(pw?{}:null):(m?{textContent:m[1]}:null)};};
-(0,eval)(src).then(r=>console.log(r));
+(0,eval)("(async()=>{return "+src+"})()").then(r=>console.log(r));
 """
         urls = ["/a/", "/b/", "/c/", "/d/"]
         src = C.route_check_source(urls, "/users/login/")

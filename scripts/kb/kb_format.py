@@ -95,6 +95,11 @@ MISSING_REASONS = {
     "tenant_row": "the first row on this screen shows real tenant data",
     "page_not_found": "the capture could not find this page in the app",
     "label_not_found": "the screen did not show the labelled item",
+    "write_failed": "the form step could not be completed",
+    "external_link_missing": "external link not given",
+    # informational, not a failure: the screen was reached through a save that the
+    # capture blocked on purpose; nothing was stored on the demo site
+    "write_blocked_ok": "this screen follows a save the capture does not perform; nothing was stored",
 }
 
 

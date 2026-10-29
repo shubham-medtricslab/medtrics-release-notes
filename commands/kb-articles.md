@@ -64,8 +64,10 @@ needs only Optimus (no GitLab) and Mem:
                  skipped with --from-release) → kb_select filter
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
 3  prepare       kb_select group · kb_ledger match · kb_inputs
-4  preview       plan + estimate → confirm (or stop on dry-run)
-5  capture       plan-calls → canary (you) → kb-capturer (Haiku) in your signed-in Chrome → ingest — exit 3 = some screens left, carry on
+3b page check   route-check-js → route-fix (404 → working twin)
+3c form fills   kb_data bundle → [kb-data-planner, Sonnet, only if a screen is behind a save] → kb_data check
+4  preview       plan + estimate + form fills → confirm (form fills always asked)
+5  capture       plan-calls → canary (you) → kb-capturer (Haiku) → kb-data-maker (Sonnet, approved form fills, saves blocked) → sign-in pauses (learner, external, back to admin) → ingest — exit 3 = some screens left, carry on
 6  write         kb_spec bundle → [kb-writer, Sonnet, all groups in ONE message] → prose/<ticket>.json
 7  assemble      kb_spec assemble (annotate, evidence, gates) → prose retries, ≤2, single article
 8  package       kb_usage report → kb_package (docx + md + ONE soffice batch → PDF + verify, summary, zip)
@@ -271,80 +273,134 @@ $KB_PY $K/kb_ledger.py match --data $RUN/filtered.json --catalogue-notes $RUN/ca
 $KB_PY $K/kb_inputs.py --data $RUN/filtered.json --out $RUN/inputs.json [--summaries $RUN/summaries.txt]
 ```
 
+### Step 3b — Page check (skip with `--no-capture`)
+
+Ticket links go stale (Sessions moved from `/administration/` to
+`/vadministration/`), so check the start pages before anything is planned on
+them — you, in the capture tab (from `tabs_context_mcp`), one call:
+
+```bash
+mkdir -p $RUN/shots && $KB_PY $K/kb_capture.py route-check-js --plan $RUN/groups.json > $RUN/shots/route_check.js
+```
+
+Send that file's text with `javascript_tool` on the tab (it only GETs the start
+pages, plus their `/administration` ↔ `/vadministration` twin, and returns a
+JSON string). Save the returned string to `$RUN/shots/route_check.json`, then:
+
+```bash
+$KB_PY $K/kb_capture.py route-fix --plan $RUN/groups.json --result $RUN/shots/route_check.json --out $RUN/groups.json
+```
+
+It moves a 404 start page to its working twin, or marks it `page_not_found`
+(that page is skipped and its tickets say why). Exit 3 = the site showed its
+sign-in page: ask the owner to sign in to Chrome, then re-run this step. If the
+call returned nothing usable (`{}`, empty, an error), say so in one line and go
+on without the check.
+
+### Step 3c — Form-fill plan (only when a screen sits behind a save)
+
+Some screens only appear after a save (M1-465's "Notify Participants?" box).
+These are reached by **filling the form with demo values and pressing Save
+while the page's write guard blocks the save request**, capturing the dialog,
+then clicking its cancel-type button. Nothing is ever stored on the demo site.
+
+```bash
+$KB_PY $K/kb_data.py bundle --groups $RUN/groups.json --data $RUN/filtered.json --out $RUN/data_planner.md
+```
+
+`tickets: 0` → no form fills this run; skip to Step 4. Otherwise spawn ONE Task:
+`subagent_type: "medtrics-release-notes:kb-data-planner"`, `model: "sonnet"`,
+prompt `Brief: $RUN/data_planner.md. Write the draft to $RUN/data_plan_draft.json.`
+Log usage (`--agent kb-data-planner --scope plan --model sonnet`). Then:
+
+```bash
+$KB_PY $K/kb_data.py check --draft $RUN/data_plan_draft.json --out $RUN/data_plan.json --today $TODAY [--period-end <YYYY-MM-DD>]
+```
+
+Pass `--period-end` when the start page showed the current academic period
+(e.g. "Jul 01, 2026 - Jun 30, 2027 (current)" → `2027-06-30`). It drops unsafe
+form fills (listed as rejected) and prints the preview lines for Step 4.
+
 ### Step 4 — Preview
 
 Show, compactly: tickets kept and skipped (with reasons), writer groups (persona,
-tickets), the capture visits per persona (admin first, then faculty through the
-Personal portal) — for each ticket with its own route, the start page, the
-click path (e.g. `/administration/curriculum/sessions/` → first row → View →
-Add Schedule) and any step that only appears after a save ("described in
-words, no screenshot") — the uncapturable list (including "no screen": an
-email or background change),
+tickets), the capture visits per sign-in — admin first, then faculty through
+the Personal portal (same sign-in), then learner (you sign in as the learner
+when asked), then the external evaluator link — for each ticket with its own
+route, the start page and the click path (e.g.
+`/vadministration/curriculum/sessions/` → first row → Add schedule), the
+uncapturable list (including "no screen": an email or background change),
 prior-article hits, and an estimate — writer calls = number of groups,
-classifier calls = 0 or 1, one capture call, input size from `kb_inputs`.
+classifier calls = 0 or 1, one capture call (plus one per sign-in pause), one
+form-fill planner and one form-fill agent call when there are form fills.
+
+**Form fills** (from Step 3c): show its preview lines as they are — page and
+clicks, each field and value, "presses Save — the save request is blocked;
+then clicks <Cancel/No…>", "nothing is stored on the demo site".
+
+If any capture entry is for the external evaluator persona, ask the owner for
+the evaluator link now (it stays in the run folder only; it is never written to
+the articles, the summary or Mem; opening it may mark that evaluation as
+started). No link → those screens are skipped as "external link not given".
 
 Say: "Chrome must be signed in to medtrics.medtricslab.com; don't use that Chrome
-window until capture finishes." The capture drives one tab of your Chrome, visits
-each page and returns to the Admin portal at the end.
+window until capture finishes." The capture drives one tab of your Chrome and
+returns to the Admin portal at the end. Also say: "Chrome must save downloads to
+Downloads without asking (Settings → Downloads → 'Ask where to save each file'
+off). GIFs land in Downloads/kb-capture/ and are copied out; you can delete them
+at the end." Add both only when capture will run.
 
-Also say: "Chrome must save downloads to Downloads without asking (Settings →
-Downloads → 'Ask where to save each file' off). GIFs land in
-Downloads/kb-capture/ and are copied out; you can delete them at the end." Add
-it to the preview only when capture will run.
-
-`dry-run` → stop here. Named ids (you typed the tickets) → go straight on, no
-question. `pending`, `since` and the release hand-off (`--from-release`) → ask
-`Draft these N articles? (y/n)` unless `--yes`.
+`dry-run` → stop here. Then:
+- Articles: named ids → go straight on. `pending`, `since` and the release
+  hand-off (`--from-release`) → ask `Draft these N articles? (y/n)` unless `--yes`.
+- **Form fills: always ask**, even with named ids and `--yes`:
+  `Fill these N forms and press Save with saving blocked? Nothing is stored. (y/n)`.
+  Yes → `$KB_PY $K/kb_data.py approve --plan $RUN/data_plan.json`. No (or no
+  answer) → don't approve; those screens stay "described in words".
 
 ### Step 5 — Capture
 
 With `--no-capture` (or a Step 0 answer that ended in "continue"), write
-`{"shots": []}` to `$RUN/shots/shots.json` and go on. Otherwise each visit is
+`{"shots": []}` to `$RUN/shots/shots.json` and go on. Otherwise each screen is
 recorded with `gif_creator` and exported as a GIF into `$DL/kb-capture/<run_id>/`;
 ingest takes the last frame as the screenshot. No screenshot is taken and the
 capturer never receives an image.
 
-A ticket whose own text gives a click path (e.g. "Open a Session > View > Add
-Schedule") gets one screen per click. Every click target is chosen by the
-`kbclick` script inside the page, which refuses anything that could change data
-(submit buttons, POST forms, delete / remove / toggle / portal-switch links,
-red buttons, write words like Save or Send, buttons that are not a modal / tab
-toggle); the capturer only clicks the coordinates it returns. The plugin's
-hook (`hooks/kb_guard.py`) also blocks typing, key presses, drags and form
-filling for the capture agent. A first-row click happens only when the page
-shows no tenant data. A step that only appears after a save is never reached:
-the article describes it in words.
+Safety, all enforced by code, not by the model:
+- **Write guard.** The page script installs, on every call, a guard that blocks
+  every request that is not a GET (fetch, XHR, beacons, form posts). Nothing
+  this command does can save, update or delete on the site — including the Save
+  press of a form fill.
+- **Click targets.** Every click is chosen by the `kbclick` page script, which
+  refuses delete / remove / toggle / portal-switch links, red buttons, write
+  words (Save, Send …, outside an approved form fill), submit buttons and POST
+  forms, and two different targets with the same text. A first-row click
+  happens only when the page shows no hard tenant data, and prefers a real row
+  over a course group that only expands.
+- **Keys.** The plugin hook (`hooks/kb_guard.py`) blocks typing, keys, drags and
+  form filling for the capture agent, and lets the form-fill agent type but
+  press only Tab and Escape. For both agents it also denies typed text holding a
+  newline or tab, any `javascript_tool` text that does not start with the
+  `/*KB*/` marker every generated script carries, and any `navigate` off the demo
+  host (or to a delete / remove / logout / portal-switch URL other than the
+  configured portal entries). The hook applies to the spawned agents only: when
+  you follow `capture.md` yourself (the fallback below), the hook does not apply
+  to you; the page guard and `kbclick` still do.
 
-1. **Check the pages exist** — you, in the capture tab, one call. Ticket links
-   go stale (Sessions moved from `/administration/` to `/vadministration/`):
+Each screen rings the button you press next on it (the first screen rings the
+menu item); a dialog with nothing else to ring gets its title ringed.
 
-   ```bash
-   mkdir -p $RUN/shots && $KB_PY $K/kb_capture.py route-check-js --plan $RUN/groups.json > $RUN/shots/route_check.js
-   ```
-
-   Send that file's text with `javascript_tool` on the tab (it only GETs the
-   start pages, plus their `/administration` ↔ `/vadministration` twin, and
-   returns a JSON string). Save the returned string to
-   `$RUN/shots/route_check.json`, then:
-
-   ```bash
-   $KB_PY $K/kb_capture.py route-fix --plan $RUN/groups.json --result $RUN/shots/route_check.json --out $RUN/groups.json
-   ```
-
-   It moves a 404 start page to its working twin, or marks it
-   `page_not_found` (that page is skipped and its tickets say why). Exit 3 =
-   the site showed its sign-in page: ask the owner to sign in to Chrome, then
-   re-run this step. If the call returned nothing usable (`{}`, empty, an
-   error), say so in one line and go on without the check.
-2. Plan the calls (no model, no browser):
+1. Plan the calls (no model, no browser):
 
    ```bash
-   $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots
+   $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots \
+       [--data-plan $RUN/data_plan.json] [--external-link '<link>']
    ```
 
-   It writes `shots/calls.json` (visits, `canary`, `abort`, `gif_dir`) and
-   `shots/capture.md`.
-3. **Canary** — you, not an agent, with the owner present. Send the `canary`
+   `--data-plan` only when the owner approved the form fills. It writes
+   `shots/calls.json` (visits, write visits, `accounts`, `canary`, `abort`,
+   `gif_dir`) and `shots/capture.md`.
+2. **Canary** — you, not an agent, with the owner present. Send the `canary`
    actions from `calls.json` in one `browser_batch` (tab from `tabs_context_mcp`,
    substituted for every `"$TAB"`; first run only: Chrome may show a download or
    privacy prompt — say so and let the owner allow it). Then:
@@ -353,32 +409,47 @@ the article describes it in words.
    $KB_PY $K/kb_capture.py pickup --downloads-dir $DL --name kb-capture/$RUN_ID/canary.gif --timeout 20
    ```
 
-   Exit 0 → the GIF arrived and was readable (it prints the frame size; the
-   canary stays in Downloads until the cleanup at the end); go on. Exit 1 `download_missing`, 2 `empty_export` or
-   3 `bad_gif` (or the batch itself erroring) → **skip capture with that
-   reason**: write `{"shots": []}` to `$RUN/shots/shots.json`, say why in one
-   line (Chrome download settings — "Ask where to save each file" must be off
-   and Downloads must be the download folder; or a privacy / download prompt
-   that was dismissed) and continue to drafting. Articles then carry
-   missing-screenshot markers.
-4. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
-   `model: "haiku"`, prompt
-   `Run folder: $RUN. Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.`
-   (absolute paths). It drives your Chrome — including the two-part click
-   batches, where it fills `$X`/`$Y` only from the `kbclick` result just before
-   — and writes `raw/<batch_id>.json`. Log usage:
+   Exit 0 → the GIF arrived and was readable (the canary stays in Downloads
+   until the cleanup at the end); go on. Exit 1 `download_missing`, 2
+   `empty_export` or 3 `bad_gif` (or the batch itself erroring) → **skip capture
+   with that reason**: write `{"shots": []}` to `$RUN/shots/shots.json`, say why
+   in one line (Chrome download settings — "Ask where to save each file" must be
+   off and Downloads must be the download folder; or a privacy / download
+   prompt that was dismissed) and continue to drafting.
+3. **Capture, main sign-in.** Spawn ONE Task:
+   `subagent_type: "medtrics-release-notes:kb-capturer"`, `model: "haiku"`,
+   prompt `Run folder: $RUN. Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.`
+   (absolute paths). It writes `raw/<batch_id>.json` and replies
+   `KB_CAPTURE_DONE ok=<n> stop=<…>`. Log usage
+   (`--agent kb-capturer --scope capture --model haiku`). If it replies
+   `KB_CAPTURE NO_CHROME_TOOLS`, or returns without writing any raw file, follow
+   `capture.md` yourself in this session with the same tools and rules (the
+   QA-automation way); say so in one line.
+4. **Form fills** (only when approved, and while the main sign-in is still
+   active — before any learner sign-in):
 
    ```bash
-   $KB_PY $K/kb_usage.py add --run-dir $RUN --agent kb-capturer --scope capture --model haiku \
-       --tokens <total_tokens> --duration-ms <ms> --tool-uses <n>
+   $KB_PY $K/kb_data.py brief --plan $RUN/data_plan.json --calls $RUN/shots/calls.json --out $RUN/shots/data.md
    ```
-5. If it replies `KB_CAPTURE NO_CHROME_TOOLS`, or returns without having written
-   any raw file, follow `$RUN/shots/capture.md` yourself in this session with
-   the same tools and the same rules (the fallback, as QA automation does it).
-   Say so in one line.
-6. Ingest the raw files (reads each GIF from Downloads, copies it to
-   `shots/gifs/` — Downloads itself is never changed here — takes the last
-   frame, verifies it, places the ringed boxes, runs the tenant screen):
+
+   Exit 2 `plan_not_approved` / `plan_changed` → skip form fills, say why. Else
+   spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-data-maker"`,
+   `model: "sonnet"`, prompt
+   `Run folder: $RUN. Brief: $RUN/shots/data.md. Raw folder: $RUN/shots/raw/.`
+   It writes `raw/data-<ticket>.json`. Log usage
+   (`--agent kb-data-maker --scope fill --model sonnet`).
+5. **Sign-in pauses.** If step 3 stopped with `stop=needs_signin:learner`: ask
+   the owner, "Sign in to medtrics.medtricslab.com as the learner in this
+   Chrome, then say done." Claude never signs in. Then re-spawn the capturer
+   with the same prompt plus `--from-batch <that batch id>`. Same for
+   `needs_signin:external` (the evaluator link is opened by the capturer from
+   `capture.md`). At `stop=needs_signin:main`: ask the owner to sign back in as
+   the admin, then re-spawn with `--from-batch <the restore batch>`, which
+   returns the tab to the Admin portal.
+6. Ingest once, after every capture and form fill has finished (reads each GIF
+   from Downloads, copies it to `shots/gifs/` — Downloads itself is never
+   changed here — takes the last frame, verifies it, places the ringed boxes,
+   runs the tenant screen):
 
    ```bash
    $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --downloads-dir $DL
@@ -386,13 +457,11 @@ the article describes it in words.
 7. Exit 3 = some screens were left. Read `shots/resume.json` and say which, with
    the reason: `expired` (sign in to the site again in Chrome), `wrong_persona`,
    `bridge_down`, `no_probe`, `not_reached` (its batch never ran), `retry` (a
-   blocked or unreadable probe), `download_missing` (the GIF never reached
-   Downloads), `empty_export` (the GIF file was empty) or `bad_gif` (it could
-   not be read as an image), `click_refused` (the page script would not click
-   that target, with why), `click_not_found` (no element with that text),
-   `tenant_row` (the first row showed tenant data, so it was not opened) or
-   `needs_write` (the step only appears after a save) or `page_not_found` (the
-   page does not exist in the app). **Continue** — the shots already taken are kept,
+   blocked or unreadable probe), `download_missing`, `empty_export`, `bad_gif`,
+   `click_refused` (with why), `click_not_found`, `tenant_row`, `needs_write`
+   (the step is behind a save and no form fill was approved), `write_failed`
+   (the form fill could not finish), `page_not_found` or
+   `external_link_missing`. **Continue** — the shots already taken are kept,
    the rest become missing-screenshot markers and the summary lists them.
    `--retry-partial` re-runs them later.
 
@@ -523,7 +592,10 @@ can delete it yourself. A later run's sweep moves any leftovers into that run.
 | A GIF missing, empty or bad for one screen | That screen is left (`download_missing`, `empty_export`, `bad_gif`), the others are kept; `--retry-partial` re-runs it |
 | Leftover GIFs from a crashed or un-cleaned run | Step 0's sweep moves `Downloads/kb-capture/*` into `$RUN/shots/stale/` (never deletes); remove them yourself once checked |
 | A click refused or not found | That ticket's remaining screens are left with the reason; the article describes those steps in words |
-| Capture agent can't drive Chrome | The orchestrator follows `capture.md` itself (Step 5.4) |
+| Capture agent can't drive Chrome | The orchestrator follows `capture.md` itself (Step 5.3) |
+| Form fills declined or not approved | Those screens are described in words (`needs_write`) |
+| A form fill's field won't take the value, or the dialog doesn't appear | That screen is left as `write_failed`; nothing was saved |
+| Learner / external screens | The run pauses for you to sign in as the learner (or uses the evaluator link you gave), then asks you to sign back in as admin |
 | tesseract missing | `dom_box` anchors — fine for drafts, refused on publish |
 | LibreOffice missing | No PDFs this run; summary says so; .docx and .md still ship |
 | Capture exits 3 | Continue with what was captured; summary lists the rest |
@@ -542,7 +614,8 @@ can delete it yourself. A later run's sweep moves any leftovers into that run.
 - Touch Oracle (ORC) tickets, bugs or work types.
 - Combine tickets, or update an existing article in place.
 - Type a password or sign in for you.
-- Type, press keys, fill forms or click anything that saves, sends or deletes: capture navigates, waits, parks the pointer, runs a read-only probe, records each screen as a GIF, and clicks only targets the `kbclick` page script allows (menu links, tabs, View / Open, buttons that just open a modal).
+- Save, update or delete anything on the site: every non-GET request is blocked in the page while it runs. Form fills type demo values and press Save only inside that guard, after you approve them, and always end on Cancel / No.
+- Type passwords, sign in, or press Enter.
 - Close your Chrome tabs.
 - Upload to Drive or Intercom.
 

@@ -17,7 +17,7 @@ A plugin hook blocks typing, key presses, drags and form input for you.
 The orchestrator gives you the run folder (`<folder>/.kb-runs/<run_id>/`, given
 as an argument; never assume or invent one), the capture file (`capture.md`,
 inside its `shots/` folder) and the raw folder (`shots/raw/` in the run
-folder). `capture.md` holds the install action, each batch (fenced JSON blocks),
+folder), and optionally `--from-batch <batch_id>` (see "Accounts" below). `capture.md` holds the install action, each batch (fenced JSON blocks),
 the `abort` actions, the `restore` actions and the raw-file contract. Read and
 write only inside that run folder; never use /tmp.
 
@@ -31,7 +31,10 @@ write only inside that run folder; never use /tmp.
    call errors, reply `KB_CAPTURE NO_CHROME_TOOLS` and stop. Note the numeric tab id.
 3. **Read** the capture file with Read.
 4. **Each batch, in order.** The install (probe and click guard) is the first
-   action of the first batch; send nothing extra before it.
+   action of the first batch; send nothing extra before it. With `--from-batch
+   <id>`, skip every batch before `<id>` (their raw files already exist; do not
+   rewrite them), send the install action from `capture.md` once, then start at
+   `<id>`.
    - A **visit batch** (`actions`): send one `browser_batch` whose `actions` are
      the batch's actions exactly as written, with every `"$TAB"` replaced by the
      numeric tab id. Never edit, shorten or fix the JavaScript or any argument.
@@ -47,6 +50,25 @@ write only inside that run folder; never use /tmp.
      "click_error": "<the error text>"}]` and status `ok`; skip every later
      click batch with the same `entry`; carry on with the next batch of another
      entry. This is not a stop.
+   - **Group rows.** If the `pick` result has `"group":true`, the row is a group
+     header: send only `act`'s first action (the `left_click` at its `x`,`y`),
+     wait 1 second with a `browser_batch` `wait`, then send the last action of
+     `pick` (the `kbclick` javascript_tool call, nothing else) **once** and use
+     its `x`,`y` for the real `act`. If that second result is `group` again or
+     an error, treat it as a refused click (abort, `click_error`, skip the
+     entry). The recording keeps running throughout.
+   - **Accounts.** `capture.md` lists the accounts (main = admin and faculty,
+     learner, external) and marks the first batch of an account that needs a
+     sign-in (`needs_signin`). Reaching such a batch, unless `--from-batch`
+     started you at or after it: stop. Write the raw files of the batches
+     already done, send no restore, and reply
+     `KB_CAPTURE_DONE ok=<n> stop=needs_signin:<account>`. The orchestrator has
+     the owner sign in (or gives an emailed link) and starts you again with
+     `--from-batch`. A final `restore` batch (heading "return to the admin
+     portal") follows the last learner or external batch: it is the first batch
+     of account `main` with a sign-in, so stop before it with
+     `stop=needs_signin:main`; started at it, send its `actions` and write its
+     raw file with `"items": []`.
 5. **After each batch, Write `<raw folder>/<batch_id>.json`:**
    ```json
    {"batch_id": "b01", "status": "ok", "error": null,
@@ -73,12 +95,16 @@ write only inside that run folder; never use /tmp.
    - any tool or transport error (bridge, extension, timeout) → `bridge_down`;
    - a call denied by a hook (an error naming `KB_GUARD`) → do not retry it,
      status `bridge_down`.
+
+   A `{row: true}` click opens the first row of the list, whether it is a link
+   or a clickable row; the `kbclick` result is still the only click point. You
+   never use `kbclick`'s write mode: that is the data agent's.
 7. **Abort.** After any stop rule above (except `bridge_down`), send the `abort`
    actions from `capture.md` (a `gif_creator` clear) as one `browser_batch` with
    `"$TAB"` replaced, so a half recording is never exported later.
 8. **Restore.** Always send the `restore` actions at the end, as one
-   `browser_batch` with `"$TAB"` replaced, even after a stop. Skip it only when
-   the status is `bridge_down`.
+   `browser_batch` with `"$TAB"` replaced, even after a stop. Skip it when the
+   status is `bridge_down` and when you stopped for `needs_signin`.
 
 ## Never
 
@@ -93,6 +119,6 @@ write only inside that run folder; never use /tmp.
 
 ## Reply
 
-Exactly one line, nothing else: `KB_CAPTURE_DONE ok=<n> stop=<status|none>`
+Exactly one line, nothing else: `KB_CAPTURE_DONE ok=<n> stop=<status|needs_signin:<account>|none>`
 where `<n>` is the number of batches with status `ok` and `<status>` is the
 status that stopped the run (`none` if it ran to the end).
