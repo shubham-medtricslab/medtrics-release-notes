@@ -10,11 +10,18 @@ Gates
   G1 schema       required keys present and the right shape
   G2 anatomy      every required section can actually be filled
   G3 evidence     a step that shows a screenshot proves which label it rings
-  G4 tenant       no unscreened pixels; publish needs every frame CLEAR
+  G4 tenant       no unscreened pixels; publish needs every frame CLEAR or
+                  REVIEW AND confirmed by the owner (tenant_confirmed_by);
+                  a BLOCK frame never ships
   G5 assets       referenced image files exist on disk
   G6 voice        client-facing copy carries no internal language
-  G7 mode         draft carries banner + provenance; publish carries neither;
-                  publish refuses a step whose screenshot is missing (G7b)
+  G7 mode         draft carries provenance; publish carries no banner. A step
+                  without a screenshot is fine on publish: it keeps its text
+                  and the render prints no marker and no reason.
+
+Modes: "draft" is the candidate check at assembly (images not yet seen by the
+owner, BLOCK frames included so the contact sheet can show them); "publish" is
+the final render's check, after the owner's contact-sheet confirmation.
 """
 import os
 import re
@@ -109,10 +116,13 @@ def g3_evidence(spec, mode="draft"):
             out.append(Failure("G3", f"step {i}",
                                f"anchor must be one of {F.ANCHORS}, got {anchor!r}"))
             continue
-        if mode == "publish" and anchor in F.DRAFT_ONLY_ANCHORS:
+        if (mode == "publish" and anchor in F.DRAFT_ONLY_ANCHORS
+                and not _is_str(ev.get("tenant_confirmed_by"))):
+            # dom_box is not OCR-verified; it ships only when the owner saw the
+            # ring on the contact sheet and confirmed the frame.
             out.append(Failure("G3", f"step {i}",
                                f"anchor '{anchor}' was never OCR-verified; "
-                               "publish needs label_box"))
+                               "publish needs label_box or an owner-confirmed frame"))
             continue
         if anchor == "none":
             out.append(Failure("G3", f"step {i}",
@@ -171,22 +181,29 @@ def g4_tenant(spec, mode):
             out.append(Failure("G4", f"step {i}",
                                f"unscreened frame; tenant must be one of {F.TENANT_VERDICTS}"))
             continue
-        if mode == "publish" and verdict != "CLEAR":
+        if mode == "publish" and verdict == "BLOCK":
             out.append(Failure("G4", f"step {i}",
-                               f"frame screened {verdict}; a published article carries only CLEAR pixels"))
-        # CLEAR is not a warrant. The screen reads a frame with OCR, so it can
-        # prove a frame is dirty and never that it is clean: on M1-1337 it
-        # passed a frame carrying a real institution's address and tenant slug
-        # in sidebar text too small for OCR to resolve, even at 2x. Publishing
-        # therefore needs a person to have looked.
-        if mode == "publish" and verdict == "CLEAR" and not _is_str(ev.get("tenant_confirmed_by")):
+                               "frame screened BLOCK; a BLOCK frame never appears in an article"))
+            continue
+        # CLEAR is not a warrant, and REVIEW is a question. The screen reads a
+        # frame with OCR, so it can prove a frame is dirty and never that it is
+        # clean: on M1-1337 it passed a frame carrying a real institution's
+        # address and tenant slug in sidebar text too small for OCR to resolve,
+        # even at 2x. Publishing therefore needs the owner to have looked
+        # (contact sheet -> confirm) at every CLEAR and REVIEW frame.
+        if mode == "publish" and not _is_str(ev.get("tenant_confirmed_by")):
             out.append(Failure("G4", f"step {i}",
-                               "frame screened CLEAR but nobody confirmed it; "
-                               "set evidence.tenant_confirmed_by once a human has checked the pixels"))
-        if mode == "draft" and verdict != "CLEAR" and not ev.get("watermarked"):
-            out.append(Failure("G4", f"step {i}",
-                               f"frame screened {verdict} but is not watermarked"))
+                               f"frame screened {verdict} but nobody confirmed it; "
+                               "set evidence.tenant_confirmed_by once the owner has checked the pixels"))
     return out
+
+
+def shippable(step):
+    """True when a step's screenshot may appear in the article: CLEAR or REVIEW
+    and owner-confirmed. BLOCK, unscreened and unconfirmed frames do not."""
+    ev = step.get("evidence") or {}
+    return bool(step.get("image") and ev.get("tenant") in ("CLEAR", "REVIEW")
+                and _is_str(ev.get("tenant_confirmed_by")))
 
 
 # ── G5 ───────────────────────────────────────────────────────────────────────
@@ -234,15 +251,12 @@ def g7_mode(spec, mode):
         out.append(Failure("G7", "provenance",
                            "a draft carries its provenance; nothing to strip later otherwise"))
     if mode == "publish":
-        # The publish render drops these itself; the gate exists so a spec that
-        # was hand-edited to smuggle them through is caught rather than printed.
+        # The publish render drops the banner itself; the gate exists so a spec
+        # that was hand-edited to smuggle one through is caught rather than printed.
+        # (missing_shot is internal: the render never prints it, so no gate.)
         if spec.get("banner_override"):
             out.append(Failure("G7", "banner",
                                "publish render carries no draft banner"))
-        for i, st in enumerate(spec.get("steps") or [], 1):
-            if st.get("missing_shot"):
-                out.append(Failure("G7", f"step {i}",
-                                   "screenshot missing; capture it before publishing"))
     return out
 
 

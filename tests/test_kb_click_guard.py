@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kb_fixtures import has_module
 from test_kb_chrome_capture import Base, run_cli, lab, probe_for
 from test_kb_gif_capture import make_gif
+from test_kb_write_guard import run_dom
 
 import kb_capture as C
 import kb_format as F
@@ -177,7 +178,7 @@ class Mirror(unittest.TestCase):
             self.assertIn(json.dumps(C.CLICK_RX[k])[1:-1], js.replace("\\\\", "\\\\"))
         self.assertTrue(js.rstrip().endswith("})"))
         self.assertNotIn("//", js.replace("javascript:", "").replace("(#|", ""))     # no comments
-        self.assertLess(len(js), 10000)      # 0.27.0: + write guard, Vue rule, groups, dialog scope (was 4000)
+        self.assertLess(len(js), 16000)      # 0.28.0: + one-shot allowance, choose mode, group rows (was 4000 before 0.27.0)
 
 
 DRIVER = r"""
@@ -695,6 +696,69 @@ CLICK_PLAN = {"run_id": "r1", "capture_plan": [
      "write_gated": "confirm dialog after Save", "tickets": ["M1-465"], "route_source": "url_page"},
     {"persona": "admin", "surface": "Users", "url": "/users/", "clicks": [], "tickets": ["M1-1"]},
 ]}
+
+
+CHOOSE_LISTS = [
+    (["Yes, send notifications", "No, don't send notifications", "Cancel"], "No, don't send notifications"),
+    (["Cancel", "Yes", "No, don't send notifications"], "No, don't send notifications"),
+    (["OK", "Cancel"], "Cancel"),
+    (["Close", "Continue"], "Close"),
+    (["Yes", "No"], "No"),
+    (["Cancel", "No"], "No"),                       # a bare "No" ranks above Cancel (it sends the request)
+    (["Skip", "Do not send"], "Do not send"),
+    (["Yes, send notifications", "Save"], None),
+    (["OK", "Continue", "Confirm", "Proceed"], None),
+    (["Send now", "Notify participants"], None),
+    (["No, send notifications", "Yes"], None),     # "No," in front of send is not a negation
+    (["Invite everyone", "Delete it"], None),
+    ([], None),
+]
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class ChooseMode(unittest.TestCase):
+    """0.28.0 dry run: kbclick {"choose": true} picks the safe answer inside the open dialog by
+    rule (negated answer, bare No, Cancel / Close / Skip) so the data maker never decides it."""
+
+    def pick(self, buttons, outside=("Save",)):
+        dom = {"dialog": {"text": "Notify Participants? " + " ".join(buttons), "buttons": list(buttons)},
+               "outside": list(outside)}
+        r = run_dom("const k=(0,eval)(CLICK);try{return k({side:'nav',choose:true,write:['Save']});}"
+                    "catch(e){return {err:e.message};}", dom)
+        return r["out"]
+
+    def test_the_page_picks_by_rule_and_the_python_mirror_agrees(self):
+        for buttons, want in CHOOSE_LISTS:
+            with self.subTest(buttons):
+                out = self.pick(buttons)
+                if want is None:
+                    self.assertIn("err", out)
+                    self.assertTrue(out["err"].startswith("KB_CLICK_NOTFOUND:"), out)
+                else:
+                    self.assertEqual((out.get("ok"), out.get("label")), (True, want))
+                i = C.choose_pick(buttons)
+                self.assertEqual(None if i is None else buttons[i], want)
+
+    def test_no_dialog_means_nothing_to_choose(self):
+        r = run_dom("const k=(0,eval)(CLICK);try{return k({side:'nav',choose:true});}catch(e){return {err:e.message};}",
+                    {"outside": ["Cancel"]})
+        self.assertEqual(r["out"], {"err": "KB_CLICK_NOTFOUND:dialog"})
+
+    def test_it_never_picks_outside_the_dialog_or_arms_anything(self):
+        out = self.pick(["Yes", "OK"], outside=("Cancel", "No, don't send notifications"))
+        self.assertEqual(out, {"err": "KB_CLICK_NOTFOUND:choose"})
+        r = run_dom("const k=(0,eval)(CLICK);const o=k({side:'nav',choose:true,write:['Save']});"
+                    "try{await fetch('/api/x/',{method:'POST'});return 'sent';}catch(e){return [o.ok,e.message,window.__kbA];}")
+        self.assertEqual(r["out"], [True, "KB_WRITE_BLOCKED", None])            # choosing alone never lifts the guard
+
+    def test_the_answer_texts_agree_with_the_data_planners_rule(self):
+        import kb_data as D
+        for text in ("Cancel", "Close", "No", "No, don't send notifications", "Don't send", "Skip", "Do not notify"):
+            self.assertIsNotNone(C.choose_rank(text), text)
+            self.assertEqual(D.choose_problem(text), "", text)
+        for text in ("Yes", "OK", "Continue", "Confirm", "Send", "Save", "Cancel and confirm", "No, send notifications"):
+            self.assertIsNone(C.choose_rank(text), text)
+            self.assertNotEqual(D.choose_problem(text), "", text)
 
 
 class ClickPlan(Base):

@@ -12,7 +12,7 @@ MCP (Claude-side), so this script never talks to Mem itself. Like
 release_archive.py and dev_directory.py, it renders and parses the notes and
 computes the writes; the orchestrator performs the Mem calls.
 
-  resolve         Print the three collection names (process env > .env > default).
+  resolve         Print the four collection names (process env > .env > default).
   index           Ledger dump (+ optional queue dump) -> {ticket: status}.
   since           Release-archive dump -> legacy ticket ids released on/after a date.
   pending         Release-archive dump (+ optional pending queue) minus the ledger
@@ -59,8 +59,9 @@ Ledger note schema (first line = Mem note title):
     **Screenshots:** 2 of 3 (missing: 1 — no demo data)
     **Tenant:** CLEAR 2 · REVIEW 0 · BLOCK 0
     **Prior article:** CX-1782 How to View Option Values … (catalogue, 0.82)
-    **Files:** CX-DRAFT_How to ….docx, .pdf, .md
+    **Files:** How to ….docx, .pdf, .md
     **Tokens:** ~6,900 (writer, apportioned) + 0 (retries)
+    **Est. cost:** $0.04 (estimate; main-chat tokens not included)
     **Published as:** —
 
 Queue note schema (one per enqueue; Status flips pending -> drained in place):
@@ -93,6 +94,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))           # scripts/ — reuse the release archive parser
 import release_archive as RA                    # noqa: E402
+sys.path.insert(0, str(HERE))
+import kb_usage as U                            # noqa: E402
 
 COLLECTIONS = {
     "ledger": ("MEM_KB_LEDGER_COLLECTION", "KB Article Ledger",
@@ -107,6 +110,11 @@ COLLECTIONS = {
                   "medtrics-release-notes: one note per published Intercom KB article, "
                   "seeded from the FAQ Content Planner export. /kb-articles reads it to "
                   "list the earlier article a new feature follows."),
+    "demo": ("MEM_KB_DEMO_COLLECTION", "KB Demo Data",
+             "medtrics-release-notes /kb-articles: the form flows learned in dry runs and "
+             "every demo record a run saved on the demo site, with its link and a "
+             "delete-before date. The owner deletes the records; /kb-articles demo-data "
+             "lists the live ones."),
 }
 
 LEDGER_PREFIX = "KB: "
@@ -134,6 +142,7 @@ LEDGER_FIELDS = [
     ("Render", "render"), ("Persona", "persona"), ("Surface", "surface"),
     ("Screenshots", "screenshots"), ("Tenant", "tenant"),
     ("Prior article", "prior"), ("Files", "files"), ("Tokens", "tokens"),
+    ("Est. cost", "cost"),
     ("Published as", "published_as"),
 ]
 QUEUE_FIELDS = [
@@ -275,6 +284,12 @@ def queue_index(notes):
     return idx
 
 
+def _cost_text(usd):
+    """'$0.31 (estimate; main-chat tokens not included)', or 'n/a (...)' when a
+    model had no price."""
+    return f"{'n/a' if usd is None else f'${usd:,.2f}'} ({U.COST_NOTE})"
+
+
 def render_run_note(run):
     t = run.get("totals") or {}
     out = [f"{RUN_PREFIX}{run['date']}{SEP}{run['run_id']}", "",
@@ -284,10 +299,13 @@ def render_run_note(run):
            f"**Failed:** {t.get('failed', 0)}", f"**Skipped:** {t.get('skipped', 0)}",
            f"**Left by session expiry:** {', '.join(run.get('left_by_expiry') or []) or NONE}",
            f"**Output:** {run.get('output') or NONE}",
-           f"**Tokens:** {t.get('tokens', 0):,} (estimate)", ""]
+           f"**Tokens:** {t.get('tokens', 0):,} (estimate)",
+           f"**Est. cost:** {_cost_text(t.get('est_cost_usd'))}", ""]
     for u in run.get("usage") or []:
         out.append(f"- {u.get('agent')}{SEP}{u.get('scope')}{SEP}{u.get('model')}"
-                   f"{SEP}{u.get('total_tokens', 0):,} tokens")
+                   f"{SEP}{u.get('total_tokens', 0):,} tokens"
+                   + (f"{SEP}${u['est_cost_usd']:,.2f}"
+                      if u.get("est_cost_usd") is not None else ""))
     return "\n".join(out) + "\n"
 
 

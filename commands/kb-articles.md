@@ -1,5 +1,5 @@
 ---
-description: Draft one Intercom KB article (.docx + PDF + markdown) per shipped legacy FEATURE ticket, in the Medtrics KB format — grouped by persona × surface, screenshots captured live on the demo tenant (recorded as GIFs in your Chrome) and ringed by script, prose written by a pinned Sonnet writer per group, every article checked by the format gates G1–G7, history kept in Mem so no ticket is drafted twice. Drafts only; publishing stays a human step.
+description: Draft one Intercom KB article (.docx + PDF + markdown) per shipped legacy FEATURE ticket, in the Medtrics KB format — grouped by persona × surface, screenshots captured live on the demo tenant (recorded as GIFs in your Chrome) and ringed by script, prose written by a pinned Sonnet writer per group, every article checked by the format gates G1–G7, history kept in Mem so no ticket is drafted twice. The .docx is the client copy for Intercom, after the owner OKs each screenshot on a contact sheet.
 ---
 
 # KB Articles
@@ -23,6 +23,8 @@ can't place) and `kb-writer` (Sonnet, one call per writer group, all in parallel
 /kb-articles pending                         # everything on the KB queue + every released legacy feature with no article yet
 /kb-articles --kb-queue M1-1520,M1-1609      # only ADD these to the KB Queue; `pending` drafts them later
 /kb-articles M1-1520 dry-run                 # show the plan and exit — no agents, no capture, no files
+/kb-articles demo-data                       # list the demo records runs saved on the demo site (you delete them)
+/kb-articles demo-data done <ids>            # mark those records deleted after you removed them
 ```
 
 Flags (combine with any mode):
@@ -32,7 +34,7 @@ Flags (combine with any mode):
 | `dry-run` | Stop after the plan preview (Step 4). Spawns nothing. |
 | `--force` | Re-draft tickets the ledger already covers (updates their notes) |
 | `--retry-partial` | Re-draft `partial` tickets (drafts that had missing screenshots) |
-| `--no-capture` | Skip Chrome; every article is drafted with missing-screenshot markers |
+| `--no-capture` | Skip Chrome; every article is text only (no screenshots) |
 | `--yes` | Don't wait for confirmation at the plan preview (named ids never ask; this matters for `pending`, `since` and the release hand-off) |
 | `--allow-no-code` | Also draft features that have no merge request (skipped by default as "code missing") |
 | `--from-release` | Set only by `/release-slack --kb` (Step 9c) with an id list: reuse that release's `/tmp/release_slack_data.json` and `/tmp/release_slack_summaries.txt` instead of gathering again, and mark the tickets' queue notes drained afterwards |
@@ -42,6 +44,16 @@ Flags (combine with any mode):
 posted: that release's feature tickets are put on the KB queue and this command
 starts in `--from-release` mode, shows its plan and asks y/n. Say no and they
 stay queued for a later `/kb-articles pending`.
+
+## Demo data: `demo-data` and `demo-data done <ids>`
+
+`/kb-articles demo-data` lists every demo record runs have saved on the demo
+site and not yet marked deleted (Mem probe and the "KB Demo Data" dump as in
+Step 0, then `$KB_PY $K/kb_data.py demo-data --records $RUN/demo_notes.json`):
+ticket, what, link, date, server id, delete-before. The owner deletes them in
+the app — Claude never deletes data. Then `/kb-articles demo-data done <ids>`
+→ `$KB_PY $K/kb_data.py demo-data-done --records $RUN/demo_notes.json --ids <ids> --out $RUN/demo_done.json`
+and perform those `update_note` writes, marking them deleted.
 
 ## Queue only: `--kb-queue <ids>`
 
@@ -65,19 +77,18 @@ needs only Optimus (no GitLab) and Mem:
 2  place         kb_select place → [kb-classifier, Haiku, ONE call, only if needed] → merge
 3  prepare       kb_select group · kb_ledger match · kb_inputs
 3b page check   route-check-js → route-fix (404 → working twin)
-3c form fills   kb_data bundle → [kb-data-planner, Sonnet, only if a screen is behind a save] → kb_data check
 4  preview       plan + estimate + form fills → confirm (form fills always asked)
-5  capture       plan-calls → canary (you) → kb-capturer (Haiku) → kb-data-maker (Sonnet, approved form fills, saves blocked) → sign-in pauses (learner, external, back to admin) → ingest — exit 3 = some screens left, carry on
+5  capture       plan-calls → canary (you) → kb-capturer (Haiku) → kb_data plan from the real form → you approve → kb-data-maker (Sonnet; dry run first, then one allowed save) → sign-in pauses (learner, external, back to admin) → ingest — exit 3 = some screens left, carry on
 6  write         kb_spec bundle → [kb-writer, Sonnet, all groups in ONE message] → prose/<ticket>.json
 7  assemble      kb_spec assemble (annotate, evidence, gates) → prose retries, ≤2, single article
-8  package       kb_usage report → kb_package (docx + md + ONE soffice batch → PDF + verify, summary, zip)
+8  package       contact sheet → your OK → kb_usage report (est. $) → kb_package (docx + md + ONE soffice batch → PDF + verify, summary, zip)
 9  record        kb_ledger writes → Mem create/update · kb_ledger drain → queue notes marked drained
 10 report        summary in chat + output path
 ```
 
 ## Output
 
-- `<root>/kb-articles/<run_id>/` with, per ticket, `CX-DRAFT_<title>.docx`, `.pdf`,
+- `<root>/kb-articles/<run_id>/` with, per ticket, `<title>.docx`, `.pdf`,
   `.md` (Intercom body) and `assets/`; `_provenance/<ticket>.md` (the internal
   audit table — kept out of the article); `RUN-SUMMARY.md`; and a zip of the lot.
   `<root>` is `$KB_OUTPUT_DIR`, else `/mnt/user-data/outputs` (Cowork), else
@@ -85,9 +96,10 @@ needs only Optimus (no GitLab) and Mem:
 - Mem: one ledger note per ticket and one run note; queue notes of drafted tickets marked `drained` (`kb-ledger` skill).
 - Working files only under `<folder>/.kb-runs/<run_id>/` (it ignores itself in git; the agents can read it in Cowork, where `/tmp` is out of their reach).
 
-Every article is a **draft**. The publish render needs a person to confirm every
-screenshot is free of tenant data (`tenant_confirmed_by`), so this command never
-produces it.
+The rendered .docx is the client copy for Intercom. A screenshot reaches it only
+after the owner OKs it on the run's contact sheet (`tenant_confirmed_by`, Step
+8); BLOCK frames never ship; a step without a confirmed screenshot keeps its
+text only.
 
 ## Required .env keys
 
@@ -178,14 +190,16 @@ path you hand an agent is an absolute path under `$RUN`.
 
    Say what it moved, if anything.
 6. **Collections** — `python3 $K/kb_paths.py config` holds the ids setup saved
-   (`mem.kb_ledger`, `mem.kb_queue`, `mem.kb_catalogue`, `mem.release_archive`).
+   (`mem.kb_ledger`, `mem.kb_queue`, `mem.kb_catalogue`, `mem.kb_demo`,
+   `mem.release_archive`).
    Use an id directly; only when one is missing, or a call on it fails, run
    `$KB_PY $K/kb_ledger.py resolve` and resolve that collection by name per the
    `kb-ledger` skill, then save it with `python3 $K/kb_paths.py merge
    '{"mem": {"<key>": "<id>"}}'`. (`since`/`pending` also need the release
    archive.) Save the dumps under `$RUN/`
    (`ledger_notes.json`, `catalogue_notes.json`, `queue_notes.json`,
-   `archive_notes.json`).
+   `archive_notes.json`), plus the "KB Demo Data" collection (`mem.kb_demo`;
+   created when missing) as `demo_notes.json` whenever capture will run.
 
 ### Step 1 — Select
 
@@ -195,7 +209,7 @@ $KB_PY $K/kb_ledger.py index --ledger-notes $RUN/ledger_notes.json --out $RUN/le
 
 Ticket ids:
 - an id list (`M1-1520,M1-1256`, comma-separated, no keyword) → as given. Anything
-  that is not `pending` or `since <date>` is read as the id list.
+  that is not `pending`, `since <date>` or `demo-data` is read as the id list.
 - `since <date>` → `$KB_PY $K/kb_ledger.py since --archive-notes $RUN/archive_notes.json --date <date>`
 - `pending` → `$KB_PY $K/kb_ledger.py pending --archive-notes $RUN/archive_notes.json --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json [--retry-partial]`
   (the queue first-class, the release archive as the safety net), then
@@ -297,30 +311,6 @@ sign-in page: ask the owner to sign in to Chrome, then re-run this step. If the
 call returned nothing usable (`{}`, empty, an error), say so in one line and go
 on without the check.
 
-### Step 3c — Form-fill plan (only when a screen sits behind a save)
-
-Some screens only appear after a save (M1-465's "Notify Participants?" box).
-These are reached by **filling the form with demo values and pressing Save
-while the page's write guard blocks the save request**, capturing the dialog,
-then clicking its cancel-type button. Nothing is ever stored on the demo site.
-
-```bash
-$KB_PY $K/kb_data.py bundle --groups $RUN/groups.json --data $RUN/filtered.json --out $RUN/data_planner.md
-```
-
-`tickets: 0` → no form fills this run; skip to Step 4. Otherwise spawn ONE Task:
-`subagent_type: "medtrics-release-notes:kb-data-planner"`, `model: "sonnet"`,
-prompt `Brief: $RUN/data_planner.md. Write the draft to $RUN/data_plan_draft.json.`
-Log usage (`--agent kb-data-planner --scope plan --model sonnet`). Then:
-
-```bash
-$KB_PY $K/kb_data.py check --draft $RUN/data_plan_draft.json --out $RUN/data_plan.json --today $TODAY [--period-end <YYYY-MM-DD>]
-```
-
-Pass `--period-end` when the start page showed the current academic period
-(e.g. "Jul 01, 2026 - Jun 30, 2027 (current)" → `2027-06-30`). It drops unsafe
-form fills (listed as rejected) and prints the preview lines for Step 4.
-
 ### Step 4 — Preview
 
 Show, compactly: tickets kept and skipped (with reasons), writer groups (persona,
@@ -332,11 +322,8 @@ route, the start page and the click path (e.g.
 uncapturable list (including "no screen": an email or background change),
 prior-article hits, and an estimate — writer calls = number of groups,
 classifier calls = 0 or 1, one capture call (plus one per sign-in pause), one
-form-fill planner and one form-fill agent call when there are form fills.
-
-**Form fills** (from Step 3c): show its preview lines as they are — page and
-clicks, each field and value, "presses Save — the save request is blocked;
-then clicks <Cancel/No…>", "nothing is stored on the demo site".
+form-fill agent call when a screen sits behind a save. Form fills are planned
+and approved later (Step 5.4), once capture has read the real form.
 
 If any capture entry is for the external evaluator persona, ask the owner for
 the evaluator link now (it stays in the run folder only; it is never written to
@@ -353,10 +340,6 @@ at the end." Add both only when capture will run.
 `dry-run` → stop here. Then:
 - Articles: named ids → go straight on. `pending`, `since` and the release
   hand-off (`--from-release`) → ask `Draft these N articles? (y/n)` unless `--yes`.
-- **Form fills: always ask**, even with named ids and `--yes`:
-  `Fill these N forms and press Save with saving blocked? Nothing is stored. (y/n)`.
-  Yes → `$KB_PY $K/kb_data.py approve --plan $RUN/data_plan.json`. No (or no
-  answer) → don't approve; those screens stay "described in words".
 
 ### Step 5 — Capture
 
@@ -394,11 +377,10 @@ menu item); a dialog with nothing else to ring gets its title ringed.
 
    ```bash
    $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots \
-       [--data-plan $RUN/data_plan.json] [--external-link '<link>']
+       [--external-link '<link>']
    ```
 
-   `--data-plan` only when the owner approved the form fills. It writes
-   `shots/calls.json` (visits, write visits, `accounts`, `canary`, `abort`,
+   It writes `shots/calls.json` (visits, `accounts`, `canary`, `abort`,
    `gif_dir`) and `shots/capture.md`.
 2. **Canary** — you, not an agent, with the owner present. Send the `canary`
    actions from `calls.json` in one `browser_batch` (tab from `tabs_context_mcp`,
@@ -425,19 +407,65 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    `KB_CAPTURE NO_CHROME_TOOLS`, or returns without writing any raw file, follow
    `capture.md` yourself in this session with the same tools and rules (the
    QA-automation way); say so in one line.
-4. **Form fills** (only when approved, and while the main sign-in is still
-   active — before any learner sign-in):
+4. **Form fills** — only for a ticket whose screen sits behind a save (M1-465's
+   "Notify Participants?" box), and while the main sign-in is still active.
+   Capture has now read the real form's fields, so the fill is computed by
+   script, no model:
 
    ```bash
+   $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --downloads-dir $DL --no-ocr
+   $KB_PY $K/kb_data.py plan --groups $RUN/groups.json --calls $RUN/shots/calls.json --shots $RUN/shots/shots.json \
+       --data $RUN/filtered.json --flows $RUN/demo_notes.json --records $RUN/demo_notes.json \
+       --out $RUN/data_plan.json --today $TODAY [--period-end <YYYY-MM-DD>]
+   ```
+
+   (The first ingest only reads the probed fields; the real ingest is step 6.)
+   Pass `--period-end` when the start page showed the academic period (e.g.
+   "Jul 01, 2026 - Jun 30, 2027 (current)" → `2027-06-30`). `$RUN/demo_notes.json`
+   is the "KB Demo Data" collection dump from Step 0. No records → skip to step 5.
+
+   Each record is in one of two modes, chosen by the script:
+   - **Dry run** (the first time this form is seen): the form is filled and Save
+     is pressed with every write blocked; the dialog's real buttons and the
+     exact request it would send are recorded. Nothing is stored.
+   - **Save** (a form flow was learned in an earlier run): the record **will be
+     saved** on the demo site. Only the one learned request (`METHOD /path`) is
+     allowed, once, and only when the dialog's safe answer ("No, don't send
+     notifications") is clicked; Save itself never gets through, and every other
+     write stays blocked. A record already saved with the same values is reused,
+     not saved again.
+
+   Show the preview lines it printed (mode, page → clicks, every field and
+   value, the dialog choice, the exact request for save mode) and **always
+   ask**, even with named ids and `--yes`:
+   `Dry-run N forms / SAVE M demo records as shown? (y/n)`. Yes →
+   `$KB_PY $K/kb_data.py approve --plan $RUN/data_plan.json`, then re-plan the
+   calls with the write visits and brief the form-fill agent:
+
+   ```bash
+   $KB_PY $K/kb_capture.py plan-calls --plan $RUN/groups.json --inputs $RUN/inputs.json --out-dir $RUN/shots \
+       --data-plan $RUN/data_plan.json [--external-link '<link>']
    $KB_PY $K/kb_data.py brief --plan $RUN/data_plan.json --calls $RUN/shots/calls.json --out $RUN/shots/data.md
    ```
 
-   Exit 2 `plan_not_approved` / `plan_changed` → skip form fills, say why. Else
-   spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-data-maker"`,
+   Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-data-maker"`,
    `model: "sonnet"`, prompt
    `Run folder: $RUN. Brief: $RUN/shots/data.md. Raw folder: $RUN/shots/raw/.`
    It writes `raw/data-<ticket>.json`. Log usage
-   (`--agent kb-data-maker --scope fill --model sonnet`).
+   (`--agent kb-data-maker --scope fill --model sonnet`). Then turn its results
+   into Mem notes for the "KB Demo Data" collection and write them (create /
+   update by version, as the `kb-ledger` skill does):
+
+   ```bash
+   $KB_PY $K/kb_data.py learn --raw $RUN/shots/raw --plan $RUN/data_plan.json --flows $RUN/demo_notes.json \
+       --out $RUN/flow_notes.json --run-id $RUN_ID --today $TODAY
+   $KB_PY $K/kb_data.py records --raw $RUN/shots/raw --plan $RUN/data_plan.json --records $RUN/demo_notes.json \
+       --calls $RUN/shots/calls.json --out $RUN/record_notes.json --run-id $RUN_ID --today $TODAY
+   ```
+
+   A saved record whose Mem write fails: print its line (ticket, link, date,
+   server id) in the chat and the run summary so it is not lost. No (or no
+   answer) → nothing is approved; those screens are described in words.
 5. **Sign-in pauses.** If step 3 stopped with `stop=needs_signin:learner`: ask
    the owner, "Sign in to medtrics.medtricslab.com as the learner in this
    Chrome, then say done." Claude never signs in. Then re-spawn the capturer
@@ -459,11 +487,11 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    `bridge_down`, `no_probe`, `not_reached` (its batch never ran), `retry` (a
    blocked or unreadable probe), `download_missing`, `empty_export`, `bad_gif`,
    `click_refused` (with why), `click_not_found`, `tenant_row`, `needs_write`
-   (the step is behind a save and no form fill was approved), `write_failed`
-   (the form fill could not finish), `page_not_found` or
-   `external_link_missing`. **Continue** — the shots already taken are kept,
-   the rest become missing-screenshot markers and the summary lists them.
-   `--retry-partial` re-runs them later.
+   (behind a save: no form fill approved, or this run was the dry run),
+   `write_failed` (the form fill could not finish), `page_not_found` or
+   `external_link_missing`. **Continue** — the shots already taken are kept;
+   a step without one keeps its text in the article. `--retry-partial` re-runs
+   them later (after a dry run, the next run saves and gets the screen).
 
 ### Step 6 — Write
 
@@ -519,17 +547,35 @@ banned word), so round 1 runs on the cheaper model — `model: "haiku"` on the T
 call — and only round 2 falls back to `model: "sonnet"`. Log each with the model
 it actually used.
 
-### Step 8 — Package
+### Step 8 — Your screenshot check, then package
+
+The .docx goes straight to Intercom, so before anything is rendered the owner
+looks at every candidate screenshot once:
 
 ```bash
+$KB_PY $K/kb_package.py contact-sheet --run-dir $RUN --specs-dir $RUN/specs --out $RUN/contact_sheet.png
+```
+
+Show `contact_sheet.png` (and any `contact_sheet-2.png` …) and ask: "These are
+the screenshots for this run. Reply with the numbers that are fine to send to
+clients (or `all`); anything you leave out stays as text only." Screens marked
+BLOCK never ship and can't be picked. Then:
+
+```bash
+$KB_PY $K/kb_package.py confirm --run-dir $RUN --ok <numbers|all> --by "<owner>"
 $KB_PY $K/kb_usage.py report --run-dir $RUN --groups $RUN/groups.json
+# (picks up $RUN/shots/calls.json and $RUN/data_plan.json: capture and form-fill costs go to the tickets they served)
 $KB_PY $K/kb_package.py --run-dir $RUN --groups $RUN/groups.json --specs-dir $RUN/specs \
     --requested <every id the run was given> [--failed-after-retry <ids>]
 ```
 
-This renders every article (.docx + Intercom .md), converts all of them to PDF in
-one LibreOffice call, verifies each PDF, writes the provenance sidecars,
-`RUN-SUMMARY.md`, `$RUN/run.json` and the zip.
+This renders every article as the client copy (`<title>.docx` + Intercom .md +
+PDF): no draft marks, no "Generated from" line, no missing-screenshot markers —
+a step without a confirmed screenshot keeps its text only. It verifies each PDF
+and writes the provenance sidecars, `RUN-SUMMARY.md`, `$RUN/run.json` and the
+zip. Prices for the estimated cost: Haiku $0.10 / $0.50, Sonnet $2 / $10, Opus
+$4 / $20 per million input / output tokens, with an assumed 85 % input share;
+the main chat's own tokens are not included.
 
 ### Step 9 — Record
 
@@ -560,7 +606,11 @@ was given: done (with its files and whether screenshots are missing) or not
 done and why (code missing, not a feature, not found in Optimus, already has an
 article, or the error). Then the output folder and zip path, the counts line, the
 uncapturable and left-by-capture lists (with reasons), the
-PDF warnings, and the token estimate. Offer the files for download.
+PDF warnings, the token estimate and the **estimated cost** (the table's
+"Est. cost" column per ticket and the run total — say it is an estimate that
+leaves out the main chat). If demo records were saved, list them (ticket, link,
+date) and remind the owner that `/kb-articles demo-data` lists every live one.
+Offer the files for download.
 
 **Downloads cleanup** (only when capture ran): ask once, "Delete this run's N
 GIFs from Downloads/kb-capture/? (they may show demo data; copies are kept in
@@ -588,7 +638,7 @@ can delete it yourself. A later run's sweep moves any leftovers into that run.
 | Bridge drops mid-run | `bridge_down`; the rest is left, the Chrome tab is not restored; re-run later |
 | Probe blocked or unreadable | That screen is left with reason `retry` |
 | Downloads folder not mounted or declined (Cowork) | Step 0 asks once: approve it, or continue with `--no-capture` |
-| Canary failed (`download_missing`, `empty_export`, `bad_gif`) | Capture skipped with that reason, drafting continues with missing-screenshot markers; check Chrome's download settings ("Ask where to save each file" off, Downloads as the folder) and any privacy / download prompt, then `--retry-partial` |
+| Canary failed (`download_missing`, `empty_export`, `bad_gif`) | Capture skipped with that reason, drafting continues text only; check Chrome's download settings ("Ask where to save each file" off, Downloads as the folder) and any privacy / download prompt, then `--retry-partial` |
 | A GIF missing, empty or bad for one screen | That screen is left (`download_missing`, `empty_export`, `bad_gif`), the others are kept; `--retry-partial` re-runs it |
 | Leftover GIFs from a crashed or un-cleaned run | Step 0's sweep moves `Downloads/kb-capture/*` into `$RUN/shots/stale/` (never deletes); remove them yourself once checked |
 | A click refused or not found | That ticket's remaining screens are left with the reason; the article describes those steps in words |
@@ -596,7 +646,7 @@ can delete it yourself. A later run's sweep moves any leftovers into that run.
 | Form fills declined or not approved | Those screens are described in words (`needs_write`) |
 | A form fill's field won't take the value, or the dialog doesn't appear | That screen is left as `write_failed`; nothing was saved |
 | Learner / external screens | The run pauses for you to sign in as the learner (or uses the evaluator link you gave), then asks you to sign back in as admin |
-| tesseract missing | `dom_box` anchors — fine for drafts, refused on publish |
+| tesseract missing | `dom_box` anchors — shipped only on screenshots you OK on the contact sheet |
 | LibreOffice missing | No PDFs this run; summary says so; .docx and .md still ship |
 | Capture exits 3 | Continue with what was captured; summary lists the rest |
 | Writer returns nothing for a ticket | `failed` in summary and ledger; retried next run |
@@ -614,7 +664,8 @@ can delete it yourself. A later run's sweep moves any leftovers into that run.
 - Touch Oracle (ORC) tickets, bugs or work types.
 - Combine tickets, or update an existing article in place.
 - Type a password or sign in for you.
-- Save, update or delete anything on the site: every non-GET request is blocked in the page while it runs. Form fills type demo values and press Save only inside that guard, after you approve them, and always end on Cancel / No.
+- Save, update or delete anything on the site except the demo records you approve: every non-GET request is blocked in the page while it runs. A form fill is a dry run (nothing stored) until its flow is learned; after that, an approved record lets exactly one learned request through, once, on the dialog's "No, don't send…" answer. Every saved record is logged in Mem ("KB Demo Data") for you to delete.
+- Delete data on the site: you delete demo records yourself (`/kb-articles demo-data` lists them).
 - Type passwords, sign in, or press Enter.
 - Close your Chrome tabs.
 - Upload to Drive or Intercom.

@@ -10,7 +10,7 @@ the spec the gates judge.
                 of writing files -> prose/<ticket>.json.
   assemble      prose + shot evidence -> specs/<ticket>.json, with annotated
                 screenshots. Evidence failures (G3 anchor/score, G4, G5) are
-                fixed here by dropping the image to a missing_shot marker —
+                fixed here by dropping the image to a missing_shot note —
                 never by a model. Prose failures (G2, G6, a ringed label not
                 printed in bold) are listed in failures.json for a retry.
   retry-bundle  failures.json -> one retry_<ticket>.md per failing article.
@@ -21,8 +21,11 @@ Writer contract (one JSON object per ticket, prose/<ticket>.json):
      "steps": [{"text", "shot": "s3" | null | "missing", "caption"}],
      "considerations": ["**Lead-in.** …"], "conclusion", "notes": []}
 
-`shot: "missing"` means a screenshot would help but none was available; the
-draft prints a marker there.
+`shot: "missing"` means a screenshot would help but none was available; the step
+keeps its text and the article prints no marker and no reason (the reason lives in
+the spec's missing_shot, which only the provenance sidecar and RUN-SUMMARY show).
+Annotated shots carry no watermark or frame; BLOCK frames stay in the spec only
+so the contact sheet can show them, and kb_package leaves them out of the article.
 
     ---KB_SPEC_RESULT---
     {"ok", "action", ...counts..., "error"}
@@ -147,11 +150,9 @@ def _annotate(shot, number, out_path):
             im = im.resize((1440, round(im.height * k)), Image.LANCZOS)
         box = [round(v * k) for v in shot["dom_box"]]
         img = A.annotate(im, A.anchor_from_box(box), number=number)
-    watermarked = shot.get("tenant") != "CLEAR"
-    if watermarked:
-        img = A.watermark(img)
+    # No watermark, no frame: whether a shot ships is decided at package time
+    # (BLOCK never; the rest only after the owner confirms it on the contact sheet).
     A.finalize(img, out_path)
-    return watermarked
 
 
 def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
@@ -175,14 +176,15 @@ def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
                 step["missing_shot"] = f"screenshot {sid} was not verified"
             else:
                 rel = f"assets/{tid}/{n:02d}.jpg"
-                watermarked = False
                 if annotate:
                     (Path(out_root) / rel).parent.mkdir(parents=True, exist_ok=True)
-                    watermarked = _annotate(shot, n, Path(out_root) / rel)
+                    _annotate(shot, n, Path(out_root) / rel)
                 ev = {k: shot.get(k) for k in ("anchor", "label", "label_score", "tenant",
                                                "dom_box", "tenant_dom", "tenant_ocr", "source")}
                 ev["frame"] = Path(shot["frame"]).name
-                ev["watermarked"] = watermarked
+                words = shot.get("tenant_words") or shot.get("tw")
+                if words:
+                    ev["tenant_words"] = words      # shown on the contact sheet only
                 law = label_as_written(step["text"], shot["label"])
                 if law:
                     ev["label_as_written"] = law

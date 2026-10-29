@@ -3,8 +3,10 @@ KB spec may be rendered. Stdlib-only, hermetic.
 
 Pins: the golden spec passes the draft gates; each deliberate mutation trips
 exactly the gate it targets (one assertion per rule); G1 short-circuits; the
-variable-slot generalisation; draft-only anchors and missing shots are refused
-on publish (G3, G7b).
+variable-slot generalisation; on publish a dom_box anchor needs an owner-confirmed
+frame (G3), a BLOCK frame never ships and CLEAR/REVIEW frames need the owner's
+confirmation (G4), and a step without a screenshot is fine (G7: no marker, step
+text stays).
 """
 
 import sys
@@ -144,6 +146,15 @@ class Mutations(unittest.TestCase):
         self.refuse(lambda s: s["steps"][1]["evidence"].update(anchor="dom_box"), "G3",
                     mode="publish")
 
+    def test_g3_dom_box_ships_when_the_owner_confirmed_the_frame(self):
+        spec = golden()
+        for st in spec["steps"]:
+            if st.get("image"):
+                st["evidence"]["tenant_confirmed_by"] = "owner"
+        spec["steps"][1]["evidence"]["anchor"] = "dom_box"
+        ok, fails = V.check(spec, "publish", self.root)
+        self.assertTrue(ok, V.report(fails, "publish"))
+
     # ── G4 tenant
     def test_g4_unscreened(self):
         self.refuse(lambda s: s["steps"][1]["evidence"].pop("tenant"), "G4")
@@ -155,14 +166,35 @@ class Mutations(unittest.TestCase):
     def test_g4_publish_clear_without_confirmer(self):
         self.refuse(lambda s: None, "G4", mode="publish")
 
-    def test_g4_draft_block_not_watermarked(self):
-        self.refuse(lambda s: s["steps"][1]["evidence"].update(tenant="BLOCK"), "G4")
-
-    def test_g4_draft_block_watermarked_passes(self):
+    def test_g4_draft_block_candidate_is_allowed(self):
+        # draft = the candidate check at assembly; the contact sheet still shows BLOCK frames
         spec = golden()
-        spec["steps"][1]["evidence"].update(tenant="BLOCK", watermarked=True)
+        spec["steps"][1]["evidence"].update(tenant="BLOCK")
         ok, fails = V.check(spec, "draft", self.root)
         self.assertTrue(ok, V.report(fails, "draft"))
+
+    def test_g4_publish_block_never_ships_even_if_confirmed(self):
+        self.refuse(lambda s: s["steps"][1]["evidence"].update(
+            tenant="BLOCK", tenant_confirmed_by="owner"), "G4", mode="publish", where="step 2")
+
+    def test_g4_publish_review_ships_once_confirmed(self):
+        spec = golden()
+        for st in spec["steps"]:
+            if st.get("image"):
+                st["evidence"].update(tenant="REVIEW", tenant_confirmed_by="owner")
+        ok, fails = V.check(spec, "publish", self.root)
+        self.assertTrue(ok, V.report(fails, "publish"))
+
+    def test_shippable(self):
+        st = golden()["steps"][1]
+        self.assertFalse(V.shippable(st))                       # CLEAR but nobody confirmed
+        st["evidence"]["tenant_confirmed_by"] = "owner"
+        self.assertTrue(V.shippable(st))
+        st["evidence"]["tenant"] = "REVIEW"
+        self.assertTrue(V.shippable(st))
+        st["evidence"]["tenant"] = "BLOCK"
+        self.assertFalse(V.shippable(st))
+        self.assertFalse(V.shippable({"text": "no image"}))
 
     # ── G5 assets
     def test_g5_missing_file(self):
@@ -194,14 +226,14 @@ class Mutations(unittest.TestCase):
     def test_g7_publish_with_banner_override(self):
         self.refuse(lambda s: s.update(banner_override="x"), "G7", mode="publish", where="banner")
 
-    def test_g7b_publish_refuses_missing_shot(self):
-        def mutate(s):
-            s["steps"][2]["missing_shot"] = "no demo data"
+    def test_g7b_publish_allows_a_step_without_a_screenshot(self):
         spec = golden()
-        mutate(spec)
-        ok, fails = V.check(spec, "draft", self.root)
-        self.assertTrue(ok, V.report(fails, "draft"))
-        self.refuse(mutate, "G7", mode="publish", where="step 3")
+        spec["steps"][2]["missing_shot"] = "no demo data"
+        for st in spec["steps"]:
+            if st.get("image"):
+                st["evidence"]["tenant_confirmed_by"] = "owner"
+        ok, fails = V.check(spec, "publish", self.root)
+        self.assertTrue(ok, V.report(fails, "publish"))
 
 
 class Generalise(unittest.TestCase):
@@ -226,6 +258,12 @@ class Format(unittest.TestCase):
         self.assertEqual(F.TENANT_VERDICTS, ("CLEAR", "REVIEW", "BLOCK"))
         self.assertIn("dom_box", F.ANCHORS)
         self.assertTrue(set(F.DRAFT_ONLY_ANCHORS) <= set(F.ANCHORS))
+
+    def test_subtitle_names_audience_and_portal_only(self):
+        sub = F.SUBTITLE.format(audience="Program administrators", portal="Administration portal")
+        self.assertEqual(sub, "Audience: Program administrators · Administration portal")
+        self.assertNotIn("Generated", sub)
+        self.assertNotIn("{ticket}", F.SUBTITLE)
 
     def test_summary_names_version(self):
         self.assertIn(F.FORMAT_VERSION, F.summary())

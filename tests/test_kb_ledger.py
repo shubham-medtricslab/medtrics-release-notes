@@ -84,6 +84,7 @@ class Names(unittest.TestCase):
         self.assertEqual(names["ledger"]["name"], "From File")
         self.assertEqual(names["catalogue"]["name"], "From Env")
         self.assertEqual(names["queue"]["name"], "KB Queue")
+        self.assertEqual(names["demo"]["name"], "KB Demo Data")
 
 
 class Released(unittest.TestCase):

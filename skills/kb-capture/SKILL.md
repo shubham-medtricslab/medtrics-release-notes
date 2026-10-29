@@ -312,6 +312,20 @@ page after the install:
   (`const f = window.fetch` early in the page). The legacy app uses axios / jQuery
   over XMLHttpRequest, which is covered. EventSource is read-only and is not
   patched.
+- Not airtight against deliberately hostile same-page code. The guard runs in the page's own
+  JavaScript realm, so it protects against the app's normal behaviour and our own agents'
+  mistakes, not against a page that is written to defeat it. What it does do: the raw `fetch` /
+  `XMLHttpRequest.send`, the one-shot allowance, the clock (`Date.now`), `URL` and each XHR's
+  method and resolved URL (a WeakMap filled by the wrapped `open`) live in one closure; no
+  readable property holds a raw function and there is no global to flip (`__kbRaw`, `__kbm`,
+  `__kbu` and `__kbGen` are gone). kbclick arms and kbclick / kbopt disarm through the
+  non-enumerable `__kbA(token, spec)` on the wrapper, and the token is baked into the page
+  scripts, which sit in `sessionStorage`, so page code that reads storage and calls
+  `fetch.__kbA` could still arm; same-origin frames created before the install, a saved
+  `fetch` reference, and a page that replaces `fetch` / `XMLHttpRequest.prototype.send`
+  after the install (the allowance then fails closed: `allow_no_guard`) are outside what it
+  can promise. Read-only copies (`__kbBlocked`, `__kbLog`, `__kbAllowed`, `__kbSaved`) are data
+  only and arm nothing.
 - The hook (`hooks/kb_guard.py`) covers the spawned agents only; it does not apply
   when the orchestrator follows `capture.md` itself.
 

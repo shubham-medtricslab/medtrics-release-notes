@@ -16,6 +16,10 @@ top-left corner is therefore ignored.
 
   annotate  RUN.gif --state 3 --out shot.png --number 1 --caption "Open Step 3"
   batch     RUN.gif --alignment shots/alignment.json --out annotated/
+
+Nothing here ever watermarks or frames a shot: the annotated image is what goes
+into a client-facing article, and whether it ships is decided upstream (BLOCK
+never; anything else only after the owner confirms it on the contact sheet).
 """
 import argparse, json, os, sys
 
@@ -37,7 +41,6 @@ def _rgb(hexstr):
 
 ACCENT = _rgb(F.ORANGE)                  # rings and badges
 INK = _rgb(F.NAVY)
-RED = _rgb(F.RED)                        # watermark only — never a ring
 
 
 def _frames(gif):
@@ -137,25 +140,42 @@ def _font(size):
         return ImageFont.load_default()
 
 
-def watermark(img, text="NOT FOR PUBLICATION — tenant data"):
-    """A frame that fails the tenant screen is a re-capture reference, never an
-    asset. Burn that into the pixels so it cannot be lost downstream."""
-    d = ImageDraw.Draw(img, "RGBA")
-    f = _font(26)
-    tb = d.textbbox((0, 0), text, font=f)
-    w, h = tb[2] - tb[0], tb[3] - tb[1]
-    x, y = (img.width - w) // 2, int(img.height * 0.08)
-    d.rectangle([x - 16, y - 10, x + w + 16, y + h + 14], fill=RED + (225,))
-    d.text((x, y), text, font=f, fill=(255, 255, 255))
-    d.rectangle([0, 0, img.width - 1, img.height - 1], outline=RED, width=6)
-    return img
-
-
 def anchor_from_box(box):
     """A DOM bounding box (x, y, w, h; top-left origin) as the centre-based
     anchor annotate() takes."""
     x, y, w, h = box
     return {"x": int(x + w / 2), "y": int(y + h / 2), "w": int(w), "h": int(h)}
+
+
+def badge_center(box, size, r=F.BADGE_RADIUS_PX):
+    """Centre of the step badge for a ring `box` on an image of `size`.
+
+    The badge always sits OUTSIDE the ring (and its 3 px halo), never over the
+    ringed label or the text beside it. A ring in the left band (the sidebar)
+    puts it to the right of the ring; any other ring puts it on a diagonal
+    corner, the first with room inside the frame. A ring that leaves no room
+    anywhere falls back to the corner clamped into the frame."""
+    w, h = size
+    gap = 3 + 2
+    x0, y0, x1, y1 = box[0] - gap, box[1] - gap, box[2] + gap, box[3] + gap
+    cy = (box[1] + box[3]) // 2
+    cx = (box[0] + box[2]) // 2
+    side = [(x1 + r, cy), (x0 - r, cy)]
+    corners = [(x0 - r + 3, y0 - r + 3), (x1 + r - 3, y0 - r + 3),
+               (x0 - r + 3, y1 + r - 3), (x1 + r - 3, y1 + r - 3)]
+    order = side + corners if box[0] < F.BADGE_SIDEBAR_SNAP * w else corners + side
+    for bx, by in order:
+        if r + 2 <= bx <= w - r - 2 and r + 2 <= by <= h - r - 2 and _clear(bx, by, r, box):
+            return bx, by
+    bx, by = corners[0]
+    return min(max(r + 2, bx), w - r - 2), min(max(r + 2, by), h - r - 2)
+
+
+def _clear(bx, by, r, box):
+    """The disc (bx, by, r) does not touch the ring rectangle `box`."""
+    nx = min(max(bx, box[0]), box[2])
+    ny = min(max(by, box[1]), box[3])
+    return (bx - nx) ** 2 + (by - ny) ** 2 > (r + 3) ** 2
 
 
 def annotate(frame, click, number=None, caption=None, pad=F.RING_PAD_PX):
@@ -181,14 +201,7 @@ def annotate(frame, click, number=None, caption=None, pad=F.RING_PAD_PX):
                             radius=F.RING_RADIUS_PX + 2, outline=ACCENT + (70,), width=3)
         if number is not None:
             r = F.BADGE_RADIUS_PX
-            bx, by = box[0] - r, box[1] - r
-            # A badge must never sit on content: a ring that starts in the left
-            # band gets its badge snapped onto the dark sidebar, with a leader.
-            if box[0] < F.BADGE_SIDEBAR_SNAP * img.width:
-                bx, by = int(0.045 * img.width), y
-                d.line([bx + r, by, box[0] - 2, by], fill=ACCENT, width=3)
-            bx = min(max(r + 2, bx), img.width - r - 2)
-            by = min(max(r + 2, by), img.height - r - 2)
+            bx, by = badge_center(box, img.size, r)
             d.ellipse([bx - r, by - r, bx + r, by + r], fill=ACCENT)
             f = _font(20)
             t = str(number)
@@ -228,7 +241,7 @@ def main():
     b.add_argument("--captions", help="JSON {step_id: caption}")
     b.add_argument("--anchors", help="JSON {step_id: label-to-ring}")
     b.add_argument("--screen", action="store_true",
-                   help="run the tenant screen and watermark anything not CLEAR")
+                   help="run the tenant screen and print each frame's verdict")
     b.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -269,8 +282,6 @@ def main():
             _s.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             from qa_gif_to_shots import screen_frame
             verdict = screen_frame(os.path.join(a.shots, entry["frame"]))["verdict"]
-            if verdict != "CLEAR":
-                img = watermark(img)
         name = f"{n:02d}_{entry['step']}.png"
         img.save(os.path.join(a.out, name))
         pos = f"@({anchor['x']},{anchor['y']})" if anchor else "no anchor"

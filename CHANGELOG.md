@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-29
+
+From the fourth Cowork run (M1-465: 2 of 3 screenshots, red "NOT FOR
+PUBLICATION" banners, form fill failed on a guessed field label) and a
+challenge review before building.
+
+### Changed
+- **The .docx is the client copy for Intercom.** No banner or frame, no
+  "Generated from" line, no `CX-DRAFT_` file prefix, no missing-screenshot
+  marker (a step without a screenshot keeps its text). Before rendering, the
+  owner OKs screenshots on a numbered **contact sheet**
+  (`kb_package.py contact-sheet` / `confirm`); BLOCK frames and anything not
+  OK'd stay out. The writer never points at an image ("as shown below").
+- **Form fills are planned from the real form**, by script (no model): capture
+  reads the form's fields; date → far-future weekday, times 09:00–10:00,
+  required selects → first "ZZ DEMO" option, optional fields empty. The
+  `kb-data-planner` agent is gone.
+- **Real demo records, in two steps.** The first run of a form is a dry run
+  (all writes blocked) that learns the dialog's buttons and the exact request;
+  later runs save, letting only that one request through, once, after the
+  dialog appears, on the "No, don't send…" answer — never on Save. Flows and
+  records live in the Mem "KB Demo Data" collection with a delete-before date;
+  `/kb-articles demo-data` lists live records, `demo-data done` marks the ones
+  you deleted. Claude never deletes data.
+- **Estimated $ cost** per agent call, per ticket and per run (Haiku
+  $0.10/$0.50, Sonnet $2/$10, Opus $4/$20 per 1M input/output tokens, 85 %
+  input assumed; main-chat tokens not included) in the end table, RUN-SUMMARY,
+  run.json and the Mem ledger/run notes.
+
+### Safety (review + attack test before release)
+- The save allowance is armed only by a real click on the exact checked
+  button inside the open dialog, for 10 s, for one request with the learned
+  method, path and query; a failed or blocked save is logged `not_saved`, never
+  as a live record; the learned request must be the one new write after the
+  answer click; reuse ignores dates (no daily duplicates).
+- Hardened against hostile page code: no readable reference to the browser's
+  raw request functions, XHR method/URL kept inside the guard, the guard's own
+  clock, arming only through a per-run token (`<shots>/.arm_token`, shared by
+  capture and the form-fill brief). An in-page guard still can't be airtight
+  against deliberately hostile same-page code (documented in the kb-capture
+  skill).
+- Contact-sheet OKs are tied to each image's hash; re-packaging clears old files.
+
+### Fixed
+- The step badge sits outside the ring (it covered "Sessions").
+- Ingest no longer crashes on a label outside the frame.
+- The demo's own name ("School of Medicine") is an allow-string; the tenant
+  check now reports the words it matched.
+
 ## [0.27.0] - 2026-10-29
 
 From the third Cowork run (M1-465 reached the right page — the data was there —

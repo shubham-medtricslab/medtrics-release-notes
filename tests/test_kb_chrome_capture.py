@@ -314,6 +314,175 @@ class ProbeRuns(unittest.TestCase):
             self.assertEqual(self.run_probe([], body=body)["tn"]["v"], py["verdict"], body)
 
 
+# ── 0.28.0: the probe reads the form (`fields`), the dialog (`dlg`) and tenant words (`tw`) ──
+FIELDS_DRIVER = r"""
+const fs=require('fs');const sc=JSON.parse(fs.readFileSync(0,'utf8'));
+const byId={};const all=[];
+class N{constructor(o){this.tag=o.tag||'div';this.tagName=this.tag.toUpperCase();this.cls=o.cls||'';this.className=this.cls;
+ this.text=o.text||'';this.attrs=o.attrs||{};this.id=o.id||this.attrs.id||'';this.type=o.type;this.required=!!o.required;
+ this.multiple=!!o.multiple;this.options=(o.options||[]).map(t=>({text:t,value:t}));this.hidden=!!o.hidden;this.sb=!!o.sb;
+ this.kids=[];this.parent=null;this.labels=o.labelText?[{innerText:o.labelText,textContent:o.labelText,className:o.labelCls||''}]:[];
+ this.rect=this.hidden?{left:0,top:0,width:0,height:0,right:0,bottom:0}:{left:20,top:o.top||100,width:200,height:30,right:220,bottom:(o.top||100)+30};
+ this.attributes=[];all.push(this);if(this.id)byId[this.id]=this;}
+ focus(){}
+ dispatchEvent(){return true;}
+ get value(){return this._v===undefined?'':this._v;}
+ set value(v){this._v=v;}
+ get selectedIndex(){const i=this.options.findIndex(o=>o.value===this._v);return i<0?0:i;}
+ get parentElement(){return this.parent;}
+ get previousElementSibling(){if(!this.parent)return null;const i=this.parent.kids.indexOf(this);return i>0?this.parent.kids[i-1]:null;}
+ get innerText(){return this.text+' '+this.kids.map(k=>k.innerText).join(' ');}
+ get textContent(){return this.innerText;}
+ getAttribute(n){return n in this.attrs?String(this.attrs[n]):null;}
+ getBoundingClientRect(){return this.rect;}
+ closest(){for(let p=this;p;p=p.parent)if(p.sb)return p;return null;}
+ contains(x){for(let p=x;p;p=p.parent)if(p===this)return true;return false;}
+ desc(){const d=[];const w=e=>e.kids.forEach(k=>{d.push(k);w(k);});w(this);return d;}
+ querySelector(){return null;}
+ querySelectorAll(sel){const d=this.desc();
+  if(sel.indexOf('.multiselect')>=0)return d.filter(n=>/multiselect/.test(n.cls)||n.attrs.role==='combobox');
+  if(sel==='input,textarea,select')return d.filter(n=>/^(input|textarea|select)$/.test(n.tag));
+  if(sel==='div,section,fieldset')return d.filter(n=>/^(div|section|fieldset)$/.test(n.tag));
+  if(sel.indexOf('.modal.show')>=0&&sel.indexOf('modal-title')<0)return d.filter(n=>n.attrs.role==='dialog');
+  if(sel.indexOf('modal-title')>=0)return d.filter(n=>/modal-title/.test(n.cls));
+  if(sel==='h1,h2')return d.filter(n=>/^h[12]$/.test(n.tag));
+  if(sel.indexOf('button')>=0)return d.filter(n=>/^(button|a|input)$/.test(n.tag)&&(n.tag!=='input'||/button|submit/.test(n.type||'')));
+  if(sel==='*')return d;
+  return [];}}
+const build=(o,parent)=>{const n=new N(o);if(parent){n.parent=parent;parent.kids.push(n);}(o.kids||[]).forEach(k=>build(k,n));return n;};
+const body=build({tag:'body',text:sc.text||'',kids:sc.tree||[]},null);
+global.window=global;global.location={pathname:'/vadministration/curriculum/sessions/',search:''};
+global.innerWidth=1470;global.innerHeight=802;global.devicePixelRatio=2;
+global.getComputedStyle=e=>({backgroundColor:'rgba(0,0,0,0)'});
+global.Event=class{constructor(t){this.t=t;}};global.FocusEvent=global.Event;
+for(const k of ['HTMLInputElement','HTMLTextAreaElement']){global[k]={prototype:{}};
+ Object.defineProperty(global[k].prototype,'value',{set(v){this._v=v;},get(){return this._v;},configurable:true});}
+global.document={title:'',body:body,
+ querySelectorAll:s=>body.querySelectorAll(s),querySelector:s=>null,getElementById:i=>byId[i]||null,
+ addEventListener(){},elementFromPoint:()=>null};
+const f=(0,eval)(sc.src);
+try{console.log(JSON.stringify(f(sc.args)));}catch(e){console.log(JSON.stringify({threw:e.message}));}
+"""
+
+
+def fields_probe(tree, text="", allow=(), src=None, **args):
+    a = {"v": 1, "login": "/users/login/", "portal": None, "labels": [], "side": "nav", "allow": list(allow),
+         "domain": "medtricslab.com", **args}
+    sc = {"src": src or C.probe_source(), "args": a, "tree": tree, "text": text}
+    r = subprocess.run([NODE, "-e", FIELDS_DRIVER], input=json.dumps(sc), capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+FORM_TREE = [
+    {"tag": "input", "type": "text", "attrs": {"name": "q", "placeholder": "Search"}, "sb": True, "top": 10},
+    {"tag": "span", "id": "lbl-status", "text": "Status", "top": 5},
+    {"tag": "input", "type": "date", "id": "d", "attrs": {"name": "date"}, "labelText": "Date *", "required": True, "top": 100},
+    {"tag": "input", "type": "time", "attrs": {"name": "start", "aria-label": "Start"}, "top": 140},
+    {"tag": "input", "type": "time", "attrs": {"name": "end", "placeholder": "End"}, "top": 180},
+    {"tag": "select", "attrs": {"name": "status", "aria-labelledby": "lbl-status"}, "top": 220,
+     "options": ["Draft", "Published", "ZZ DEMO Status"]},
+    {"tag": "div", "kids": [{"tag": "span", "text": "Title *"},
+                            {"tag": "input", "type": "text", "attrs": {"name": "title", "aria-required": "true"}, "top": 260}]},
+    {"tag": "textarea", "attrs": {"name": "notes", "placeholder": "Notes"}, "top": 300},
+    {"tag": "div", "kids": [{"tag": "span", "text": "Mandatory"},
+                            {"tag": "input", "type": "checkbox", "attrs": {"name": "mandatory"}, "top": 340}]},
+    {"tag": "div", "kids": [{"tag": "span", "text": "Venues"},
+                            {"tag": "div", "cls": "multiselect", "top": 380,
+                             "kids": [{"tag": "input", "type": "text", "attrs": {"name": "ms-search"}, "top": 380}]}]},
+    {"tag": "div", "kids": [{"tag": "span", "text": "Groups"},
+                            {"tag": "div", "top": 420, "text": "Available options  Selected options",
+                             "kids": [{"tag": "select", "multiple": True, "attrs": {"name": "avail"}, "top": 420,
+                                       "options": ["g1"]}]}]},
+    {"tag": "input", "type": "hidden", "attrs": {"name": "csrf"}, "top": 500},
+    {"tag": "input", "type": "password", "attrs": {"name": "pw"}, "top": 510},
+    {"tag": "input", "type": "text", "attrs": {"name": "gone", "placeholder": "Gone"}, "hidden": True},
+]
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class ProbeFields(unittest.TestCase):
+    """Q1: the probe returns `fields` for the visible controls: label (from <label>, aria-labelledby,
+    aria-label, placeholder or the text before it), kind, required, type, name; the sidebar, hidden
+    and password / hidden-type controls and a widget's inner search box are left out."""
+
+    def test_form_controls(self):
+        r = fields_probe(FORM_TREE)
+        f = {x["label"]: x for x in r["fields"]}
+        self.assertEqual([x["label"] for x in r["fields"]],
+                         ["Date", "Start", "End", "Status", "Title", "Notes", "Mandatory", "Venues", "Groups"])
+        self.assertEqual((f["Date"]["kind"], f["Date"]["required"], f["Date"]["type"], f["Date"]["name"]),
+                         ("date", True, "date", "date"))                 # a <label> with "*"
+        self.assertEqual((f["Start"]["kind"], f["Start"]["required"]), ("time", False))       # aria-label
+        self.assertEqual(f["End"]["kind"], "time")                                              # placeholder
+        self.assertEqual((f["Status"]["kind"], f["Status"]["opts"], f["Status"]["zz"]),
+                         ("select", ["Draft", "Published", "ZZ DEMO Status"], "ZZ DEMO Status"))   # aria-labelledby
+        self.assertEqual((f["Title"]["kind"], f["Title"]["required"]), ("text", True))          # text before + aria-required
+        self.assertEqual(f["Notes"]["kind"], "textarea")
+        self.assertEqual(f["Mandatory"]["kind"], "checkbox")
+        self.assertEqual((f["Venues"]["kind"], f["Groups"]["kind"]), ("multiselect", "duallist"))
+        for gone in ("Search", "Gone", "csrf", "pw", "ms-search", "avail"):
+            self.assertNotIn(gone, f)
+
+    def test_a_dialog_scopes_the_fields_and_is_described(self):
+        tree = [{"tag": "input", "type": "text", "attrs": {"name": "behind", "placeholder": "Behind"}, "top": 50},
+                {"tag": "div", "attrs": {"role": "dialog"}, "text": "Notify Participants? Tell everyone.", "kids": [
+                    {"tag": "h2", "cls": "modal-title", "text": "Notify Participants?", "top": 60},
+                    {"tag": "input", "type": "text", "attrs": {"name": "msg", "placeholder": "Message"}, "top": 120},
+                    {"tag": "button", "text": "Yes, send notifications", "top": 200},
+                    {"tag": "button", "text": "No, don't send notifications", "top": 240},
+                    {"tag": "a", "text": "Cancel", "top": 280}]}]
+        r = fields_probe(tree)
+        self.assertEqual([x["label"] for x in r["fields"]], ["Message"])
+        self.assertEqual(r["dlg"]["t"], "Notify Participants?")
+        self.assertEqual(r["dlg"]["bt"], ["Yes, send notifications", "No, don't send notifications", "Cancel"])
+        self.assertIn("Tell everyone", r["dlg"]["x"])
+
+    def test_no_form_no_dialog(self):
+        r = fields_probe([{"tag": "span", "text": "Sessions"}])
+        self.assertEqual((r["fields"], r["dlg"], r["al"], r["saved"]), ([], None, [], None))
+
+    def test_fields_are_capped_and_small(self):
+        tree = [{"tag": "input", "type": "text", "attrs": {"name": f"n{i}", "placeholder": f"Field {i}"}, "top": 10 + i * 8}
+                for i in range(60)]
+        r = fields_probe(tree)
+        self.assertEqual(len(r["fields"]), 40)
+        self.assertLess(len(json.dumps(r["fields"])), 6000)
+
+    def test_a_blocked_form_returns_words_not_just_kinds(self):
+        """The evidence run: the form screen was BLOCK with kinds institution_string, discipline_word,
+        tenant_slug and no words. Now `tw` carries the matched words (<= 5 per kind, <= 40 chars)."""
+        text = ("Welcome to University of Somewhere. Internal Medicine clinic, Medicine rounds. Mail jo@gmail.com. "
+                "MCAP5010 is open. kfshmed hospital")
+        r = fields_probe([], text=text)
+        tw = r["tw"]
+        self.assertEqual(r["tn"]["v"], "BLOCK")
+        for kind in r["tn"]["k"]:
+            if kind != "non_latin_script":
+                self.assertIn(kind, tw, kind)
+        self.assertEqual(tw["foreign_email_domain"], ["@gmail.com"])        # the domain, never the address
+        self.assertTrue(all(len(w) <= 40 and len(ws) <= 5 for ws in tw.values() for w in ws))
+        self.assertIn("medicine", [w.lower() for w in tw["discipline_word"]])
+        self.assertNotIn("jo@gmail.com", json.dumps(r))
+        long = "Medicine " * 30 + " ".join(f"University of Place{i}" for i in range(12))
+        tw2 = fields_probe([], text=long)["tw"]
+        self.assertLessEqual(len(tw2["institution_string"]), 5)
+        self.assertEqual(fields_probe([], text="Plain page")["tw"], {})
+
+    def test_allow_listed_text_gives_no_words(self):
+        r = fields_probe([], text="Welcome to Medtrics Medical Center", allow=["Medtrics Medical Center"])
+        self.assertEqual((r["tn"]["v"], r["tw"]), ("CLEAR", {}))
+
+    def test_school_of_medicine_is_allow_listed_for_the_demo(self):
+        allow = ROUTES["demo"]["allow_strings"]
+        self.assertIn("School of Medicine", allow)
+        self.assertIn("Medtrics School of Medicine", allow)
+        r = fields_probe([], text="Medtrics School of Medicine - School of Medicine", allow=allow)
+        self.assertEqual((r["tn"]["v"], r["tn"]["k"]), ("CLEAR", []))
+        py = Q.screen_text("Medtrics School of Medicine - School of Medicine", "medtricslab.com", allow_strings=allow)
+        self.assertEqual(py["verdict"], "CLEAR")
+
+
 def make_frame(path, w=1470, h=802):
     from PIL import Image
     Image.new("RGB", (w, h), (240, 240, 245)).save(path, "JPEG", quality=85)

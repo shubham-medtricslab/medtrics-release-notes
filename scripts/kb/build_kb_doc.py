@@ -8,18 +8,21 @@ be changed in one place and documented from the same place it is enforced.
 
 Two renders come out of one spec.
 
-  draft    what the writer and the CX reviewer see. Carries the draft banner,
-           the watermarked screenshots and a marker for any missing shot.
-           The provenance appendix is printed only with --provenance: a PDF
-           that CX forwards must not carry an internal audit table.
-  publish  what goes to the knowledge base. No banner, no provenance, and it
-           refuses to build while any screenshot is anything but CLEAR.
+  draft    a CLI preview for the writer. Carries the draft banner, a "draft, not
+           published" subtitle and a marker for any missing shot. The provenance
+           appendix is printed only with --provenance.
+  publish  what goes to the knowledge base, and what kb_package renders after
+           the owner's contact-sheet check. Client-clean: no banner, no
+           provenance, no "generated from" line, no missing-shot marker (a step
+           without a shot keeps its text), no watermark or frame on any shot. It
+           refuses to build while any screenshot is BLOCK or not confirmed by
+           the owner, and it never prints a frame that is not shippable.
 
 Nothing is written unless every gate passes.
 
   python3 build_kb_doc.py validate spec.json
   python3 build_kb_doc.py draft    spec.json --out CX-DRAFT_Title.docx [--provenance]
-  python3 build_kb_doc.py publish  spec.json --out CX-1400_Title.docx --md body.md
+  python3 build_kb_doc.py publish  spec.json --out Title.docx --md body.md
   python3 build_kb_doc.py provenance spec.json --out provenance.md
 """
 import argparse
@@ -92,9 +95,17 @@ def _tinted(doc, text, size, colour, bold=False, italic=False):
 # ── generated chrome ─────────────────────────────────────────────────────────
 def subtitle_for(spec, mode):
     m = spec["meta"]
-    return F.SUBTITLE.format(
-        audience=m["audience"], portal=m["portal"], ticket=m["ticket"],
-        state="draft, not published" if mode == "draft" else "published")
+    text = F.SUBTITLE.format(audience=m["audience"], portal=m["portal"])
+    return text + (F.SUBTITLE_DRAFT_SUFFIX if mode == "draft" else "")
+
+
+def _image(st, mode):
+    """The step's screenshot path, or None. A publish render never prints a
+    frame that is not shippable (BLOCK, or not confirmed by the owner)."""
+    img = st.get("image")
+    if img and mode == "publish" and not V.shippable(st):
+        return None
+    return img
 
 
 def banner_for(spec):
@@ -111,7 +122,8 @@ def provenance_rows(spec):
     makes the appendix checkable instead of decorative."""
     rows = []
     for i, st in enumerate(spec["steps"], 1):
-        ev = st.get("evidence") or {}
+        shown = bool(st.get("image"))
+        ev = st.get("evidence") or (st.get("excluded") or {}).get("evidence") or {}
         label = ev.get("label")
         score = ev.get("label_score")
         verified = f"{label} {score:.2f}" if label and score is not None else "—"
@@ -119,10 +131,12 @@ def provenance_rows(spec):
             str(i),
             ev.get("source", "—"),
             ev.get("frame", "—"),
-            ev.get("tenant", "—") if st.get("image") else "—",
+            (ev.get("tenant", "—") if shown
+             else f"{ev['tenant']} (left out)" if ev.get("tenant") else "—"),
             {"label_box": "label box",
              "click_transient": "click transient"}.get(ev.get("anchor"), "—"),
             verified,
+            ev.get("tenant_confirmed_by") or "—",
         ])
     return rows
 
@@ -147,9 +161,9 @@ def render(spec, out, mode, root=".", provenance=False):
     doc.add_heading(spec.get("steps_heading") or "Steps", level=1)
     for i, st in enumerate(spec["steps"], 1):
         _runs(doc.add_paragraph(style="List Number"), st["text"])
-        img = st.get("image")
+        img = _image(st, mode)
         if not img:
-            if st.get("missing_shot"):
+            if mode == "draft" and st.get("missing_shot"):
                 p = _tinted(doc, F.MISSING_SHOT.format(reason=st["missing_shot"]),
                             F.SIZE_CAPTION, _C["red"], bold=True)
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -218,10 +232,11 @@ def render_markdown(spec, out, mode, asset_base=""):
           f"## {spec.get('steps_heading') or 'Steps'}", ""]
     for i, st in enumerate(spec["steps"], 1):
         L.append(f"{i}. {st['text']}")
-        if st.get("missing_shot") and not st.get("image"):
+        img = _image(st, mode)
+        if mode == "draft" and st.get("missing_shot") and not img:
             L += ["", f"   **{F.MISSING_SHOT.format(reason=st['missing_shot'])}**", ""]
-        if st.get("image"):
-            name = os.path.basename(st["image"])
+        if img:
+            name = os.path.basename(img)
             L += ["", f"   ![{st['caption']}]({asset_base}{name})",
                   "", f"   *{st['caption']}*", ""]
     L += ["", f"## {F.H_CONSIDERATIONS}", ""]

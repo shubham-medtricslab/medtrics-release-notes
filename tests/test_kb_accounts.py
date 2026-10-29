@@ -288,6 +288,57 @@ class WriteIngest(Plan):
         sc = next(x for x in m["screens"] if x["visit_id"] == "v01-w1")
         self.assertEqual((sc["reason"], sc["note"]), (None, "write_blocked_ok"))
 
+    FORM = [{"label": "Date", "kind": "date", "required": True, "type": "date", "name": "date"},
+            {"label": "Venues", "kind": "multiselect", "required": False, "type": "div", "name": ""}]
+    DLG = {"t": "Notify Participants?", "x": "Notify Participants?", "bt": ["Yes, send notifications", "Cancel"]}
+
+    def wprobe(self, **kw):
+        return probe_for([lab("Notify Participants?")], dlg=self.DLG, tw={"institution_string": ["School of"]}, **kw)
+
+    def test_screens_carry_the_forms_fields_for_kb_data_plan(self):
+        it = self.item("v01-s2", [lab("Save")])
+        it["probe"] = probe_for([lab("Save"), lab("Nope", f=False)], fields=self.FORM, tw={"tenant_slug": ["xymed"]},
+                                dlg=self.DLG)
+        self.raw_file("b03", [it])
+        rc, res, m = self.ingest()
+        sc = next(x for x in m["screens"] if x["visit_id"] == "v01-s2")
+        self.assertEqual(sc["fields"], self.FORM)
+        self.assertEqual(sc["tw"], {"tenant_slug": ["xymed"]})
+        self.assertEqual((sc["btn"], sc["found"]), (self.DLG["bt"], ["Save"]))
+        plain = next(x for x in m["screens"] if x["visit_id"] == "v01-s0")
+        self.assertNotIn("fields", plain)                              # a screen without a form stays small
+
+    def test_dry_run_item_learns_only_it_is_needs_write_with_no_shots(self):
+        it = self.item("v01-w1", [lab("Notify Participants?")])
+        it.update(probe=self.wprobe(wb=0), ticket="M1-465", record_id="r1", mode="dry_run", blocked=1,
+                  choose={"ok": True, "x": 1, "y": 2, "label": "No, don't send notifications"},
+                  post_probe=self.wprobe(wb=1, wl="POST /api/s/", wk="xhr"))
+        self.raw_file("data-M1-465", [it])
+        rc, res, m = self.ingest()
+        self.assertEqual((rc, res["left"]), (0, 0))
+        self.assertEqual([x for x in m["shots"] if x.get("visit_id") == "v01-w1"], [])        # not an article shot
+        sc = next(x for x in m["screens"] if x["visit_id"] == "v01-w1")
+        self.assertEqual((sc["reason"], sc["detail"]), ("needs_write", "dry_run"))
+        self.assertEqual(sc["btn"], self.DLG["bt"])
+        self.assertEqual(m["missing"]["M1-465"], {"reason": "needs_write", "detail": "dry_run"})
+
+    def test_saved_item_is_noted_and_ingests_like_a_write_screen(self):
+        it = self.item("v01-w1", [lab("Notify Participants?")])
+        it.update(mode="save", blocked=0, created={"fingerprint": "abc", "id": "S-1", "status": "201", "page_url": SESS})
+        self.raw_file("data-M1-465", [it])
+        rc, res, m = self.ingest()
+        sc = next(x for x in m["screens"] if x["visit_id"] == "v01-w1")
+        self.assertEqual((sc["reason"], sc["note"]), (None, "saved"))
+        self.assertTrue([x for x in m["shots"] if x.get("visit_id") == "v01-w1"])
+
+    def test_pending_without_created_is_flagged_unverified(self):
+        it = self.item("v01-w1", [lab("Notify Participants?")])
+        it.update(mode="save", pending="abc")
+        it["probe"] = "[BLOCKED: x]"                                   # the run died before the post-click probe
+        self.raw_file("data-M1-465", [it])
+        rc, res, m = self.ingest()
+        self.assertEqual(m["missing"]["M1-465"], {"reason": "write_failed", "detail": "record_unverified"})
+
     def test_write_error_is_recorded(self):
         self.raw_file("data-M1-465", [{"visit_id": "v01-w1", "write_error": "Save button not found"}])
         rc, res, m = self.ingest()

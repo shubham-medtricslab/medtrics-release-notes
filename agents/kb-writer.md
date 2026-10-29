@@ -148,3 +148,5 @@ Trainee, personal portal:
  "conclusion": "You can now request leave and follow its approval in one place. To withdraw a request, open it from Time Off and cancel it before it is approved.",
  "notes": []}
 ```
+
+Never write wording that points at an image ("as shown below", "in the screenshot", "see the image"): a screenshot can be left out of the client copy, and every step must read correctly as text alone.

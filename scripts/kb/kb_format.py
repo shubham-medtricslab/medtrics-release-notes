@@ -19,7 +19,7 @@ NAVY = "1F3064"        # headings and title
 ORANGE = "ED601A"      # screenshot annotation accent (set by qa_annotate.py)
 INK = "2D3448"         # body ink
 MID = "6C717C"         # subtitle, captions, provenance note
-RED = "B00020"         # draft banner, watermark
+RED = "B00020"         # draft banner (CLI preview only)
 
 # ── type ─────────────────────────────────────────────────────────────────────
 FONT = "Calibri"
@@ -42,8 +42,8 @@ TABLE_STYLE = "Light Grid Accent 1"
 
 # ── screenshot annotation ────────────────────────────────────────────────────
 # qa_annotate.py draws with these. Orange marks what the reader acts on; red is
-# reserved for "not for publication" (watermark, draft banner), so a ring is
-# never red.
+# reserved for the draft banner of the CLI preview, so a ring is never red.
+# Shots are never watermarked or framed: the article is client-clean.
 RING_WIDTH_PX = 4
 RING_RADIUS_PX = 8
 RING_PAD_PX = 28
@@ -77,13 +77,14 @@ MAX_TITLE_CHARS = 90
 MIN_OVERVIEW_WORDS = 40
 MIN_CONSIDERATIONS = 1
 
-PROVENANCE_HEADERS = ["Step", "Source", "Frame", "Tenant", "Anchor", "Label verified"]
+PROVENANCE_HEADERS = ["Step", "Source", "Frame", "Tenant", "Anchor", "Label verified", "Confirmed by"]
 
 DRAFT_BANNER = (
     "DRAFT — screenshots are re-capture references, not publishable assets. "
     "{blocked} of the {total} screenshots in this article failed the tenant screen. "
     "Re-capture each shot against the demo tenant before this goes out."
 )
+# Printed by the CLI draft preview only; the packaged article never carries it.
 MISSING_SHOT = "[Screenshot missing — {reason}]"
 NO_SCREEN = "no_screen"      # sentinel: the change has no screen; no marker, one note
 NO_SCREEN_NOTE = "No screenshot: this change has no screen of its own."
@@ -113,15 +114,21 @@ def missing_reason_text(code, detail=""):
     if not base:
         return code
     return f"{base} ({detail})" if detail and code in ("click_refused", "click_not_found") else base
-SUBTITLE = "Audience: {audience} · {portal} · Generated from {ticket} · {state}"
+# The article goes to Intercom as written, so the subtitle names the audience and
+# portal only: no ticket id, no "generated from", no draft state. The suffix is
+# for the CLI's draft preview render, never for the packaged article.
+SUBTITLE = "Audience: {audience} · {portal}"
+SUBTITLE_DRAFT_SUFFIX = " · draft, not published"
 
 # ── gates ────────────────────────────────────────────────────────────────────
 LABEL_CUTOFF = 0.82        # same floor the OCR verifier uses; see qa_gif_to_shots.py
 TENANT_VERDICTS = ("CLEAR", "REVIEW", "BLOCK")
 ANCHORS = ("label_box", "click_transient", "dom_box", "none")
 # dom_box: the DOM text equals the label exactly and the element is visible and
-# unoccluded, but no OCR confirmed the pixels. Accepted in a draft only — the
-# fallback for a sandbox without tesseract. Publish still needs label_box.
+# unoccluded, but no OCR confirmed the pixels. Accepted in the final render only
+# on a frame the owner confirmed (evidence.tenant_confirmed_by): the owner saw
+# the ring on the contact sheet, which is the check OCR would have made.
+# Unconfirmed, it is refused on publish.
 DRAFT_ONLY_ANCHORS = ("dom_box",)
 
 # A published article is client-facing copy. These never appear in it. The list

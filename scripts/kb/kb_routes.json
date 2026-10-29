@@ -6,6 +6,7 @@
   "login_path": "/users/login/",
   "allow_strings": [
    "Medtrics School of Medicine",
+   "School of Medicine",
    "Medtrics Medical Center",
    "Medtrics",
    "Geriatric",

@@ -34,6 +34,19 @@ CURRENT PATH (Claude in Chrome, the owner's own signed-in Chrome):
           {"option": text} picks a listbox/dropdown option; write mode searches only
           the top-most open dialog and refuses >1 match (ambiguous). After a
           learner/external account a final `restore` batch needs_signin:main.
+          0.28.0 page script: the probe also returns `fields` (the visible form controls:
+          label, kind, required, type, name[, opts, zz]), `dlg` (the open prompt: title,
+          text, button texts), `tw` (the words behind a tenant verdict, <= 5 per kind),
+          `wk` (the channel of the last blocked write), `al` / `saved` (the one allowed
+          request and its response). kbclick {"choose": true} picks a prompt's safe answer by
+          rule; kbclick {"text", "write", "allow": {method, path, dlg, query}} prepares the write
+          guard's ONE-SHOT allowance: it is armed only by the owner's real click on the exact
+          element kbclick checked (a click anywhere else cancels it), only after the probe saw
+          the dialog, never on Save, and then lets exactly one fetch/XHR through - that method
+          + path, a query that is empty or the learned one - within ALLOW_TTL_S of the click. ingest keeps
+          `fields` / `tw` / `btn` / `found` on each screen record (kb_data.py plan reads
+          them), skips labels outside the frame before OCR, and turns a dry-run write item
+          (mode dry_run) into needs_write without shots.
   route-check-js --plan groups.json [--routes kb_routes.json]
           Prints one javascript_tool snippet (starts with `await`) for the signed-in tab: fetch()es each
           distinct start URL (and its /administration <-> /vadministration
@@ -109,6 +122,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import time
@@ -521,39 +535,89 @@ NF_RE = re.compile(NF_SOURCE, re.I)
 def is_not_found(text):
     return bool(NF_RE.search(str(text or "")))
 
-# ── network write guard (0.27.0) ─────────────────────────────────────────────
+# ── network write guard (0.27.0, one-shot allowance 0.28.0) ──────────────────
 # Installed by the probe, kbclick and kbopt on EVERY call. Nothing may reach the
 # server with a method other than GET: fetch is rejected, XHR.send throws,
 # sendBeacon returns false, form.submit()/requestSubmit() do nothing and a
 # capture-phase submit listener cancels any non-GET form. Each block counts in
-# window.__kbBlocked (last "METHOD /path" in window.__kbLast). Idempotent: every
+# window.__kbBlocked (last "METHOD /path" in window.__kbLast, its channel -
+# fetch / xhr / form / beacon / ws - in window.__kbLastSrc). Idempotent: every
 # wrapper carries a __kb mark, so a second install (each stub call runs it, SPA
 # route changes keep the window) wraps nothing twice; a full navigation gives a
-# fresh window that the next call patches again. Never lifted in 0.27.0.
+# fresh window that the next call patches again.
 # Also: an XHR that was opened before the install (no recorded method) is blocked on
 # send (fail closed); WebSocket.prototype.send throws; the guard installs into every
 # same-origin iframe (window.frames, re-installed on the frame's load, and a
 # MutationObserver for frames added later). Not covered: a fetch reference page code
 # saved before the install (the legacy app uses axios / jQuery over XHR).
+# Every blocked non-GET is also logged, with a sequence number and a timestamp, in
+# window.__kbLog (the last 20: {n, m, p, q, s, t}; q is the query string); the last one's
+# query is window.__kbLastQ. The probe returns the log as `bl`.
+# The ONE-SHOT ALLOWANCE (save mode only) lives INSIDE the guard's own wrappers: the guard keeps
+# the raw fetch / XHR.send, the allowance state and each XHR's method + resolved URL (a WeakMap)
+# in one closure, and no readable property holds a raw function. kbclick arms it through the
+# non-enumerable `__kbA(token, spec)` on the wrapper (token baked into the page scripts by
+# install_action); `__kbA(token, null)` disarms. Clock, URL and the other builtins are captured
+# at install. In-page code cannot be made airtight against deliberately hostile same-page
+# script (see skills/kb-capture/SKILL.md Limits).
 _GUARD_JS = r"""
 (function G(W){
 var D=W.document;
+var now=Date.now.bind(Date),U=W.URL,OA=Object.assign,DP=Object.defineProperty,OD=Object.getOwnPropertyDescriptor,WM=WeakMap;
+var CT=W.Node&&W.Node.prototype&&W.Node.prototype.contains;
 W.__kbBlocked=W.__kbBlocked||0;
-var note=function(m,u){W.__kbBlocked=(W.__kbBlocked||0)+1;var p='';try{p=new URL(String(u),W.location.href).pathname;}catch(x){p=String(u||'').slice(0,60);}W.__kbLast=String(m).trim().toUpperCase()+' '+p;};
-var get=function(m){return String(m||'GET').trim().toUpperCase()==='GET';};
+var P=function(u){try{return new U(String(u),(D&&D.baseURI)||W.location.href);}catch(x){return null;}};
+var note=function(m,u,s){W.__kbBlocked=(W.__kbBlocked||0)+1;var q=P(u),p=q?q.pathname:String(u||'').slice(0,60),qs=q?q.search:'';W.__kbLast=String(m).trim().toUpperCase()+' '+p;W.__kbLastQ=qs;W.__kbLastSrc=s||'';var L=W.__kbLog;if(!Array.isArray(L))L=W.__kbLog=[];L.push({n:W.__kbBlocked,m:String(m).trim().toUpperCase(),p:p,q:qs,s:s||'',t:now()});while(L.length>20)L.shift();};
+var nm=function(m){return String(m||'GET').trim().toUpperCase();};
+var get=function(m){return nm(m)==='GET';};
 var fm=function(f,s){return String((s&&s.formMethod)||(f&&f.method)||'get').trim().toLowerCase();};
-var F=W.fetch;
-if(typeof F==='function'&&!F.__kb){var nf=function(i,o){var m=(o&&o.method)||(i&&i.method)||'GET';if(!get(m)){note(m,(i&&i.url)||i);return Promise.reject(new TypeError('KB_WRITE_BLOCKED'));}return F.apply(this,arguments);};nf.__kb=1;W.fetch=nf;}
+var TOK='__TOK__',cur=null,XM=new WM();
+var has=function(n,c){try{return CT?CT.call(n,c):n.contains(c);}catch(x){return false;}};
+var drop=function(ly){try{D.removeEventListener('click',ly.l,true);}catch(x){}};
+var arm=function(tok,sp){
+if(tok!==TOK)return false;
+if(cur){drop(cur);cur=null;}
+if(!sp)return true;
+var tp=false;try{tp=!W.top||W.top===W;}catch(x){}
+var mt=String(sp.mt),pth=String(sp.pth),qs=String(sp.qs);
+if(!tp||!sp.el||(!CT&&typeof sp.el.contains!=='function')||!(mt==='POST'||mt==='PUT'||mt==='PATCH')||!/^\/[^?#\s]*$/.test(pth)||!/^(\?[^#\s]*)?$/.test(qs))return false;
+var ly={a:false,u:false,t:0,p:now()+60000,el:sp.el,mt:mt,pth:pth,qs:qs,ttl:Math.min(Math.max(Number(sp.ttl)||0,0),15000)};
+ly.l=function(e){if(cur!==ly||ly.a||ly.u||e.isTrusted===false)return;drop(ly);if(now()>ly.p)return;var t=e.target;if(t&&(t===ly.el||has(ly.el,t))){ly.a=true;ly.t=now()+ly.ttl;}};
+cur=ly;D.addEventListener('click',ly.l,true);return true;};
+var take=function(m,u){var ly=cur;if(!ly||!ly.a||ly.u||now()>ly.t||m!==ly.mt)return null;var q=P(u);if(!q||q.origin!==W.location.origin||q.pathname!==ly.pth||(q.search!==''&&q.search!==ly.qs))return null;ly.u=true;(W.__kbAllowed=W.__kbAllowed||[]).push(ly.mt+' '+ly.pth);return ly;};
+var idOf=function(j){try{var v=j&&(j.id!==undefined?j.id:(j.data&&j.data.id));return (typeof v==='string'||typeof v==='number')?String(v).slice(0,40):'';}catch(x){return '';}};
+var sv=function(ly,u,st,id){var q=P(u);W.__kbSaved={m:ly.mt,p:q?q.pathname:'',s:st,id:id||''};};
+var F=W.fetch,RQ=W.Request,RM=null,RU=null;
+try{RM=OD(RQ.prototype,'method').get;RU=OD(RQ.prototype,'url').get;}catch(x){RM=null;RU=null;}
+if(typeof F==='function'&&!F.__kb){var nf=function(i,o){
+var isR=false;try{isR=!!RM&&!!RU&&i instanceof RQ;}catch(x){}
+var o2=(o&&typeof o==='object')?OA({},o):o;
+var mo=o2&&o2.method,mi,u,i2=i;
+if(isR){mi=RM.call(i);u=RU.call(i);}
+else if(i&&typeof i==='object'&&!(U&&i instanceof U)){var iu=i.url;mi=i.method;u=String(iu||i);i2=iu?{url:u,method:mi}:u;}
+else{u=String(i);i2=u;}
+var ms=String(mo||mi||'GET');
+if(mo)o2.method=ms;
+if(get(ms))return F.call(W,i2,o2);
+var ly=take(nm(ms),u);
+if(!ly){note(ms,u,'fetch');return Promise.reject(new TypeError('KB_WRITE_BLOCKED'));}
+o2=OA({},o2||{});o2.method=ms;
+var pr=F.call(W,i2,o2);
+try{pr.then(function(r){try{sv(ly,u,r.status,'');r.clone().json().then(function(j){if(W.__kbSaved)W.__kbSaved.id=idOf(j);}).catch(function(){});}catch(x){}},function(){sv(ly,u,0,'');});}catch(x){}
+return pr;};nf.__kb=1;try{DP(nf,'__kbA',{value:arm});}catch(x){}W.fetch=nf;}
 var X=W.XMLHttpRequest&&W.XMLHttpRequest.prototype;
-if(X&&X.open&&!X.open.__kb){var xo=X.open,xs=X.send;X.open=function(m,u){this.__kbm=m;this.__kbu=u;return xo.apply(this,arguments);};X.open.__kb=1;X.send=function(){if(this.__kbm===undefined||!get(this.__kbm)){note(this.__kbm||'OPEN?',this.__kbu);throw new Error('KB_WRITE_BLOCKED');}return xs.apply(this,arguments);};X.send.__kb=1;}
+if(X&&X.open&&!X.open.__kb){var xo=X.open,xs=X.send,xa=X.addEventListener;X.open=function(m,u){XM.delete(this);var r=xo.apply(this,arguments);var q=P(u);XM.set(this,{m:String(m),u:q?q.href:String(u)});return r;};X.open.__kb=1;
+X.send=function(){var r=XM.get(this);if(r&&get(r.m))return xs.apply(this,arguments);
+if(r){var ly=take(nm(r.m),r.u);if(ly){var x=this;try{xa.call(x,'loadend',function(){var id='';try{id=idOf(JSON.parse(x.responseText));}catch(e){}sv(ly,r.u,x.status,id);});}catch(e){}return xs.apply(this,arguments);}}
+note(r?r.m:'OPEN?',r&&r.u,'xhr');throw new Error('KB_WRITE_BLOCKED');};X.send.__kb=1;try{DP(X.send,'__kbA',{value:arm});}catch(x){}}
 var N=W.navigator;
-if(N&&typeof N.sendBeacon==='function'&&!N.sendBeacon.__kb){var nb=function(u){note('POST',u);return false;};nb.__kb=1;try{N.sendBeacon=nb;}catch(x){}}
+if(N&&typeof N.sendBeacon==='function'&&!N.sendBeacon.__kb){var nb=function(u){note('POST',u,'beacon');return false;};nb.__kb=1;try{N.sendBeacon=nb;}catch(x){}}
 var H=W.HTMLFormElement&&W.HTMLFormElement.prototype;
-if(H&&H.submit&&!H.submit.__kb){var hs=H.submit,hr=H.requestSubmit;H.submit=function(){if(fm(this)!=='get'){note(fm(this),this.action);return;}return hs.apply(this,arguments);};H.submit.__kb=1;
-if(hr){H.requestSubmit=function(s){if(fm(this,s)!=='get'){note(fm(this,s),this.action);return;}return hr.apply(this,arguments);};H.requestSubmit.__kb=1;}}
+if(H&&H.submit&&!H.submit.__kb){var hs=H.submit,hr=H.requestSubmit;H.submit=function(){if(fm(this)!=='get'){note(fm(this),this.action,'form');return;}return hs.apply(this,arguments);};H.submit.__kb=1;
+if(hr){H.requestSubmit=function(s){if(fm(this,s)!=='get'){note(fm(this,s),this.action,'form');return;}return hr.apply(this,arguments);};H.requestSubmit.__kb=1;}}
 var S=W.WebSocket&&W.WebSocket.prototype;
-if(S&&S.send&&!S.send.__kb){S.send=function(){note('WS',this.url);throw new Error('KB_WRITE_BLOCKED');};S.send.__kb=1;}
-if(D&&D.addEventListener&&!D.__kbS){D.__kbS=1;D.addEventListener('submit',function(e){var f=e.target;if(fm(f,e.submitter)!=='get'){e.preventDefault();if(e.stopImmediatePropagation)e.stopImmediatePropagation();note(fm(f,e.submitter),f&&f.action);}},true);}
+if(S&&S.send&&!S.send.__kb){S.send=function(){note('WS',this.url,'ws');throw new Error('KB_WRITE_BLOCKED');};S.send.__kb=1;}
+if(D&&D.addEventListener&&!D.__kbS){D.__kbS=1;D.addEventListener('submit',function(e){var f=e.target;if(fm(f,e.submitter)!=='get'){e.preventDefault();if(e.stopImmediatePropagation)e.stopImmediatePropagation();note(fm(f,e.submitter),f&&f.action,'form');}},true);}
 var hk=function(f){try{if(f.contentWindow&&f.contentWindow.document)G(f.contentWindow);}catch(x){}try{if(!f.__kbL&&f.addEventListener){f.__kbL=1;f.addEventListener('load',function(){try{G(f.contentWindow);}catch(x){}});}}catch(x){}};
 var fr=function(n){try{if(n&&n.tagName==='IFRAME')hk(n);else if(n&&n.querySelectorAll)Array.prototype.forEach.call(n.querySelectorAll('iframe'),hk);}catch(x){}};
 try{for(var i=0;i<W.frames.length;i++){try{var c=W.frames[i];if(c&&c.document)G(c);}catch(x){}}}catch(x){}
@@ -565,7 +629,7 @@ if(D&&!D.__kbM&&W.MutationObserver){D.__kbM=1;try{new W.MutationObserver(functio
 
 def guard_source():
     """The write guard as one JS statement (an IIFE), lines joined by spaces."""
-    return " ".join(l.strip() for l in _GUARD_JS.strip().splitlines())
+    return " ".join(l.strip() for l in _GUARD_JS.strip().splitlines()).replace("__TOK__", ARM_TOKEN)
 
 
 def request_blocked(method=None, request_method=None):
@@ -583,12 +647,52 @@ def form_blocked(form_method=None, submitter_method=None):
     return str(m).strip().lower() != "get"
 
 
+# Form-control reading, shared by the probe (`fields`) and kb_data's field script
+# (so a label the probe reported is a label the fill script finds). Plain JS like the
+# probe; needs `D` (document) in scope; defines kfList(root, sideSelector) ->
+# [{e, d}] with d = {label, kind, required, type, name[, opts, zz]}.
+_FIELDS_JS = r"""
+var kfN=function(s){return String(s||'').replace(/\s+/g,' ').replace(/[\s*:]+$/,'').trim();};
+var kfV=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
+var kfT=function(e){return e?String(e.innerText||e.textContent||''):'';};
+var kfWG='.multiselect,.vs__dropdown-toggle,[role=combobox]';
+var kfG=function(e,n){return e.getAttribute?e.getAttribute(n):null;};
+var kfRaw=function(e){var t='',ls=e.labels;if(ls&&ls.length)t=kfT(ls[0]);if(kfN(t).length>60)t='';if(!kfN(t)&&e.id&&D.querySelector){try{var l2=D.querySelector('label[for="'+String(e.id).replace(/"/g,'')+'"]');if(l2)t=kfT(l2);}catch(x){}}if(!kfN(t)){var lb=kfG(e,'aria-labelledby');if(lb&&D.getElementById)t=lb.split(/\s+/).map(function(i){return kfT(D.getElementById(i));}).join(' ');}if(!kfN(t))t=kfG(e,'aria-label')||'';if(!kfN(t))t=kfG(e,'placeholder')||'';if(!kfN(t)){var p=e;for(var k=0;k<3&&p&&!kfN(t);k++,p=p.parentElement){var sb=p.previousElementSibling;if(sb){var st=kfT(sb);if(kfN(st)&&kfN(st).length<=60)t=st;}}}return t;};
+var kfKind=function(e){var tg=String(e.tagName||'').toLowerCase(),ty=String(e.type||kfG(e,'type')||'').toLowerCase();if(tg==='select')return e.multiple?'multiselect':'select';if(tg==='textarea')return 'textarea';if(tg!=='input')return 'other';if(ty==='date'||ty==='datetime-local')return 'date';if(ty==='time')return 'time';if(ty==='checkbox')return 'checkbox';if(ty==='radio')return 'radio';if(/^(text|search|number|email|tel|url|)$/.test(ty))return 'text';return 'other';};
+var kfReq=function(e,raw){var l0=e.labels&&e.labels[0];return !!(e.required||kfG(e,'aria-required')==='true'||kfG(e,'required')!==null||/\*/.test(raw)||/(^|\s)required(\s|$)/.test(String(e.className||''))||(l0&&/(^|\s)required(\s|$)/.test(String(l0.className||''))));};
+var kfList=function(root,side){
+var inS=function(e){try{return !!(side&&e.closest(side));}catch(x){return false;}};
+var out=[];
+var add=function(e,k){var raw=kfRaw(e),d={label:kfN(raw),kind:k,required:kfReq(e,raw),type:String(e.type||e.tagName||'').toLowerCase().slice(0,20),name:String(kfG(e,'name')||e.id||'').slice(0,60)};
+if(k==='select'){var os=Array.prototype.slice.call(e.options||[]).map(function(o){return kfN(o.text).slice(0,40);});d.opts=os.slice(0,12);var zz=os.filter(function(o){return /^zz demo/i.test(o);})[0];if(zz)d.zz=zz;}
+if(out.some(function(x){return x.d.label===d.label&&x.d.kind===d.kind&&x.d.name===d.name&&x.e===e;}))return;out.push({e:e,d:d});};
+var ws=Array.prototype.slice.call(root.querySelectorAll(kfWG)).filter(function(e){return kfV(e)&&!inS(e);});
+var rt=kfT(root===D?D.body:root);
+var dl=(/available options/i.test(rt)&&/selected options/i.test(rt))?Array.prototype.slice.call(root.querySelectorAll('div,section,fieldset')).filter(function(e){if(!kfV(e)||inS(e))return false;var t=kfT(e);return /available options/i.test(t)&&/selected options/i.test(t)&&t.length<4000;}):[];
+dl=dl.filter(function(e){return !dl.some(function(o){return o!==e&&e.contains(o);});});
+var cs=Array.prototype.slice.call(root.querySelectorAll('input,textarea,select')).filter(function(e){var ty=String(e.type||'').toLowerCase();return kfV(e)&&!inS(e)&&!/^(hidden|password|file|submit|button|reset|image)$/.test(ty);});
+cs.forEach(function(e){if(ws.some(function(w){return w!==e&&w.contains(e);})||dl.some(function(w){return w.contains(e);}))return;add(e,kfKind(e));});
+ws.forEach(function(e){add(e,'multiselect');});
+dl.forEach(function(e){add(e,'duallist');});
+var pos=function(x){var r=x.e.getBoundingClientRect();return Math.round(r.top/6)*100000+r.left;};
+out.sort(function(x,y){return pos(x)-pos(y);});
+return out.slice(0,40);
+};
+"""
+
+
+def fields_source():
+    """The form-control reader as JS statements (defines kfList); needs `D` in scope."""
+    return " ".join(l.strip() for l in _FIELDS_JS.strip().splitlines())
+
+
 # Plain JS, no comments, every statement ends with ';' (lines are joined with
 # spaces). __TENANT__ and __NONLATIN__ are filled from the Python side.
 _PROBE_JS = r"""
 (function(a){
 var D=document,W=window;
 __GUARD__
+__FIELDS__
 var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
 if(location.pathname.indexOf(a.login)>=0||D.querySelector('input[type=password]'))throw new Error('KB_LOGIN');
 var pl=Array.prototype.slice.call(D.querySelectorAll('a[href*="portal_change"]'));
@@ -610,6 +714,13 @@ var hb=function(e){var r=e.getBoundingClientRect();return {t:norm(e.innerText),b
 var hv=function(l){return l.filter(function(e){return vis(e)&&norm(e.innerText)&&!inSb(e);});};
 var dt=hv(Array.prototype.slice.call(D.querySelectorAll('.modal-title,[role=dialog] h1,[role=dialog] h2,[role=dialog] h3,.swal2-title')));
 var ht=dt.length?dt[dt.length-1]:hv(Array.prototype.slice.call(D.querySelectorAll('h1,h2')))[0];
+var dls=Array.prototype.slice.call(D.querySelectorAll(__DLG__)).filter(vis);
+var dlg=dls.length?dls[dls.length-1]:null;
+var bt=[];
+if(dlg){Array.prototype.forEach.call(dlg.querySelectorAll('button,[role=button],input[type=button],input[type=submit],a.btn'),function(e){if(!vis(e))return;var t=norm(e.innerText||e.value||e.textContent).slice(0,40);if(t&&bt.indexOf(t)<0&&bt.length<8)bt.push(t);});}
+var dx=dlg?norm(dlg.innerText):'';
+W.__kbSeen=dlg?(norm(dt.length?dt[dt.length-1].innerText:'')+' '+dx).toLowerCase().slice(0,600):'';
+var fl=kfList(dlg||D,a.side).map(function(x){return x.d;});
 var labels=a.labels.map(function(l){
 var want=norm(l);
 var m=all.filter(function(e){return String(e.textContent||'').indexOf(l)>=0&&norm(e.innerText)===want&&vis(e);});
@@ -627,17 +738,22 @@ var raw=String(D.body.innerText||'');
 a.allow.forEach(function(s){raw=raw.replace(new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),' ');});
 var cased=raw,low=raw.toLowerCase(),k=[],hard=false;
 var add=function(n,h){if(k.indexOf(n)<0)k.push(n);if(h)hard=true;};
+var tw={};
+var tws=function(n,w){w=String(w||'').trim().slice(0,40);if(!w)return;var l=tw[n]||(tw[n]=[]);if(l.length<5&&l.indexOf(w)<0)l.push(w);};
 var re=rx('email',true),m2;
-while((m2=re.exec(low))){if(m2[1].toLowerCase().indexOf(String(a.domain).toLowerCase())<0)add('foreign_email_domain',true);}
-if(rx('inst',false).test(low))add('institution_string',false);
-if(cased.match(rx('course',true)))add('course_codes',false);
-if(rx('disc',false).test(low))add('discipline_word',false);
+while((m2=re.exec(low))){if(m2[1].toLowerCase().indexOf(String(a.domain).toLowerCase())<0){add('foreign_email_domain',true);tws('foreign_email_domain','@'+String(m2[1]).replace(/[.\-]+$/,''));}}
+var re4=rx('inst',true),m4;
+while((m4=re4.exec(low))){add('institution_string',false);tws('institution_string',m4[0]);if(m4[0]==='')re4.lastIndex++;}
+var re5=rx('course',true),m5;
+while((m5=re5.exec(cased))){add('course_codes',false);tws('course_codes',m5[0]);if(m5[0]==='')re5.lastIndex++;}
+var re6=rx('disc',true),m6;
+while((m6=re6.exec(low))){add('discipline_word',false);tws('discipline_word',m6[0]);if(m6[0]==='')re6.lastIndex++;}
 var re2=rx('slug',true),m3;
-var STOP=__SLUG_STOP__; while((m3=re2.exec(low))){if(STOP.indexOf(m3[1])<0)add('tenant_slug',true);}
+var STOP=__SLUG_STOP__; while((m3=re2.exec(low))){if(STOP.indexOf(m3[1])<0){add('tenant_slug',true);tws('tenant_slug',m3[1]);}}
 var nl=0;
 for(var i=0;i<low.length;i++){if(low.charCodeAt(i)>0x3FF)nl++;}
 if(nl>=__NONLATIN__)add('non_latin_script',true);
-return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k}};
+return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),wq:String(W.__kbLastQ||''),wk:String(W.__kbLastSrc||''),bl:(Array.isArray(W.__kbLog)?W.__kbLog:[]).slice(-20),al:W.__kbAllowed||[],saved:W.__kbSaved||null,fields:fl,dlg:dlg?{t:norm(dt.length?dt[dt.length-1].innerText:'').slice(0,80),x:dx.slice(0,160),bt:bt}:null,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k},tw:tw};
 })
 """
 
@@ -666,7 +782,17 @@ CLICK_RX = {
     "icon": r"triangle|expand|icon|caret|chevron",         # row cell parts that are never the click
     "ctl": r"^(?:button|a|i|svg|input)$",
     "grp": r"(?:^|\s)(?:group|expandable|parent)(?:-(?:row|header|head))?(?:\s|$)",   # a row class that marks a group header
+    # prompt answers (dry-run "choose" mode, and kb_data's choose rule): a negated answer
+    # first ("No, don't send notifications", "Don't send"), a bare "No", then Cancel/Close/Skip;
+    # yes / save / submit / confirm / continue / ok / proceed anywhere in the text refuse it.
+    "cn": r"^(?:no[,:]?\s+)?(?:don['\u2019]?t|do not)\b",
+    "cc": r"^(?:cancel|close|skip)\b",
+    "no": r"^no[.!]?$",
+    "cb": r"\b(?:yes|save|submit|confirm|continue|ok|proceed)",
 }
+ALLOW_TTL_S = 10          # a one-shot allowance lives this long after kbclick armed it
+ALLOW_METHODS = ("POST", "PUT", "PATCH")
+SAVE_WORDS_RE = re.compile(r"^(?:save|create|add|submit)$", re.I)     # a Save button never arms an allowance
 # Selectors shared by the JS and the docs. A row is a group when it holds a
 # GROUP_SEL element or a class matched by CLICK_RX["grp"].
 GROUP_SEL = ".expand,.triangle,[aria-expanded]"
@@ -695,6 +821,83 @@ def write_danger(text):
     if _CLICK_RE["wd"].search(t):
         return True
     return any(not _CLICK_RE["neg"].search(t[:m.start()]) for m in _CLICK_RE["sn"].finditer(t))
+
+
+def choose_rank(text):
+    """Dry-run "choose" mode (kbclick {"choose": true}): how good a dialog button is as the
+    answer, 0 best, or None when it must never be clicked. 0 = a negated answer ("No,
+    don't send notifications", "Don't send"), 1 = a bare "No", 2 = Cancel / Close / Skip.
+    Anything with yes / save / submit / confirm / continue / ok / proceed in it, or that
+    write_danger() flags, is None."""
+    t = " ".join(str(text or "").split())
+    if not t or _CLICK_RE["cb"].search(t) or write_danger(t):
+        return None
+    for rank, key in enumerate(("cn", "no", "cc")):
+        if _CLICK_RE[key].search(t):
+            return rank
+    return None
+
+
+def choose_pick(texts):
+    """Python mirror of the choose-mode pick: the index of the best button (lowest
+    rank; the first among equals) or None."""
+    best = None
+    for i, t in enumerate(texts):
+        r = choose_rank(t)
+        if r is not None and (best is None or r < best[0]):
+            best = (r, i)
+    return best[1] if best else None
+
+
+def allow_refusal(allow, el_text, in_dialog, dialog_text, seen, top=True):
+    """Why kbclick will NOT arm a one-shot allowance, or "" when it will (Python mirror
+    of the JS). allow {"method", "path", "dlg", "query" (optional, "" or "?a=b")}; el_text the clicked button's text;
+    in_dialog it sits in the top-most open dialog; dialog_text that dialog's text;
+    seen what the last probe recorded of the open dialog (window.__kbSeen); top the
+    window is the top window. Only a click on a dialog button after the probe saw the
+    expected dialog arms it; the Save button never does."""
+    a = allow if isinstance(allow, dict) else {}
+    method, path = str(a.get("method") or "").upper(), str(a.get("path") or "")
+    ex = " ".join(str(a.get("dlg") or "").split()).lower()
+    query = "" if a.get("query") is None else str(a.get("query"))
+    if (method not in ALLOW_METHODS or not re.fullmatch(r"/[^?#\s]*", path) or not ex
+            or not re.fullmatch(r"(?:\?[^#\s]*)?", query)):
+        return "allow_bad_request"
+    if not top:
+        return "allow_not_top"
+    if not dialog_text:
+        return "allow_no_dialog"
+    if ex not in " ".join(str(dialog_text).split()).lower() or ex not in str(seen or ""):
+        return "allow_dialog_not_seen"
+    if not in_dialog:
+        return "allow_outside_dialog"
+    if SAVE_WORDS_RE.match(" ".join(str(el_text or "").split())):
+        return "allow_on_save"
+    return ""
+
+
+def allowance_passes(armed, method, url, origin, now, src="fetch", top=True, base=None):
+    """Python mirror of the guard's allowance test -> (passes, armed after). armed:
+    {"m", "p", "q" (the learned query, "" or "?a=b"), "t" (expiry, same unit as now),
+    "used"} or None. The URL is resolved against the page (`base`, default the origin's
+    root) exactly as `new URL(url, location.href)` does - so "//evil.test/x" is another
+    origin - and passes only when the allowance is armed and unused, unexpired, in the top
+    window, fetch/XHR, same origin, with exactly the armed method and path, and a query that is
+    empty or exactly the armed one; it is then marked used. Everything else (including a
+    second identical request) is blocked and the allowance stays as it was."""
+    from urllib.parse import urljoin, urlsplit
+    if not armed or armed.get("used") or not top or src not in ("fetch", "xhr") or now > armed.get("t", 0):
+        return False, armed
+    raw = re.sub(r"[\t\r\n]", "", str(url)).replace("\\", "/")             # what the URL parser drops / folds
+    u = urlsplit(urljoin(base or origin + "/", raw))
+    if f"{u.scheme}://{u.netloc}" != origin:
+        return False, armed
+    if str(method).strip().upper() != armed["m"] or u.path != armed["p"]:
+        return False, armed
+    query = "?" + u.query if u.query else ""
+    if query and query != armed.get("q", ""):
+        return False, armed
+    return True, {**armed, "used": True}
 
 
 def click_refusal(el, text_click=True, write=None, vue=False):
@@ -819,16 +1022,33 @@ def row_target(row):
 
 
 # Plain JS like the probe: no comments, every statement ends with ';'.
+# kbclick's side of the one-shot allowance: it only ASKS the guard (see _GUARD_JS) to arm one
+# request, through the guard wrapper's non-enumerable `__kbA(token, spec)`. The guard does the
+# rest in its own closure: it arms only from a capture-phase, trusted click whose target is (or
+# is inside) `el` - any other real click cancels it - and then lets exactly ONE fetch / XHR
+# through, in the top window: the armed method (POST / PUT / PATCH), the same-origin pathname,
+# a query that is empty or exactly the learned one, within the ttl of the CLICK (max 15 s).
+# Every kbclick / kbopt starts with kbA(null), which disarms any older allowance.
+KBA_JS = r"""
+var kbA=function(sp){var f=W.fetch,s=W.XMLHttpRequest&&W.XMLHttpRequest.prototype.send;var a=(f&&f.__kbA)||(s&&s.__kbA);return typeof a==='function'?a('__TOK__',sp):undefined;};
+kbA(null);
+"""
+ALLOW_JS = r"""
+var armAllow=function(el,mt,pth,qs){if(kbA({el:el,mt:mt,pth:pth,qs:qs,ttl:__TTL__})!==true)no('allow_no_guard');};
+"""
+
 _CLICK_JS = r"""
 (function(a){
 var D=document,W=window,R=__RX__,S=__SEL__;
 __GUARD__
+__KBA__
 var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
 var WR=new RegExp(R.write,'i'),CR=new RegExp(R.cls,'i'),AR=new RegExp(R.attr,'i'),TR=new RegExp(R.tog),KR=new RegExp(R.tok),DR=new RegExp(R.dat),WD=new RegExp(R.wd,'i'),IC=new RegExp(R.icon,'i'),CT=new RegExp(R.ctl,'i'),GR=new RegExp(R.grp,'i');
 var SN=new RegExp(R.sn,'ig'),NG=new RegExp(R.neg,'i');
 var dng=function(s){if(WD.test(s))return true;SN.lastIndex=0;var m;while((m=SN.exec(s))){if(!NG.test(s.slice(0,m.index)))return true;}return false;};
 var WL=(a.write||[]).map(function(t){return norm(t).toLowerCase();});
 var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
+__ALLOW__
 var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
 var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
 var txt=function(e){return norm(e.innerText||e.value||e.textContent);};
@@ -871,6 +1091,8 @@ var cd=Array.prototype.slice.call(r.querySelectorAll('span')).filter(ok).concat(
 var e=cd.filter(function(e){return !why(e,false);})[0]||cd[0];
 return e?{e:e,g:!!r.querySelector(S.grp)||GR.test(String(r.className||''))}:null;
 };
+var dls=Array.prototype.slice.call(D.querySelectorAll(S.dlg)).filter(vis);
+var dlg=dls.length?dls[dls.length-1]:null;
 var el=null,grp=false;
 if(a.row){
 var p=(0,eval)(sessionStorage.getItem('kbp'));
@@ -882,13 +1104,21 @@ for(var i=0;i<rs.length&&!lf;i++){var pk=pickRow(rs[i]);if(!pk)continue;if(pk.g)
 var ch=lf||gp;
 if(!ch)throw new Error('KB_CLICK_NOTFOUND:row');
 el=ch.e;grp=!lf;
+}else if(a.choose){
+if(!dlg)throw new Error('KB_CLICK_NOTFOUND:dialog');
+var CN=new RegExp(R.cn,'i'),CC=new RegExp(R.cc,'i'),CO=new RegExp(R.no,'i'),CB=new RegExp(R.cb,'i');
+var bs=Array.prototype.slice.call(dlg.querySelectorAll('button,[role=button],input[type=button],input[type=submit],a.btn')).filter(function(e){return vis(e)&&txt(e);});
+var rk=function(t){if(CB.test(t)||dng(t))return 9;if(CN.test(t))return 0;if(CO.test(t))return 1;if(CC.test(t))return 2;return 9;};
+var best=null,bk=9;
+bs.forEach(function(e){var k=rk(txt(e));if(k<bk){bk=k;best=e;}});
+if(!best)throw new Error('KB_CLICK_NOTFOUND:choose');
+el=best;WL.push(txt(el).toLowerCase());
 }else{
 var wt=WL.indexOf(norm(a.text).toLowerCase())>=0;
 if(WR.test(a.text)&&!wt)no('write_verb');
 var want=norm(a.text).toLowerCase();
-var dls=WL.length?Array.prototype.slice.call(D.querySelectorAll(S.dlg)).filter(vis):[];
-var dlg=dls.length?dls[dls.length-1]:null;
-var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]'+(WL.length?',input[type=submit]':''))).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want&&(!dlg||dlg.contains(e));});
+var dl2=WL.length?dlg:null;
+var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]'+(WL.length?',input[type=submit]':''))).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want&&(!dl2||dl2.contains(e));});
 if(!all.length)throw new Error('KB_CLICK_NOTFOUND:'+a.text);
 if(WL.length&&all.length>1)no('ambiguous');
 var pool=all.filter(function(e){return !inSb(e);});
@@ -907,6 +1137,19 @@ var t=D.elementFromPoint(x,y);
 if(!t||!(t===el||el.contains(t)))no('occluded');
 var out={ok:true,x:Math.round(x),y:Math.round(y),label:txt(el).slice(0,60)};
 if(grp)out.group=true;
+if(a.allow){
+var al=a.allow,tp=true;
+try{tp=!W.top||W.top===W;}catch(x){tp=false;}
+var ex=norm(al.dlg).toLowerCase(),mt=String(al.method||'').toUpperCase(),qs=al.query===undefined||al.query===null?'':String(al.query);
+if(!ex||['POST','PUT','PATCH'].indexOf(mt)<0||!/^\/[^?#\s]*$/.test(String(al.path||''))||!/^(\?[^#\s]*)?$/.test(qs))no('allow_bad_request');
+if(!tp)no('allow_not_top');
+if(!dlg)no('allow_no_dialog');
+if(norm(dlg.innerText).toLowerCase().indexOf(ex)<0||String(W.__kbSeen||'').indexOf(ex)<0)no('allow_dialog_not_seen');
+if(!dlg.contains(el))no('allow_outside_dialog');
+if(/^(save|create|add|submit)$/i.test(txt(el)))no('allow_on_save');
+armAllow(el,mt,String(al.path),qs);
+out.armed=mt+' '+al.path+qs;
+}
 return out;
 })
 """
@@ -916,6 +1159,7 @@ _OPT_JS = r"""
 (function(a){
 var D=document,W=window,R=__RX__,S=__SEL__;
 __GUARD__
+__KBA__
 var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
 var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
 var want=norm(a.option).toLowerCase();
@@ -943,15 +1187,16 @@ def _sel_json():
 
 def click_source():
     """kbclick as one JS function expression (evaluates to a function)."""
-    src = _CLICK_JS.replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
-                   .replace("__GUARD__", guard_source())
+    src = _CLICK_JS.replace("__ALLOW__", ALLOW_JS).replace("__KBA__", KBA_JS).replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
+                   .replace("__GUARD__", guard_source()).replace("__TTL__", str(ALLOW_TTL_S * 1000))
+    src = src.replace("__TOK__", ARM_TOKEN)
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
 def option_source():
     """kbopt as one JS function expression: args {"option": "<exact text>"} ->
     {ok,x,y,label} of the visible option in an open listbox/dropdown/menu."""
-    src = _OPT_JS.replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
+    src = _OPT_JS.replace("__KBA__", KBA_JS).replace("__TOK__", ARM_TOKEN).replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
                  .replace("__GUARD__", guard_source())
     return " ".join(l.strip() for l in src.strip().splitlines())
 
@@ -972,6 +1217,28 @@ def click_reason(error_text):
     return None
 
 
+# Capability token for the allowance, baked into the guard and kbclick / kbopt by
+# install_action, so only scripts this plugin generated can arm or disarm. One token per
+# KB run: plan-calls and kb_data brief are separate processes but drive the same tab, so
+# both load it from <shots>/.arm_token (use_run_token); random per process otherwise.
+ARM_TOKEN = secrets.token_hex(16)
+
+
+def use_run_token(shots_dir):
+    """Load (or create) the run's arm token from <shots_dir>/.arm_token and use it."""
+    global ARM_TOKEN
+    p = Path(shots_dir) / ".arm_token"
+    try:
+        tok = p.read_text().strip()
+    except OSError:
+        tok = ""
+    if not re.fullmatch(r"[0-9a-f]{32}", tok):
+        tok = secrets.token_hex(16)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(tok)
+    ARM_TOKEN = tok
+    return tok
+
 # Every javascript_tool text the plugin generates starts with this marker; the
 # kb_guard hook denies any other javascript_tool text for the Chrome agents.
 JS_MARKER = "/*KB*/"
@@ -980,6 +1247,8 @@ JS_MARKER = "/*KB*/"
 def probe_source():
     """The probe as one JS function expression (evaluates to a function)."""
     src = _PROBE_JS.replace("__GUARD__", guard_source()) \
+                   .replace("__FIELDS__", fields_source()) \
+                   .replace("__DLG__", json.dumps(DIALOG_SEL)) \
                    .replace("__TENANT__", json.dumps(tenant_regexes())) \
                    .replace("__NF__", json.dumps(NF_SOURCE)) \
                    .replace("__NONLATIN__", str(Q.NONLATIN_MIN)) \
@@ -1135,7 +1404,9 @@ def _click_spec(c):
 def _write_visits(data_plan, entries, args_of, gif_dir):
     """Visits for the approved data plan's records that carry an "after" block (the
     screen after Save). Not in any capture batch: the data agent drives them.
-    {"visit_id": "<eid>-w<k>", "kind": "write", ...}, ordered by entry then k."""
+    {"visit_id": "<eid>-w<k>", "kind": "write", ...}, ordered by entry then k. A record bound
+    to an entry (rec["entry"], set by kb_data.py plan) gets its write visit on exactly that
+    entry; a bound record whose entry is gone or no longer carries the ticket gets none."""
     out, count = [], {}
     order = {eid: i for i, eid in enumerate(entries)}
     for tid, recs in (data_plan.get("tickets") or {}).items():
@@ -1143,9 +1414,12 @@ def _write_visits(data_plan, entries, args_of, gif_dir):
             after = rec.get("after")
             if not isinstance(after, dict):
                 continue
-            mine = [eid for eid, e in entries.items() if tid in e["tickets"]]
-            eid = next((x for x in mine if entries[x]["persona"] == rec.get("persona")),
-                       mine[0] if mine else None)
+            if rec.get("entry"):       # kb_data.py plan binds a record to the entry it was built from
+                eid = rec["entry"] if rec["entry"] in entries and tid in entries[rec["entry"]]["tickets"] else None
+            else:                      # a plan without the binding (older): the first entry of the ticket + persona
+                mine = [eid for eid, e in entries.items() if tid in e["tickets"]]
+                eid = next((x for x in mine if entries[x]["persona"] == rec.get("persona")),
+                           mine[0] if mine else None)
             if eid is None:
                 continue
             e = entries[eid]
@@ -1454,6 +1728,7 @@ def cmd_plan_calls(a):
     inputs = json.loads(Path(a.inputs).read_text())
     routes = json.loads(Path(a.routes).read_text())
     out_dir = Path(a.out_dir)
+    use_run_token(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     data_plan, note = None, ""
     if a.data_plan:
@@ -1630,6 +1905,32 @@ def parse_probe(raw):
     return None
 
 
+def box_in_frame(box, img_w, img_h):
+    """True when an image-px box (x, y, w, h) has area and lies fully inside the frame. A
+    label whose element is off-screen (an "Save" button below the fold) has no pixels to
+    crop: OCR on it crashed the 0.27.0 ingest, so it is skipped before any crop."""
+    x, y, w, h = box
+    return w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= img_w and y + h <= img_h
+
+
+def screen_form(probe):
+    """What the probe saw of a form / dialog, for the screen record in shots.json (kb_data
+    plans fills from it): {"fields": [...], "tw": {...}, "btn": [dialog buttons],
+    "found": [labels the probe found]} - only the non-empty parts."""
+    out = {}
+    if isinstance(probe.get("fields"), list) and probe["fields"]:
+        out["fields"] = probe["fields"][:40]
+    if isinstance(probe.get("tw"), dict) and probe["tw"]:
+        out["tw"] = probe["tw"]
+    dlg = probe.get("dlg") if isinstance(probe.get("dlg"), dict) else {}
+    if dlg.get("bt"):
+        out["btn"] = list(dlg["bt"])[:8]
+    found = [l.get("l") for l in probe.get("labels") or [] if isinstance(l, dict) and l.get("f") and l.get("l")]
+    if found:
+        out["found"] = found
+    return out
+
+
 def frame_problem(img_w, img_h, probe):
     """Why a frame can't carry anchors, or None."""
     iw, ih = probe["iw"], probe.get("ih") or 0
@@ -1782,10 +2083,15 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                 if not problem:
                     x, y, w, h = pl["b"]
                     box = to_image_box({"x": x, "y": y, "width": w, "height": h}, scale)
-                    crop = Q.verify_crop(im, box, [label])[0] if use_ocr else None
-                    ev = shot_evidence(label, pl.get("t", ""), box, crop,
-                                       bool(pl.get("oc")) or not pl.get("iv"),
-                                       tenant_dom, tenant_ocr)
+                    if pl.get("oc") or not pl.get("iv") or not box_in_frame(box, im.width, im.height):
+                        ev = None                  # off-screen / covered: nothing to crop or ring (Q3)
+                    else:
+                        try:
+                            crop = Q.verify_crop(im, box, [label])[0] if use_ocr else None
+                        except Exception:          # an OCR failure is a miss, never a crash
+                            crop = {"verdict": "MISS", "score": 0.0}
+                        ev = shot_evidence(label, pl.get("t", ""), box, crop, False,
+                                           tenant_dom, tenant_ocr)
                 entries.append({"ticket": tid, "persona": visit["persona"],
                                 "surface": visit["surface"], "frame": str(dest),
                                 "verified": ev is not None, "source": source,
@@ -1885,6 +2191,7 @@ def cmd_ingest(a):
             if reason is None:
                 ingested.add(vid)
                 settled.add(vid)
+                screen.update(screen_form(pr or {}))
                 screens[vid] = screen
                 new += entries
                 continue
@@ -1903,6 +2210,10 @@ def cmd_ingest(a):
             screen.update(reason="write_failed", detail="not run")
         elif it.get("write_error"):
             screen.update(reason="write_failed", detail=str(it["write_error"])[:80])
+        elif it.get("mode") == "dry_run":
+            # the dry run only LEARNS the prompt (kb_data learn); nothing was saved and its
+            # screens are not article shots - the real save (and its screens) come next run.
+            screen.update(reason="needs_write", detail="dry_run", **screen_form(parse_probe(it.get("probe")) or {}))
         else:
             if it.get("gif"):
                 fetched += 1
@@ -1912,10 +2223,14 @@ def cmd_ingest(a):
                 ingested.add(vid)
                 new += entries
                 pr = parse_probe(it.get("probe")) or {}
-                if int(it.get("blocked") or pr.get("wb") or 0) >= 1:
+                screen.update(screen_form(pr))
+                if isinstance(it.get("created"), dict):
+                    screen["note"] = "saved"               # informational: the allowed request went out once
+                elif int(it.get("blocked") or pr.get("wb") or 0) >= 1:
                     screen["note"] = "write_blocked_ok"    # informational: the save was blocked, as planned
             else:
-                screen.update(reason="write_failed", detail=reason)
+                screen.update(reason="write_failed",
+                              detail="record_unverified" if it.get("pending") and not it.get("created") else reason)
         screens[vid] = screen
     for w in calls.get("screens") or []:
         screens[w["visit_id"]] = dict(w)

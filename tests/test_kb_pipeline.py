@@ -370,25 +370,56 @@ class Screen(unittest.TestCase):
 
 @unittest.skipUnless(has_module("PIL"), "Pillow not installed")
 class Annotate(unittest.TestCase):
-    def test_ring_badge_watermark(self):
+    def test_ring_and_badge_no_watermark_or_frame(self):
         import qa_annotate as A
         from PIL import Image
         im = Image.new("RGB", (1440, 900), "white")
         out = A.annotate(im, A.anchor_from_box((700, 400, 120, 30)), number=3)
         ring_x = 700 + 60 - (120 // 2 + 28)
         self.assertEqual(out.getpixel((ring_x + 1, 415)), A.ACCENT)
-        self.assertNotEqual(A.ACCENT, A.RED)
-        wm = A.watermark(out.copy())
-        self.assertEqual(wm.getpixel((2, 2)), A.RED)
+        self.assertFalse(hasattr(A, "watermark"))             # an article shot is never stamped
+        self.assertFalse(hasattr(A, "RED"))
+        self.assertEqual(out.getpixel((2, 2)), (255, 255, 255))   # no frame
+        self.assertEqual(out.getpixel((720, 3)), (255, 255, 255))  # no banner
         self.assertEqual(out.size, (1440, 900))   # no caption bar on the KB path
 
-    def test_sidebar_snap(self):
+    def test_badge_sits_outside_the_ring_not_on_it(self):
         import qa_annotate as A
         from PIL import Image
         im = Image.new("RGB", (1440, 900), "white")
-        out = A.annotate(im, A.anchor_from_box((100, 400, 120, 30)), number=1)
-        # inside the badge disc, right of the glyph
-        self.assertEqual(out.getpixel((int(0.045 * 1440) + 12, 415)), A.ACCENT)
+        out = A.annotate(im, A.anchor_from_box((700, 400, 120, 30)), number=3)
+        box = [672, 386, 848, 444]                  # centre +/- (60 + 28, 15 + 14)
+        bx, by = A.badge_center(box, (1440, 900))
+        self.assertTrue(A._clear(bx, by, A.F.BADGE_RADIUS_PX, box))
+        self.assertEqual(out.getpixel((bx + A.F.BADGE_RADIUS_PX - 4, by)), A.ACCENT)
+        inside_ring = [(x, y) for x in range(box[0] + 8, box[2] - 8, 6) for y in range(box[1] + 8, box[3] - 8, 4)]
+        self.assertTrue(all(out.getpixel(pt) == (255, 255, 255) for pt in inside_ring))
+
+    def test_sidebar_ring_badge_goes_right_of_the_ring_not_over_the_label(self):
+        import qa_annotate as A
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (1440, 900), "white")
+        d = ImageDraw.Draw(im)
+        d.rectangle([0, 0, 250, 900], fill=(31, 48, 100))                 # the sidebar
+        text = (40, 400, 190, 420)
+        d.rectangle(text, fill=(255, 255, 255))                           # the "Sessions" label
+        out = A.annotate(im, A.anchor_from_box((30, 395, 170, 30)), number=1)
+        for x in range(text[0], text[2] + 1):
+            for y in range(text[1], text[3] + 1):
+                self.assertEqual(out.getpixel((x, y)), (255, 255, 255), (x, y))
+        box = [5, 381, 228, 439]                    # ring, clamped to the frame margin
+        bx, by = A.badge_center(box, (1440, 900))
+        self.assertGreater(bx - A.F.BADGE_RADIUS_PX, box[2])              # right of the ring, outside it
+        self.assertTrue(A._clear(bx, by, A.F.BADGE_RADIUS_PX, box))
+        self.assertEqual(out.getpixel((bx + A.F.BADGE_RADIUS_PX - 4, by)), A.ACCENT)
+
+    def test_badge_picks_a_corner_with_room_at_the_frame_edge(self):
+        import qa_annotate as A
+        box = [1300, 5, 1434, 60]                   # ring against the top-right corner of the frame
+        bx, by = A.badge_center(box, (1440, 900))
+        r = A.F.BADGE_RADIUS_PX
+        self.assertTrue(r <= bx <= 1440 - r and r <= by <= 900 - r)
+        self.assertTrue(A._clear(bx, by, r, box))
 
     def test_ring_stays_inside_frame_at_the_edge(self):
         import qa_annotate as A
@@ -453,6 +484,25 @@ class Spec(unittest.TestCase):
             self.assertEqual(spec["steps"][0]["evidence"]["anchor"], "dom_box")
             with Image.open(Path(d) / "assets/M1-1/01.jpg") as im:
                 self.assertEqual(im.width, 1200)
+
+    @unittest.skipUnless(has_module("PIL"), "Pillow not installed")
+    def test_review_and_block_shots_are_never_stamped(self):
+        from PIL import Image
+        for verdict in ("REVIEW", "BLOCK"):
+            with tempfile.TemporaryDirectory() as d:
+                frame = Path(d) / "f.png"
+                Image.new("RGB", (1440, 900), "white").save(frame)
+                spec, ok, _ = SP.assemble_one(prose(), [self.shot(str(frame), tenant=verdict,
+                                                                  tw={"institution_string": ["School of Medicine"]})],
+                                              self.META, None, d)
+                self.assertTrue(ok)
+                self.assertEqual(spec["steps"][0]["evidence"]["tenant"], verdict)
+                self.assertNotIn("watermarked", spec["steps"][0]["evidence"])
+                self.assertEqual(spec["steps"][0]["evidence"]["tenant_words"],
+                                 {"institution_string": ["School of Medicine"]})
+                with Image.open(Path(d) / "assets/M1-1/01.jpg") as im:
+                    px = im.convert("RGB").getpixel((3, 3))
+                    self.assertTrue(all(c > 240 for c in px), px)    # no red frame, no banner
 
     @unittest.skipUnless(has_module("PIL"), "Pillow not installed")
     def test_evidence_failure_demoted_not_retried(self):
@@ -532,6 +582,60 @@ class Render(unittest.TestCase):
             self.assertIn("| Step | Source |", Path(d, "p.md").read_text())
 
 
+@unittest.skipUnless(has_module("docx"), "python-docx not installed")
+class PublishRender(unittest.TestCase):
+    """The packaged article is client-clean: nothing internal, nothing draft."""
+
+    def spec(self, d, confirmed=True, tenant="CLEAR"):
+        from PIL import Image
+        write_assets(d)
+        for n in ("01", "02"):
+            Image.new("RGB", (100, 60), "white").save(Path(d, f"assets/{n}.jpg"))
+        spec = golden()
+        spec["steps"][2]["missing_shot"] = "no demo data"
+        for st in spec["steps"]:
+            if st.get("image"):
+                st["evidence"]["tenant"] = tenant
+                if confirmed:
+                    st["evidence"]["tenant_confirmed_by"] = "owner"
+        return spec
+
+    def test_publish_docx_and_md_are_client_clean(self):
+        import build_kb_doc as B
+        from docx import Document
+        with tempfile.TemporaryDirectory() as d:
+            spec = self.spec(d)
+            B.render(spec, Path(d, "a.docx"), "publish", root=d)
+            B.render_markdown(spec, Path(d, "a.md"), "publish", asset_base="assets/")
+            text = "\n".join(p.text for p in Document(Path(d, "a.docx")).paragraphs) + Path(d, "a.md").read_text()
+            for bad in ("Generated from", "M1-1399", "draft", "DRAFT", "Screenshot missing", "no demo data",
+                        "NOT FOR PUBLICATION", "Provenance"):
+                self.assertNotIn(bad, text)
+            self.assertIn("Audience: Program administrators · Administration portal", text)
+            self.assertEqual(len(Document(Path(d, "a.docx")).inline_shapes), 2)
+            # the step without a shot keeps its text
+            self.assertIn("Click **Save** when the list looks right.", Path(d, "a.md").read_text())
+
+    def test_publish_never_prints_a_frame_the_owner_did_not_confirm_or_a_block_frame(self):
+        import build_kb_doc as B
+        from docx import Document
+        with tempfile.TemporaryDirectory() as d:
+            B.render(self.spec(d, confirmed=False), Path(d, "u.docx"), "publish", root=d)
+            self.assertEqual(len(Document(Path(d, "u.docx")).inline_shapes), 0)
+            B.render(self.spec(d, tenant="BLOCK"), Path(d, "b.docx"), "publish", root=d)
+            self.assertEqual(len(Document(Path(d, "b.docx")).inline_shapes), 0)
+            md = Path(d, "b.md")
+            B.render_markdown(self.spec(d, tenant="BLOCK"), md, "publish", asset_base="assets/")
+            self.assertNotIn("![", md.read_text())
+
+    def test_draft_preview_keeps_its_markers(self):
+        import build_kb_doc as B
+        with tempfile.TemporaryDirectory() as d:
+            spec = self.spec(d)
+            self.assertTrue(B.subtitle_for(spec, "draft").endswith("draft, not published"))
+            self.assertNotIn("M1-1399", B.subtitle_for(spec, "draft"))
+
+
 @unittest.skipUnless(has_module("pypdf"), "pypdf not installed")
 class Pdf(unittest.TestCase):
     def test_verify_reports_missing_text(self):
@@ -553,8 +657,8 @@ class TicketTable(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             Path(d, "M1-1").mkdir()
             for e in (".docx", ".md"):
-                Path(d, "M1-1", f"CX-DRAFT_How to A{e}").write_text("x")
-            rows = [{"ticket": "M1-1", "status": "partial", "files": ["CX-DRAFT_How to A.docx"],
+                Path(d, "M1-1", f"How to A{e}").write_text("x")
+            rows = [{"ticket": "M1-1", "status": "partial", "files": ["How to A.docx"],
                      "reason": ""},
                     {"ticket": "M1-2", "status": "failed", "files": [], "reason": "G2 title"}]
             groups = {"skipped": [{"ticket": "M1-3", "reason": SEL.NO_CODE},
@@ -563,7 +667,7 @@ class TicketTable(unittest.TestCase):
             t = {r["ticket"]: r for r in PK.ticket_table(["M1-1", "M1-2", "M1-3", "M1-4", "M1-5"],
                                                          rows, groups, d)}
             self.assertEqual(t["M1-1"]["done"], "done")
-            self.assertEqual(t["M1-1"]["files"], "M1-1/CX-DRAFT_How to A (.docx, .md)")
+            self.assertEqual(t["M1-1"]["files"], "M1-1/How to A (.docx, .md)")
             self.assertIn("no demo data", t["M1-1"]["detail"])
             self.assertEqual((t["M1-2"]["done"], t["M1-2"]["detail"]), ("not done", "error: G2 title"))
             self.assertEqual(t["M1-3"]["detail"], SEL.NO_CODE)
@@ -583,7 +687,9 @@ class Usage(unittest.TestCase):
             per = U.apportion(rows, groups, d)
             self.assertEqual(sum(per.values()), 4700)
             self.assertGreater(per["M1-1"], per["M1-2"] - 500)
-            self.assertIsNone(U.cost(rows))
+            self.assertEqual(U.cost(rows), 0.0144)       # 4000+500 sonnet, 200 haiku
+            self.assertAlmostEqual(sum(U.apportion_cost(rows, groups, d).values()), U.cost(rows), places=3)
+            self.assertIsNone(U.cost(rows + [{"model": "mystery", "total_tokens": 10}]))
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ what is already done, says so, and only redoes what is missing.
 
 | Part | Needed by | What it sets up |
 |---|---|---|
-| `kb` | `/kb-articles`, `/release-slack --kb` | Python packages in `.kb-env/`, tesseract / LibreOffice / Carlito font, the Claude in Chrome extension, the `.env` keys, the KB Ledger / Queue / Catalogue collections in Mem, the Downloads folder |
+| `kb` | `/kb-articles`, `/release-slack --kb` | Python packages in `.kb-env/`, tesseract / LibreOffice / Carlito font, the Claude in Chrome extension, the `.env` keys, the KB Ledger / Queue / Catalogue / Demo Data collections in Mem, the Downloads folder |
 
 Each part is its own section below, run in table order. A part that fails does
 not stop the next one. To add a part later: add a row here and a `## Part — <name>`
@@ -85,20 +85,21 @@ plus the Mem collection tools (`list_collections`, `create_collection`).
      available? If not, print `Mem MCP not connected — connect the Mem
      connector, then run /release-note-setup again.` and record **to do** (skip
      the rest of this step).
-   - Names: `python3 $K/kb_ledger.py resolve` prints the three names (`.env` or
-     the defaults `KB Article Ledger`, `KB Queue`, `KB Catalogue`). The release
+   - Names: `python3 $K/kb_ledger.py resolve` prints the four names (`.env` or
+     the defaults `KB Article Ledger`, `KB Queue`, `KB Catalogue`, `KB Demo Data`;
+     the last holds the learned form flows and the demo records a run saved). The release
      archive is named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release
      Notes Archive`).
    - Resolve each exactly as the `kb-ledger` skill says (and `release-archive`
      for the archive): paginated `list_collections`, exact title match
      case-insensitively, prefer exact case then the oldest `created_at`, create
      under the exact name when none matches (description from the `resolve`
-     output). Create only Ledger, Queue and Catalogue; the archive is only looked
+     output). Create only Ledger, Queue, Catalogue and KB Demo Data; the archive is only looked
      up (the release commands create it) — save its id if it exists.
    - Skip a collection whose id the config already holds, unless `--force`; then
      do it once more cheaply with a `get_collection` and re-resolve if that fails.
    - Save the ids: `python3 $K/kb_paths.py merge '{"mem": {"kb_ledger": "<id>",
-     "kb_queue": "<id>", "kb_catalogue": "<id>", "release_archive": "<id>"}}'`
+     "kb_queue": "<id>", "kb_catalogue": "<id>", "kb_demo": "<id>", "release_archive": "<id>"}}'`
      (leave out one that does not exist). Ids are Mem's own, not paths.
 5. **Downloads folder** — screen captures are exported as GIFs into the owner's
    Downloads folder.

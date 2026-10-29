@@ -328,5 +328,63 @@ class IngestGif(Base):
         self.assertEqual(Path(shots[0]["frame"]).name, "v01.jpg")
 
 
+class BoxInFrame(unittest.TestCase):
+    def test_pure_rule(self):
+        self.assertTrue(C.box_in_frame((10, 10, 50, 20), 1470, 802))
+        self.assertTrue(C.box_in_frame((0, 0, 1470, 802), 1470, 802))
+        for box in ((10, 790, 50, 40), (-1, 10, 5, 5), (10, -1, 5, 5), (1460, 10, 20, 5), (10, 10, 0, 5), (10, 10, 5, 0)):
+            self.assertFalse(C.box_in_frame(box, 1470, 802), box)
+
+
+@unittest.skipUnless(HAVE_PIL, "Pillow not installed")
+class OffScreenLabelDoesNotCrashOcr(IngestGif):
+    """0.27.0 evidence: an off-screen "Save" label (box below the frame) crashed ingest in the OCR
+    crop. Such a label is now skipped BEFORE any crop; an OCR error is a miss, never a crash."""
+
+    def setUp(self):
+        super().setUp()
+        self.calls_ = json.loads((self.shots / "calls.json").read_text())
+        self.crops = []
+        orig = C.Q.verify_crop
+
+        def spy(im, box, labels):
+            x, y, w, h = box
+            self.crops.append(box)
+            if x < 0 or y < 0 or x + w > im.width or y + h > im.height:
+                raise ValueError("crop box outside the frame")           # what the real OCR crop did
+            return [{"verdict": "MATCH", "score": 0.95}]
+        C.Q.verify_crop = spy
+        orig_sf = C.Q.screen_frame
+        C.Q.screen_frame = lambda *a, **k: {"verdict": "CLEAR"}          # no tesseract here
+        self.addCleanup(lambda: (setattr(C.Q, "verify_crop", orig), setattr(C.Q, "screen_frame", orig_sf)))
+
+    def ingest_one(self, labels, use_ocr=True):
+        make_gif(self.dl / "kb-capture/r1/v02.gif")
+        v = next(x for x in self.calls_["visits"] if x["visit_id"] == "v02")
+        v = {**v, "labels": {t: [l["l"] for l in labels] for t in v["tickets"]}}
+        it = {"visit_id": "v02", "probe": probe_for(labels), "gif": "kb-capture/r1/v02.gif"}
+        return C.ingest_visit(v, it, self.calls_, {"domain": "medtricslab.com", "allow_strings": []},
+                              self.shots, use_ocr, "now", str(self.dl), 0.3)
+
+    def test_offscreen_and_covered_labels_are_skipped_before_the_crop(self):
+        entries, reason = self.ingest_one([lab("Groups", box=(300, 100, 60, 20)),
+                                           lab("Save", box=(300, 900, 60, 20), iv=False),          # below the fold
+                                           lab("Cover", box=(300, 200, 60, 20), oc=True),
+                                           lab("Wide", box=(1450, 300, 80, 20), iv=True)])         # past the right edge
+        self.assertIsNone(reason)
+        by = {e["label"]: e for e in entries}
+        self.assertEqual(sorted(by), ["Cover", "Groups", "Save", "Wide"])
+        self.assertEqual([by[k]["verified"] for k in ("Groups", "Save", "Cover", "Wide")], [True, False, False, False])
+        self.assertEqual(self.crops, [(300, 100, 60, 20)])               # only the visible, uncovered label was cropped
+
+    def test_an_ocr_error_is_a_miss_not_a_crash(self):
+        def boom(im, box, labels):
+            raise RuntimeError("tesseract fell over")
+        C.Q.verify_crop = boom
+        entries, reason = self.ingest_one([lab("Groups")])
+        self.assertIsNone(reason)
+        self.assertEqual([(e["label"], e["verified"]) for e in entries], [("Groups", False)])
+
+
 if __name__ == "__main__":
     unittest.main()
