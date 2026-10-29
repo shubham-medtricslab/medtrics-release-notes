@@ -834,26 +834,22 @@ uses per form fill; prefer `find` over `read_page`.
   Never click Yes, OK, Continue, Confirm, or any send / notify / invite / publish /
   approve / email option.
 - If a `kbclick` call throws (`KB_CLICK_REFUSED`, `KB_CLICK_NOTFOUND`, `KB_TENANT_ROW`),
-  a probe contains `KB_LOGIN`, `KB_PERSONA` or `KB_NOPROBE`, a field script throws
-  (`KB_NOPROBE`, `KB_FIELD_NOTFOUND`, `KB_FIELD_NOSTICK`, `KB_FIELD_NOOPTION`, `KB_FIELD_REFUSED`), or
+  a probe contains `KB_LOGIN` or `KB_PERSONA`, a field script throws
+  (`KB_FIELD_NOTFOUND`, `KB_FIELD_NOSTICK`, `KB_FIELD_NOOPTION`, `KB_FIELD_REFUSED`), or
   the page looks different from the plan (an error banner, a different record):
   `gif_creator` `clear`, write the item with `write_error` (the error text), skip the rest
   of that form fill, carry on with the next one. `KB_LOGIN` ends the run: write the item,
   then stop.
 
-## Install (once per tab)
+## Install (already done)
 
-Send these two `javascript_tool` actions once, in this order, before the first form
-fill (replace `"$TAB"` with the numeric tab id). The first must return `kbp:<number>`,
-the second `kbf:<number>`:
-
-```json
-{install}
-```
-
-```json
-{install_fields}
-```
+The orchestrator stored the probe (`kbp:<number>`), the click guard, the option picker
+and the field script (`kbf:<number>`) in this tab before it started you: those scripts are
+too long for you to send, so you never send them. Every call below is a short stub that
+runs them. If one throws `KB_NOPROBE` or `KB_NOFIELD` (a new tab, or the scripts are gone):
+`gif_creator` `clear`, write nothing for that form fill, and reply
+`KB_DATA_DONE ok=<form fills done> failed=<form fills with write_error> stop=needs_install`.
+The orchestrator re-sends the install (`data_install.json`) and starts you again.
 
 ## Each form fill
 
@@ -1009,9 +1005,7 @@ def cmd_brief(a):
         emit({"ok": False, "action": "brief", "error": "no_records", "missing": missing,
               "start_mismatch": mismatched})
         return 1
-    install = json.dumps(calls.get("install") or C.install_action(), indent=1)
-    md = (HEAD.replace("{{", "{").replace("}}", "}").replace("{install}", install)
-          .replace("{install_fields}", json.dumps(field_install_action(), indent=1)))
+    md = HEAD.replace("{{", "{").replace("}}", "}")
     admin_args = _args_for(calls, "admin")
     setup = {"navigate": admin_entry,
              "probe_js": C.stub({**admin_args, "labels": []}) if admin_args else ""}
@@ -1025,10 +1019,21 @@ def cmd_brief(a):
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(md)
+    # the long scripts go to the orchestrator, which sends them before the maker starts
+    base_install = calls.get("install") or C.install_actions()
+    if isinstance(base_install, dict):
+        base_install = [{"name": "javascript_tool", "input": base_install}]
+    base_install = list(base_install)
+    if not base_install or base_install[0].get("name") != "navigate":    # older calls.json
+        base_install = C.install_prefix(routes.get("demo")) + base_install
+    install_path = out.parent / "data_install.json"
+    install_path.write_text(json.dumps(
+        {"install": list(base_install) + [{"name": "javascript_tool", "input": field_install_action()}]},
+        indent=1))
     print(f"data brief: {len(blocks)} form fill(s), {len(missing)} without a write visit "
           f"({len(mismatched)} start_mismatch) -> {out}")
     emit({"ok": True, "action": "brief", "records": len(blocks), "missing": missing,
-          "start_mismatch": mismatched, "out": str(out)})
+          "start_mismatch": mismatched, "out": str(out), "install": str(install_path)})
     return 0
 
 

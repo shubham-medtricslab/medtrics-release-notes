@@ -148,7 +148,7 @@ class Accounts(Plan):
                      "Group rows", "`\"group\":true`"):
             self.assertIn(word, md)
         self.assertEqual(md.count("```json"), len(calls["batches"]) + sum(b["kind"] == "click" for b in calls["batches"])
-                         + 4)           # + install, abort, raw example, restore (accounts are text)
+                         + 3)           # + abort, raw example, restore (accounts are text)
 
     def test_main_only_run_has_one_account_and_no_signin(self):
         plan = {"run_id": "r1", "capture_plan": [PLAN["capture_plan"][0]]}

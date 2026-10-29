@@ -23,6 +23,7 @@ can't place) and `kb-writer` (Sonnet, one call per writer group, all in parallel
 /kb-articles pending                         # everything on the KB queue + every released legacy feature with no article yet
 /kb-articles --kb-queue M1-1520,M1-1609      # only ADD these to the KB Queue; `pending` drafts them later
 /kb-articles M1-1520 dry-run                 # show the plan and exit — no agents, no capture, no files
+/kb-articles recheck kb-20261029-1755        # re-screen a finished run with the current rules and repackage (no browser)
 /kb-articles demo-data                       # list the demo records runs saved on the demo site (you delete them)
 /kb-articles demo-data done <ids>            # mark those records deleted after you removed them
 ```
@@ -44,6 +45,24 @@ Flags (combine with any mode):
 posted: that release's feature tickets are put on the KB queue and this command
 starts in `--from-release` mode, shows its plan and asks y/n. Say no and they
 stay queued for a later `/kb-articles pending`.
+
+## Re-check a run: `recheck <run_id>`
+
+Re-screens a finished run with the current rules and repackages it — no
+browser, no capture, no form fill, no new demo record (e.g. after a data-check
+fix). `RUN=$KB_RUNS/<run_id>` (the existing folder; it must hold `shots/gifs/`,
+`shots/raw/` and `prose/`); Step 0 items 1, 3 and 6 only (Mem probe, setup
+check, collections), then:
+
+```bash
+$KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --from-run-gifs
+$KB_PY $K/kb_spec.py assemble --groups $RUN/groups.json --prose-dir $RUN/prose \
+    --shots $RUN/shots/shots.json --priors $RUN/priors.json --out-dir $RUN/specs
+```
+
+Then Step 7's prose retries only if `specs/failures.json` lists any, Step 8
+(contact sheet → your OK → package) and Step 9 (ledger update; the queue has
+nothing new to drain), and Step 10's table. Say it re-used run `<run_id>`.
 
 ## Demo data: `demo-data` and `demo-data done <ids>`
 
@@ -209,7 +228,7 @@ $KB_PY $K/kb_ledger.py index --ledger-notes $RUN/ledger_notes.json --out $RUN/le
 
 Ticket ids:
 - an id list (`M1-1520,M1-1256`, comma-separated, no keyword) → as given. Anything
-  that is not `pending`, `since <date>` or `demo-data` is read as the id list.
+  that is not `pending`, `since <date>`, `recheck` or `demo-data` is read as the id list.
 - `since <date>` → `$KB_PY $K/kb_ledger.py since --archive-notes $RUN/archive_notes.json --date <date>`
 - `pending` → `$KB_PY $K/kb_ledger.py pending --archive-notes $RUN/archive_notes.json --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json [--retry-partial]`
   (the queue first-class, the release archive as the safety net), then
@@ -382,10 +401,17 @@ menu item); a dialog with nothing else to ring gets its title ringed.
 
    It writes `shots/calls.json` (visits, `accounts`, `canary`, `abort`,
    `gif_dir`) and `shots/capture.md`.
-2. **Canary** — you, not an agent, with the owner present. Send the `canary`
-   actions from `calls.json` in one `browser_batch` (tab from `tabs_context_mcp`,
-   substituted for every `"$TAB"`; first run only: Chrome may show a download or
-   privacy prompt — say so and let the owner allow it). Then:
+2. **Install + canary** — you, not an agent, with the owner present. First send
+   the `install` actions from `calls.json` in one `browser_batch` (tab from
+   `tabs_context_mcp`, substituted for every `"$TAB"`). The list starts by
+   opening the demo portal (the scripts are stored per site, per tab), then the
+   installs, which are long (~40 KB):
+   copy each `text` exactly, byte for byte, and check the length it returns
+   (`'kbp:<n>'` …) against the length of the text in the file. They store the page
+   scripts in the tab, where they survive page changes, so the agents only ever
+   send short calls. Then send the `canary` actions in one `browser_batch`
+   (first run only: Chrome may show a download or privacy prompt — say so and let
+   the owner allow it). Then:
 
    ```bash
    $KB_PY $K/kb_capture.py pickup --downloads-dir $DL --name kb-capture/$RUN_ID/canary.gif --timeout 20
@@ -403,7 +429,9 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    prompt `Run folder: $RUN. Capture file: $RUN/shots/capture.md. Raw folder: $RUN/shots/raw/.`
    (absolute paths). It writes `raw/<batch_id>.json` and replies
    `KB_CAPTURE_DONE ok=<n> stop=<…>`. Log usage
-   (`--agent kb-capturer --scope capture --model haiku`). If it replies
+   (`--agent kb-capturer --scope capture --model haiku`). `stop=needs_install`
+   (the page scripts are gone, e.g. a new tab): re-send the `install` actions,
+   then re-spawn it with `--from-batch <the batch it stopped at>`. If it replies
    `KB_CAPTURE NO_CHROME_TOOLS`, or returns without writing any raw file, follow
    `capture.md` yourself in this session with the same tools and rules (the
    QA-automation way); say so in one line.
@@ -448,10 +476,14 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    $KB_PY $K/kb_data.py brief --plan $RUN/data_plan.json --calls $RUN/shots/calls.json --out $RUN/shots/data.md
    ```
 
-   Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-data-maker"`,
+   `brief` also writes `shots/data_install.json`: send its `install` actions
+   yourself, in one `browser_batch`, exactly as in step 2 (the form-fill agent
+   never sends the long scripts). Then spawn ONE Task:
+   `subagent_type: "medtrics-release-notes:kb-data-maker"`,
    `model: "sonnet"`, prompt
    `Run folder: $RUN. Brief: $RUN/shots/data.md. Raw folder: $RUN/shots/raw/.`
-   It writes `raw/data-<ticket>.json`. Log usage
+   It writes `raw/data-<ticket>.json`; `stop=needs_install` → re-send
+   `data_install.json`'s actions and re-spawn it. Log usage
    (`--agent kb-data-maker --scope fill --model sonnet`). Then turn its results
    into Mem notes for the "KB Demo Data" collection and write them (create /
    update by version, as the `kb-ledger` skill does):
@@ -468,11 +500,13 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    answer) → nothing is approved; those screens are described in words.
 5. **Sign-in pauses.** If step 3 stopped with `stop=needs_signin:learner`: ask
    the owner, "Sign in to medtrics.medtricslab.com as the learner in this
-   Chrome, then say done." Claude never signs in. Then re-spawn the capturer
-   with the same prompt plus `--from-batch <that batch id>`. Same for
+   Chrome, then say done." Claude never signs in. Signing in can clear the page
+   scripts, so re-send the `install` actions (step 2) first, then re-spawn the
+   capturer with the same prompt plus `--from-batch <that batch id>`. Same for
    `needs_signin:external` (the evaluator link is opened by the capturer from
    `capture.md`). At `stop=needs_signin:main`: ask the owner to sign back in as
-   the admin, then re-spawn with `--from-batch <the restore batch>`, which
+   the admin, re-send the `install` actions, then re-spawn with
+   `--from-batch <the restore batch>`, which
    returns the tab to the Admin portal.
 6. Ingest once, after every capture and form fill has finished (reads each GIF
    from Downloads, copies it to `shots/gifs/` — Downloads itself is never
@@ -488,8 +522,9 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    blocked or unreadable probe), `download_missing`, `empty_export`, `bad_gif`,
    `click_refused` (with why), `click_not_found`, `tenant_row`, `needs_write`
    (behind a save: no form fill approved, or this run was the dry run),
-   `write_failed` (the form fill could not finish), `page_not_found` or
-   `external_link_missing`. **Continue** — the shots already taken are kept;
+   `write_failed` (the form fill could not finish), `page_not_found`,
+   `external_link_missing` or `needs_install` (the page scripts were gone and the
+   capture stopped; re-send `install` and resume with `--from-batch`). **Continue** — the shots already taken are kept;
    a step without one keeps its text in the article. `--retry-partial` re-runs
    them later (after a dry run, the next run saves and gets the screen).
 
@@ -558,7 +593,7 @@ $KB_PY $K/kb_package.py contact-sheet --run-dir $RUN --specs-dir $RUN/specs --ou
 
 Show `contact_sheet.png` (and any `contact_sheet-2.png` …) and ask: "These are
 the screenshots for this run. Reply with the numbers that are fine to send to
-clients (or `all`); anything you leave out stays as text only." Screens marked
+clients (`all`, or `none`); anything you leave out stays as text only." Screens marked
 BLOCK never ship and can't be picked. Then:
 
 ```bash

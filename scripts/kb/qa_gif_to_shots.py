@@ -121,15 +121,65 @@ DISCIPLINE_RE = re.compile(
 SLUG_RE = re.compile(r"\b([a-z]{2,6}(?:med|vet|nurse|univ|edu|test)[a-z0-9]{0,6})\b")
 # Ordinary words SLUG_RE also matches ("sch-edu-le", "na-med", "la-test"). Live on
 # medtrics.medtricslab.com every page tripped it via the "Schedule" header button,
-# so every frame screened BLOCK. These are never tenant slugs.
+# so every frame screened BLOCK; the next run tripped on "schedulers". These are never
+# tenant slugs. Whole words first, then stems (see slug_is_word): a stem covers every
+# inflection (s/ed/ing/er/ers) without listing each one.
 SLUG_STOP = frozenset("""
 medtrics medtricslab
-schedule schedules scheduled scheduler scheduling unscheduled rescheduled
-named renamed unnamed armed formed informed reformed performed transformed
-confirmed unconfirmed claimed unclaimed assumed resumed deemed seemed framed
-aimed timed trimmed summed welcomed
-latest fastest greatest contest protest attest detest pretest posttest retest
+schedule schedules scheduled scheduler schedulers scheduling unscheduled rescheduled
+named renamed unnamed nicknamed surnamed misnamed
+armed formed informed uninformed reformed performed transformed preformed deformed
+confirmed unconfirmed claimed unclaimed reclaimed assumed presumed consumed resumed
+deemed redeemed esteemed seemed framed reframed aimed timed untimed trimmed summed
+filmed welcomed programmed harmed alarmed charmed warmed stemmed skimmed streamed
+dreamed teamed beamed blamed flamed famed tamed homed bloomed zoomed groomed
+latest fastest greatest shortest smartest lightest brightest tightest slightest
+hottest wettest contest protest attest detest pretest posttest retest untested
+ashamed shamed inflamed maimed plumed palmed roomed bottomed rimmed dimmed seamed
+uniformed malformed disarmed firearmed someday
 """.split())
+# A matched word is also ignored when it starts with one of these (after one re/un
+# prefix is stripped) or contains one of STOP_HAS / STOP_LEAD. Verified by running
+# SLUG_RE over /usr/share/dict/words (696 hits) and the words in the captured probe text:
+#   schedul   schedule(s/d/r/rs), scheduling, rescheduling, unscheduled
+#   procedur  procedure(s), procedural        (pro-c-edu-re)
+#   contest protest attest detest pretest posttest retest untest
+#             contested, contestant, attestation, protester(s), retesting ...
+#   latest fastest greatest ...   superlatives ending in -test
+#   intermedi immedi remedi comedi comedy   intermediate, immediately, remedy, comedian
+#   velvet rivet privet covet dovetail credul intestin   ordinary words with vet/edu/test
+STOP_STEMS = ("contest", "protest", "attest", "detest", "pretest",
+              "posttest", "retest", "untest", "latest", "fastest", "greatest", "shortest",
+              "smartest", "lightest", "brightest", "tightest", "slightest", "hottest",
+              "wettest", "intermedi", "immedi", "remedi", "remedy", "comedi", "comedy",
+              "premedit", "premedic", "nonmedic", "unmedic", "velvet", "rivet", "privet", "revet",
+              "covet", "dovetail", "credul", "incredul", "intestin", "intestat")
+# Word-START stems (after an optional prefix in STOP_STRIP): mediate/median/medium/medieval,
+# meddle, medullary, medusa, university/universal/universe/universities, education/educator(s),
+# coeducation, reduce/reduction, deduct, seduce, aqueduct. Anchored at the start so a tenant
+# slug that merely ENDS in one ("uwmedicine", "ucmedical", "stateuniversity") stays flagged.
+STOP_LEAD = ("medi", "meddl", "medul", "medus", "universi", "universal", "universe",
+             "educat", "reduc", "deduc", "seduc", "aqueduct")
+# Unambiguous anywhere in the word: schedule(s/d/r), scheduling, "noschedule" (OCR runs
+# "No schedule" together), procedure(s), "noprocedure".
+STOP_HAS = ("schedul", "procedur")
+STOP_STRIP = ("re", "un", "in", "im", "co", "pre", "inter", "non")
+
+
+def slug_is_word(w):
+    """True when a SLUG_RE match is an ordinary English word, not a tenant slug."""
+    cands = [w] + [w[len(p):] for p in STOP_STRIP if w.startswith(p)]
+    if any(c in SLUG_STOP for c in cands) or any(h in w for h in STOP_HAS):
+        return True
+    return any(c.startswith(st) for c in cands for st in STOP_STEMS + STOP_LEAD)
+
+
+def slug_stop_spec():
+    """The same constants as plain JSON, for the JS probe (one source of truth)."""
+    return {"words": sorted(SLUG_STOP), "stems": list(STOP_STEMS),
+            "has": list(STOP_HAS), "lead": list(STOP_LEAD), "strip": list(STOP_STRIP)}
+
+
 NONLATIN_MIN = 3
 EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+\.[\w.-]+)")
 COURSE_CODE_RE = re.compile(r"\b[A-Z]{2,5}\d{3,5}(?:\.[A-Za-z0-9]+)*\b")
@@ -163,7 +213,7 @@ def screen_text(raw, demo_domain="medtrics.dev", client_names=(), allow_strings=
         findings.append({"kind": "discipline_word", "value": m.group(1)})
         break
 
-    slugs = {s for s in SLUG_RE.findall(raw) if s not in SLUG_STOP}
+    slugs = {s for s in SLUG_RE.findall(raw) if not slug_is_word(s)}
     if slugs:
         findings.append({"kind": "tenant_slug", "value": sorted(slugs)[:6]})
 

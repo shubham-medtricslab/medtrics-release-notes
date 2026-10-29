@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-10-29
+
+Fixes from the first two 0.28.0 Cowork runs of M1-465 (the real save worked —
+one demo record, no notifications — but 4 of 5 screenshots were dropped).
+
+### Fixed
+- **False client-data alarm.** "schedulers" matched the tenant-slug rule
+  (sch-edu-lers) and turned four screens to BLOCK. The rule now ignores
+  ordinary English words by stem (schedul…, procedur…, …test superlatives,
+  medi…, educat…, and more), in both the page probe and the frame check;
+  real slugs still match. Stored probes are re-screened on re-ingest.
+- **The capture agent couldn't copy the ~40 KB page scripts.** The main chat
+  now installs them once (Step 5.2, and before the form-fill agent); the agents
+  only send short calls and stop with `needs_install` if the scripts are gone.
+- A captured post-save screen no longer reports "needs a save".
+- `confirm --ok none` ships no screenshots.
+- The Downloads sweep skips a file Cowork won't let it move, and carries on.
+
+### Added
+- `/kb-articles recheck <run_id>`: re-screens a finished run from its own GIFs
+  (`ingest --from-run-gifs`) with the current rules and repackages it — no
+  browser, no new capture, no new demo record.
+
 ## [0.28.0] - 2026-10-29
 
 From the fourth Cowork run (M1-465: 2 of 3 screenshots, red "NOT FOR

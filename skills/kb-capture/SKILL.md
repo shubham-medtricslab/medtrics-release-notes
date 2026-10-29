@@ -102,7 +102,8 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    download settings, a privacy or download prompt) and the drafts carry
    missing-screenshot markers.
 5. **kb-capturer** loads the Chrome tools (including `gif_creator`), uses the
-   first tab, installs the probe once, sends each batch verbatim and writes one
+   first tab, sends each batch verbatim (short stubs only: the orchestrator already
+   sent `calls.json`'s `install` list at the canary step) and writes one
    raw file per batch. It never types, clicks or closes tabs, never sees an
    image and does not read page contents. After any stop rule it sends the
    `abort` actions (a `gif_creator` clear) so a half recording is never exported
@@ -122,7 +123,7 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    the result carries `downloads_left`. A 0.23.0 raw file with a readable `screenshot_path`
    still ingests the old way. Exit 3 means some visits were left;
    `shots/resume.json` holds the rest of the plan and the reason per
-   `persona/surface`: `expired`, `wrong_persona`, `bridge_down`, `no_probe`,
+   `persona/surface`: `expired`, `wrong_persona`, `bridge_down`, `no_probe`, `needs_install`,
    `retry`, `not_reached` (its batch never ran), `download_missing` (no GIF in
    Downloads), `empty_export` (a zero-byte GIF) or `bad_gif` (not readable as an
    image).
@@ -264,7 +265,7 @@ with a `signin` carries `needs_signin`. The capturer stops before it and replies
 `KB_CAPTURE_DONE ok=<n> stop=needs_signin:<account>`; the orchestrator has the
 owner sign in by hand (learner; Claude never types a password) or paste the
 emailed link (external), then starts the capturer again with `--from-batch
-<batch_id>` (it sends the install again and carries on). `plan-calls
+<batch_id>`. `plan-calls
 --external-link <url>` makes external entries start at that URL's path and query
 (kept in `calls.json` / `capture.md` inside the run folder, which is git-ignored and never copied to
 outputs or Mem: ingest records `external-link`, never the URL, in shots.json, and
@@ -353,6 +354,18 @@ page after the install:
   short stub, `(0,eval)(sessionStorage.getItem('kbp'))(<args>)`. The page
   reloads on navigation but `sessionStorage` survives. A new tab has no probe
   and the stub throws `KB_NOPROBE`.
+- **The orchestrator installs (0.28.1).** The install is ~40 KB of JS; the Haiku capturer
+  could not reproduce it in a tool call, so it never sends it. `calls.json` has a top-level
+  `install` list (`[{"name": "javascript_tool", "input": {"action": "javascript_exec",
+  "tabId": "$TAB", "text": "/*KB*/var S=…;'kbp:'+S.length"}}]`, ready for `browser_batch` with
+  `$TAB` replaced) that the orchestrator sends at the canary step, on the same tab the
+  capturer will use. Capturer batches contain only stubs (each action text is under ~1500
+  characters). A stub that throws `KB_NOPROBE` (a new tab) makes the capturer abort, write
+  status `needs_install` and reply `stop=needs_install`; the orchestrator re-sends `install`
+  and starts the capturer again with `--from-batch <batch_id>`. The data maker works the same
+  way: `kb_data.py brief` writes `shots/data_install.json` (`{"install": [kbp/kbc/kbo action,
+  kbf action]}`), the orchestrator sends it before spawning the data maker, and `data.md`
+  says the scripts are already there (`stop=needs_install` on `KB_NOPROBE` / `KB_NOFIELD`).
 - A JS `throw` stops `browser_batch`, so `KB_LOGIN` (sign-in page or a password
   field) and `KB_PERSONA` (the active portal button is not the one asked for)
   end a batch at once. The probe returns plain JSON objects, because the
@@ -370,7 +383,7 @@ page after the install:
 `shots/raw/<batch_id>.json`:
 
 ```json
-{"batch_id": "b01", "status": "ok|expired|wrong_persona|bridge_down|no_probe", "error": null,
+{"batch_id": "b01", "status": "ok|expired|wrong_persona|bridge_down|no_probe|needs_install", "error": null,
  "items": [{"visit_id": "v01", "probe": {…as returned…}, "gif": "kb-capture/<run>/v01.gif"}]}
 ```
 

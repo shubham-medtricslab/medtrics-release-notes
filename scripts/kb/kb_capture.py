@@ -511,7 +511,7 @@ DL_ROOT = "kb-capture"
 FIRST_FILE_TIMEOUT_S = 20.0
 NEXT_FILE_TIMEOUT_S = 5.0
 MAX_ASPECT_DRIFT = 0.02
-STATUSES = ("ok", "expired", "wrong_persona", "bridge_down", "no_probe")
+STATUSES = ("ok", "expired", "wrong_persona", "bridge_down", "no_probe", "needs_install")
 
 
 def tenant_regexes():
@@ -749,7 +749,8 @@ while((m5=re5.exec(cased))){add('course_codes',false);tws('course_codes',m5[0]);
 var re6=rx('disc',true),m6;
 while((m6=re6.exec(low))){add('discipline_word',false);tws('discipline_word',m6[0]);if(m6[0]==='')re6.lastIndex++;}
 var re2=rx('slug',true),m3;
-var STOP=__SLUG_STOP__; while((m3=re2.exec(low))){if(STOP.indexOf(m3[1])<0){add('tenant_slug',true);tws('tenant_slug',m3[1]);}}
+var STOP=__SLUG_STOP__;var isW=function(w){var c=[w];STOP.strip.forEach(function(p){if(w.indexOf(p)===0)c.push(w.slice(p.length));});if(c.some(function(x){return STOP.words.indexOf(x)>=0;}))return true;for(var i=0;i<STOP.has.length;i++){if(w.indexOf(STOP.has[i])>=0)return true;}return c.some(function(x){return STOP.stems.concat(STOP.lead).some(function(t){return x.indexOf(t)===0;});});};
+while((m3=re2.exec(low))){if(!isW(m3[1])){add('tenant_slug',true);tws('tenant_slug',m3[1]);}}
 var nl=0;
 for(var i=0;i<low.length;i++){if(low.charCodeAt(i)>0x3FF)nl++;}
 if(nl>=__NONLATIN__)add('non_latin_script',true);
@@ -1252,7 +1253,7 @@ def probe_source():
                    .replace("__TENANT__", json.dumps(tenant_regexes())) \
                    .replace("__NF__", json.dumps(NF_SOURCE)) \
                    .replace("__NONLATIN__", str(Q.NONLATIN_MIN)) \
-                   .replace("__SLUG_STOP__", json.dumps(sorted(Q.SLUG_STOP)))
+                   .replace("__SLUG_STOP__", json.dumps(Q.slug_stop_spec()))
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
@@ -1264,6 +1265,23 @@ def install_action():
             f"var O={json.dumps(option_source())};sessionStorage.setItem('{KBO_KEY}',O);"
             f"'{KEY}:'+S.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
+
+
+def install_prefix(demo=None):
+    """navigate to the demo admin portal + settle. sessionStorage is per origin and per tab, so
+    the scripts must be stored AFTER the tab is on the demo site."""
+    if demo is None:
+        demo = json.loads(DEFAULT_ROUTES.read_text())["demo"]
+    entry = (demo.get("portal_entry") or {}).get("admin") or "/"
+    return [_act("navigate", url=demo["base_url"] + entry), _wait(int(settle_seconds(demo)))]
+
+
+def install_actions(demo=None):
+    """The long install as a browser_batch action list. The ORCHESTRATOR sends it at the
+    canary step (the model that runs a capturer cannot reproduce ~40 KB of script
+    verbatim); capturer batches hold only short stubs. It starts with a navigate to the demo
+    admin portal + a settle wait, then the javascript installs."""
+    return install_prefix(demo) + [{"name": "javascript_tool", "input": install_action()}]
 
 
 def stub(args, key=KEY):
@@ -1514,7 +1532,6 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
     covered = {w["entry"] for w in write_visits}      # an approved record replaces the needs_write screen
     screens = [x for x in screens if not (x.get("reason") == "needs_write" and x["entry"] in covered)]
     batches, seen = [], set()
-    install_sent = []
     personas = persona_order(list(dict.fromkeys(v["persona"] for v in visits)))
 
     def flush(persona, chunk):
@@ -1524,9 +1541,6 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
         if persona not in seen and entry.get(persona):
             actions += [_act("navigate", url=base + entry[persona]), _wait()]
         seen.add(persona)
-        if not install_sent:                                  # every run, first batch
-            actions.append({"name": "javascript_tool", "input": install_action()})
-            install_sent.append(1)
         for v in chunk:
             actions += visit_actions(base, v, demo)
         batches.append({"batch_id": f"b{len(batches) + 1:02d}", "persona": persona, "kind": "visits",
@@ -1571,7 +1585,7 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
                          "return": True, "batches": [ret["batch_id"]]})
     canary_gif = f"{gif_dir}/canary.gif"
     return {"run_id": plan.get("run_id"), "base_url": base, "probe_version": PROBE_VERSION,
-            "gif_dir": gif_dir, "install": install_action(), "visits": visits,
+            "gif_dir": gif_dir, "install": install_actions(demo), "visits": visits,
             "entries": entries, "screens": screens, "accounts": accounts,
             "write_visits": write_visits,
             "batches": batches, "restore": restore,
@@ -1607,8 +1621,8 @@ def _accounts_md(calls):
           "(`stop=needs_signin:main`); when you are started at it, send its `actions` (the navigation back "
           "to the home portal) and write `raw/<batch_id>.json` with no items.", "",
           "**Start at batch X.** If the prompt you were given says `--from-batch <id>`, skip every batch "
-          "before `<id>` (their raw files already exist; do not rewrite them), send the install action "
-          "from section 2 once before the first batch you send, and carry on from there. Everything "
+          "before `<id>` (their raw files already exist; do not rewrite them) and carry on from there "
+          "(the orchestrator re-sent the install before starting you). Everything "
           "else (stop rules, abort, restore) is unchanged.", ""]
     return L
 
@@ -1629,10 +1643,13 @@ def capture_md(calls):
          "2. Call `tabs_context_mcp`; use the tab it returns (create one with `tabs_create_mcp` only "
          "if there is none). That tab's numeric id is `$TAB`.", "",
          "## 2. The probe install", "",
-         "The first batch below already starts with this install (every run installs it afresh; "
-         "it stores the probe and the click guard in the tab). Send it alone, once, only after a "
-         "`KB_NOPROBE` error. It must return `kbp:<number>`.", "",
-         _j(calls["install"]), ""]
+         "You never send the install: the orchestrator already stored the probe, the click guard and "
+         "the option picker in the tab before it started you (its text is long and only the orchestrator "
+         "sends it). Every action below is a short call that runs the stored scripts. If any of them "
+         "fails with `KB_NOPROBE` (a new tab, or the scripts are gone), do not retry and do not send "
+         "anything else: abort (section 5), write the batch's raw file with status `needs_install`, "
+         "and reply `KB_CAPTURE_DONE ok=<n> stop=needs_install`. The orchestrator re-sends the install "
+         "and starts you again with `--from-batch <batch_id>`.", ""]
     L += [f"## 3. Batches ({len(calls['batches'])})", "",
           "For each batch, in order, follow its heading. Visits are `gif_creator` recordings: "
           "start_recording, navigate, wait, hover, probe, stop_recording, export. There are no "
@@ -1686,7 +1703,7 @@ def capture_md(calls):
           _j({"batch_id": "b01", "status": "ok", "error": None,
               "items": [{"visit_id": "v01", "probe": "<the javascript_tool result exactly as returned>",
                          "gif": "<filename from the export result: Downloaded \"…\">"}]}), "",
-          "`status` is one of `ok`, `expired`, `wrong_persona`, `bridge_down`, `no_probe`. `items` are in "
+          "`status` is one of `ok`, `expired`, `wrong_persona`, `bridge_down`, `needs_install`. `items` are in "
           "visit order, one per visit that completed both its probe and its export; a visit not "
           "reached is simply absent. Copy the probe result verbatim (object, or the text if it came "
           "back as text) — do not edit it. A click visit's item also carries `\"click\"`: the `kbclick` "
@@ -1694,8 +1711,8 @@ def capture_md(calls):
           "## 5. Stop rules", "",
           "- An error containing `KB_LOGIN`: status `expired`, write the file, stop.",
           "- An error containing `KB_PERSONA`: status `wrong_persona`, write the file, stop.",
-          "- An error containing `KB_NOPROBE`: send the install action again once, then retry that "
-          "batch once. If it fails again: status `no_probe`, write the file, stop.",
+          "- An error containing `KB_NOPROBE`: status `needs_install`, send the abort actions, write the "
+          "file, stop with `stop=needs_install` (no restore). Never send the install yourself.",
           "- A transport or bridge error (tool unavailable, extension disconnected): status "
           "`bridge_down`, write the file, stop.",
           "- A click error (`KB_CLICK_*`, `KB_TENANT_ROW`) is not a stop: see section 3.",
@@ -1709,8 +1726,8 @@ def capture_md(calls):
           "## 6. Restore (after the last batch or after a status stop)", "",
           "Send this once with `browser_batch` so the browser returns to the home portal:", "",
           _j(calls["restore"]), "",
-          "Send it only when you reached the end or a status stop; not for `needs_signin`.", "",
-          "Reply `KB_CAPTURE_DONE ok=<batches written with status ok> stop=<first non-ok status|needs_signin:<account>|none>`.", ""]
+          "Send it only when you reached the end or a status stop; not for `needs_signin` or `needs_install`.", "",
+          "Reply `KB_CAPTURE_DONE ok=<batches written with status ok> stop=<first non-ok status|needs_signin:<account>|needs_install|none>`.", ""]
     return "\n".join(L)
 
 
@@ -1901,8 +1918,27 @@ def parse_probe(raw):
             except ValueError:
                 return None
     if isinstance(p, dict) and isinstance(p.get("labels"), list) and p.get("iw"):
-        return p
+        return rescreen_probe(p)
     return None
+
+
+def rescreen_probe(p):
+    """Re-apply the CURRENT tenant-slug rules to a stored probe: a raw file captured under older
+    rules may carry tenant_slug for an ordinary word ("schedulers"). The probe lists the words
+    that tripped it (`tw`, at most 5 per kind): when every one is an ordinary word now, the kind
+    is dropped and the verdict recomputed. A full list (5) is kept as is: more may be hiding."""
+    tw = p.get("tw") if isinstance(p.get("tw"), dict) else {}
+    words = tw.get("tenant_slug")
+    tn = p.get("tn") if isinstance(p.get("tn"), dict) else None
+    if not tn or not isinstance(words, list) or len(words) >= 5 \
+            or not all(isinstance(w, str) and Q.slug_is_word(w.lower()) for w in words):
+        return p
+    p = dict(p)
+    kinds = [k for k in tn.get("k") or [] if k != "tenant_slug"]
+    hard = any(k in ("foreign_email_domain", "known_client_name", "non_latin_script") for k in kinds)
+    p["tn"] = {**tn, "k": kinds, "v": "BLOCK" if hard else ("REVIEW" if kinds else "CLEAR")}
+    p["tw"] = {k: v for k, v in tw.items() if k != "tenant_slug"}
+    return p
 
 
 def box_in_frame(box, img_w, img_h):
@@ -2147,6 +2183,8 @@ def cmd_ingest(a):
     use_ocr = ocr_available() and not a.no_ocr
     if not use_ocr:
         print("OCR unavailable — anchors will be dom_box (draft-only).")
+    if getattr(a, "from_run_gifs", False):
+        a.downloads_dir = None               # frames, boxes, OCR and the tenant screen re-run on shots/gifs/
     items, batches = _load_raw(a.raw_dir)
     now = _dt.datetime.now().isoformat(timespec="minutes")
     batch_of = {vid: b for b in calls["batches"] for vid in b["visit_ids"]}
@@ -2155,6 +2193,7 @@ def cmd_ingest(a):
     ingested, settled, dead = set(), set(), {}
     screens = {x["visit_id"]: x for x in manifest.get("screens") or []}
     fetched = 0
+    write_done = set()
     for v in calls["visits"]:
         vid = v["visit_id"]
         step = v.get("step", 0)
@@ -2228,12 +2267,24 @@ def cmd_ingest(a):
                     screen["note"] = "saved"               # informational: the allowed request went out once
                 elif int(it.get("blocked") or pr.get("wb") or 0) >= 1:
                     screen["note"] = "write_blocked_ok"    # informational: the save was blocked, as planned
+                if screen.get("note") and any(e["visit_id"] == vid and e["ticket"] == tid for e in entries):
+                    write_done.add(tid)
             else:
                 screen.update(reason="write_failed",
                               detail="record_unverified" if it.get("pending") and not it.get("created") else reason)
         screens[vid] = screen
     for w in calls.get("screens") or []:
         screens[w["visit_id"]] = dict(w)
+    # A captured write visit (saved / write_blocked_ok, with a shot) replaces the ticket's
+    # needs_write screen: a stale one (plan-calls ran before the data plan) must not win.
+    for vid, sc in list(screens.items()):
+        if sc.get("reason") == "needs_write" and sc.get("detail") != "dry_run":
+            left_t = [t for t in sc.get("tickets") or [] if t not in write_done]
+            if len(left_t) != len(sc.get("tickets") or []):
+                if left_t:
+                    sc["tickets"] = left_t
+                else:
+                    del screens[vid]
 
     downloads_left = []
     if a.downloads_dir:
@@ -2358,26 +2409,37 @@ def cmd_sweep(a):
     """Move leftover Downloads/kb-capture/* (crashed runs) into --into. Never
     deletes a file; only an emptied kb-capture folder is removed."""
     root = Path(a.downloads_dir) / DL_ROOT
-    moved = []
+    moved, skipped = [], []
     if root.is_dir():
         into = Path(a.into)
         for p in sorted(root.iterdir()):
-            into.mkdir(parents=True, exist_ok=True)
             dest = into / p.name
-            n = 1
-            while dest.exists():
-                n += 1
-                dest = into / f"{p.name}-{n}"
-            shutil.move(str(p), str(dest))
-            moved.append({"from": str(p), "to": str(dest)})
+            try:
+                into.mkdir(parents=True, exist_ok=True)
+                n = 1
+                while dest.exists() or dest.is_symlink():     # never replace what is already there
+                    n += 1
+                    dest = into / f"{p.name}-{n}"
+                shutil.move(str(p), str(dest))
+                moved.append({"from": str(p), "to": str(dest)})
+            except OSError as e:               # Cowork: this item may not be moved; carry on
+                if p.exists() and dest.exists():     # copied but not removed: keep BOTH, never delete
+                    skipped.append({"path": str(p), "copied_to": str(dest),
+                                    "error": "copied, source not removed: "
+                                             f"{type(e).__name__}: {e}"})
+                else:
+                    skipped.append({"path": str(p), "error": f"{type(e).__name__}: {e}"})
         try:
             root.rmdir()
         except OSError:
             pass
     for m in moved:
         print(f"moved {m['from']} -> {m['to']}")
+    if skipped:
+        print(f"skipped {len(skipped)} item(s) that could not be moved: "
+              + ", ".join(Path(x["path"]).name for x in skipped))
     print(f"swept {len(moved)} leftover item(s)")
-    emit({"ok": True, "action": "sweep", "moved": moved})
+    emit({"ok": True, "action": "sweep", "moved": moved, "skipped": skipped})
     return 0
 
 
@@ -2410,6 +2472,9 @@ def main(argv=None):
     s.add_argument("--raw-dir", required=True); s.add_argument("--out-dir", required=True)
     s.add_argument("--routes", default=str(DEFAULT_ROUTES)); s.add_argument("--no-ocr", action="store_true")
     s.add_argument("--downloads-dir")
+    s.add_argument("--from-run-gifs", action="store_true",
+                   help="re-check an existing run: read each GIF from <out-dir>/gifs/<visit_id>.gif "
+                        "(already copied), never from Downloads")
     s = sub.add_parser("cleanup"); s.add_argument("--downloads-dir", required=True)
     s.add_argument("--names-from", required=True)
     s = sub.add_parser("pickup"); s.add_argument("--downloads-dir", required=True)

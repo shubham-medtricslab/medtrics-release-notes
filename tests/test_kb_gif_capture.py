@@ -32,7 +32,7 @@ def make_gif(path, w=1470, h=802, frames=3):
 class Actions(Base):
     def test_visit_order_and_options(self):
         calls, _ = self.plan_calls()
-        v = calls["batches"][0]["actions"][3:10]                  # first visit, after entry + install
+        v = calls["batches"][0]["actions"][2:9]                   # first visit, after the entry (no install: the orchestrator sends it)
         self.assertEqual([(a["name"], a["input"].get("action")) for a in v],
                          [("gif_creator", "start_recording"), ("navigate", None),
                           ("computer", "wait"), ("computer", "hover"),

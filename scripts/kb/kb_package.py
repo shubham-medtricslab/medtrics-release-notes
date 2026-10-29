@@ -10,7 +10,7 @@ after the owner has looked at every screenshot:
   1. contact-sheet  one numbered thumbnail per candidate screenshot (ticket, step,
                     tenant verdict and matched words under each) -> contact_sheet.png
                     (+ contact_sheet.json); the orchestrator shows it to the owner.
-  2. confirm        --ok 1,3,4 | all  --by "<owner>" sets evidence.tenant_confirmed_by
+  2. confirm        --ok 1,3,4 | all | none  --by "<owner>" sets evidence.tenant_confirmed_by
                     (and the frame's sha256, evidence.tenant_confirmed_sha256) on those
                     frames. A BLOCK frame can never be confirmed, and a frame that is not
                     confirmed is left out of the article (the step keeps its text).
@@ -534,9 +534,11 @@ def cmd_contact_sheet(a):
 
 
 def parse_ok(text, items):
-    """'all' -> every non-BLOCK number; '1,3,4' -> those numbers. A BLOCK number
+    """'all' -> every non-BLOCK number; 'none' -> []; '1,3,4' -> those numbers. A BLOCK number
     or an unknown one is refused (ValueError)."""
     nums = {i["n"]: i for i in items}
+    if text.strip().lower() == "none":          # the owner ok'd nothing: no screenshot ships
+        return []
     if text.strip().lower() == "all":
         return sorted(n for n, i in nums.items() if i["tenant"] != "BLOCK")
     out = []
@@ -616,7 +618,7 @@ def main(argv=None):
     s.add_argument("--out", required=True)
     s = sub.add_parser("confirm", help="record which screenshots the owner looked at and ok'd")
     s.add_argument("--run-dir", required=True)
-    s.add_argument("--ok", required=True, help="comma-separated numbers, or all (never BLOCK)")
+    s.add_argument("--ok", required=True, help="comma-separated numbers, all (never BLOCK), or none (clears every confirmation)")
     s.add_argument("--by", required=True, help="owner name or email")
     if argv and argv[0] in ("contact-sheet", "confirm"):
         a = ap.parse_args(argv)

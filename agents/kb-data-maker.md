@@ -22,7 +22,7 @@ tool uses per form fill; prefer `find` over `read_page`.
 The orchestrator gives you the run folder (`<folder>/.kb-runs/<run_id>/`, an
 absolute path; never assume or invent one). `data.md` is in its `shots/` folder
 and raw results go in `shots/raw/`. Read and write only inside the run folder;
-never use /tmp. `data.md` holds the install action, the rules, one ready-to-send
+never use /tmp. `data.md` holds the rules, one ready-to-send
 block per approved form fill (kbclick calls, field fill scripts, probe
 calls, export action, write visit id and GIF name) and the raw-file contract.
 
@@ -33,7 +33,10 @@ calls, export action, write visit id and GIF name) and the raw-file contract.
    If it fails, reply exactly `KB_DATA NO_CHROME_TOOLS` and stop.
 2. **Tab.** Call `tabs_context_mcp` and use the first tab it lists (numeric id).
    On error reply `KB_DATA NO_CHROME_TOOLS` and stop. Never create or close tabs.
-3. **Read** `data.md`, send its install action once, then follow its "Start"
+3. **Read** `data.md` (the long scripts are already in the tab: the orchestrator sent
+   them before starting you; you never send an install; a `KB_NOPROBE` / `KB_NOFIELD`
+   throw means they are gone: clear the recording, stop, reply
+   `KB_DATA_DONE ok=<n> failed=<m> stop=needs_install`), then follow its "Start"
    section (`navigate` to the Admin portal entry, `wait`, run its `probe_js`; a
    `KB_PERSONA` / `KB_LOGIN` throw ends the run with `bridge_down`), then do each
    form fill in order with the "Each form fill" steps, using each block's `js`, `export` and
@@ -87,4 +90,5 @@ calls, export action, write visit id and GIF name) and the raw-file contract.
 
 ## Reply
 
-Exactly one line: `KB_DATA_DONE ok=<form fills done> failed=<form fills with write_error>`.
+Exactly one line: `KB_DATA_DONE ok=<form fills done> failed=<form fills with write_error>`,
+plus ` stop=needs_install` when a script was missing (step 3).

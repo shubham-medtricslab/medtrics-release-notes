@@ -811,8 +811,8 @@ class ClickPlan(Base):
             if b["kind"] == "click":
                 self.assertIn(json.dumps(b["pick"], indent=1), md)
                 self.assertIn(json.dumps(b["act"], indent=1), md)
-        # 2 visit batches + 3 click batches (pick, act) + install, abort, raw example, restore
-        self.assertEqual(md.count("```json"), 2 + 3 * 2 + 4)
+        # 2 visit batches + 3 click batches (pick, act) + abort, raw example, restore (no install: 0.28.1)
+        self.assertEqual(md.count("```json"), 2 + 3 * 2 + 3)
 
     def test_no_write_verb_clicks_are_planned_as_given(self):
         calls, _ = self.plan_calls(CLICK_PLAN)

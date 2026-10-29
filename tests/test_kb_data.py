@@ -565,10 +565,14 @@ class Brief(Base):
         self.assertNotIn("{{", md)
         self.assertNotIn("kbopt", md)                                      # no pick fields any more
         self.assertNotIn("planner", md.lower())
-        installs = re.findall(r"```json\n(\{\n \"action\": \"javascript_exec\".*?)\n```", md, re.S)
-        self.assertEqual(len(installs), 2)
-        self.assertIn("var S=", json.loads(installs[0])["text"])
-        self.assertIn("sessionStorage.setItem('kbf'", json.loads(installs[1])["text"])
+        self.assertNotIn('"action": "javascript_exec"', md)                # no long script for the maker
+        self.assertIn("needs_install", md)
+        inst = json.loads((self.d / "data_install.json").read_text())["install"]     # the orchestrator's
+        self.assertEqual([a["name"] for a in inst], ["navigate", "computer", "javascript_tool", "javascript_tool"])
+        self.assertEqual(inst[0]["input"]["url"], ROUTES["demo"]["base_url"] + ROUTES["demo"]["portal_entry"]["admin"])
+        self.assertEqual(inst[1]["input"]["action"], "wait")
+        self.assertIn("var S=", inst[2]["input"]["text"])
+        self.assertIn("sessionStorage.setItem('kbf'", inst[-1]["input"]["text"])
 
     def test_brief_starts_on_the_admin_portal_and_guards_every_page(self):
         self.approved()
