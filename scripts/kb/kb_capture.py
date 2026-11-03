@@ -689,6 +689,9 @@ def fields_source():
 
 # Plain JS, no comments, every statement ends with ';' (lines are joined with
 # spaces). __TENANT__ and __NONLATIN__ are filled from the Python side.
+# The tenant screen reads body.innerText, which lists every option of a closed
+# <select> though only the chosen one shows: one copy of each unchosen option's
+# text is dropped first (M1-1520's program list read as "College of Veterinary ...").
 _PROBE_JS = r"""
 (function(a){
 var D=document,W=window;
@@ -736,6 +739,7 @@ return {l:l,f:true,t:norm(e.innerText),b:[rd(r.left),rd(r.top),rd(r.width),rd(r.
 var T=__TENANT__;
 var rx=function(k,g){return new RegExp(T[k][0],T[k][1]+(g?'g':''));};
 var raw=String(D.body.innerText||'');
+Array.prototype.forEach.call(D.querySelectorAll('select'),function(s){if(s.multiple||s.size>1)return;Array.prototype.forEach.call(s.options||[],function(o){var t=String(o.text||'').trim();var i=o.selected||!t?-1:raw.indexOf(t);if(i>=0)raw=raw.slice(0,i)+' '+raw.slice(i+t.length);});});
 a.allow.forEach(function(s){raw=raw.replace(new RegExp(String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),' ');});
 var cased=raw,low=raw.toLowerCase(),k=[],hard=false;
 var add=function(n,h){if(k.indexOf(n)<0)k.push(n);if(h)hard=true;};
@@ -750,7 +754,8 @@ while((m5=re5.exec(cased))){add('course_codes',false);tws('course_codes',m5[0]);
 var re6=rx('disc',true),m6;
 while((m6=re6.exec(low))){add('discipline_word',false);tws('discipline_word',m6[0]);if(m6[0]==='')re6.lastIndex++;}
 var re2=rx('slug',true),m3;
-var STOP=__SLUG_STOP__;var isW=function(w){var c=[w];STOP.strip.forEach(function(p){if(w.indexOf(p)===0)c.push(w.slice(p.length));});if(c.some(function(x){return STOP.words.indexOf(x)>=0;}))return true;for(var i=0;i<STOP.has.length;i++){if(w.indexOf(STOP.has[i])>=0)return true;}return c.some(function(x){return STOP.stems.concat(STOP.lead).some(function(t){return x.indexOf(t)===0;});});};
+var STOP=__SLUG_STOP__;var isW=function(w){var c=[w];STOP.strip.forEach(function(p){if(w.indexOf(p)===0)c.push(w.slice(p.length));});if(c.some(function(x){return STOP.words.indexOf(x)>=0;}))return true;for(var i=0;i<STOP.has.length;i++){if(w.indexOf(STOP.has[i])>=0)return true;}if(c.some(function(x){return STOP.stems.concat(STOP.lead).some(function(t){return x.indexOf(t)===0;});}))return true;return w.length>=STOP.typo&&STOP.words.some(function(s){return s.length>=STOP.typo&&d1(w,s);});};
+var d1=function(a,b){if(Math.abs(a.length-b.length)>1)return false;if(a.length>b.length){var t=a;a=b;b=t;}var i=0;while(i<a.length&&a[i]===b[i])i++;return a.slice(i+(a.length===b.length?1:0))===b.slice(i+1);};
 while((m3=re2.exec(low))){if(!isW(m3[1])){add('tenant_slug',true);tws('tenant_slug',m3[1]);}}
 var nl=0;
 for(var i=0;i<low.length;i++){if(low.charCodeAt(i)>0x3FF)nl++;}

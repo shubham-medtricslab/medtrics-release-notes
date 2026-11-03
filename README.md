@@ -378,7 +378,7 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.2**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.3**.
 
 ## Repository layout
 

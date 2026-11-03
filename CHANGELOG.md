@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-11-03
+
+Fixes from run kb-20261103-2319 of `/kb-articles M1-1520`.
+
+### Fixed
+- **Migrate Curriculum frames screened BLOCK.** The tenant-slug check read
+  Legacy's own typo "Migrations will be perfomed overnight" as a client slug
+  ("perfo" + "med"). A word one letter off a long stop word ("performed") now
+  counts as an ordinary word; short slugs ("uwmed", "kfshmed") are still
+  flagged. Stored raw files are rescreened under the new rule on ingest.
+- **Closed dropdowns made frames REVIEW.** The page check read every option of
+  a closed `<select>` (program names such as "College of Veterinary
+  Medicine") though only the chosen one shows. Unchosen options of a closed
+  dropdown are left out; open lists and the chosen option are still screened.
+
 ## [0.22.2] - 2026-11-03
 
 More fixes from the Windows retry of `/kb-articles M1-1520` (run kb-20261103-2055).

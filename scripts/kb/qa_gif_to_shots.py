@@ -166,18 +166,39 @@ STOP_HAS = ("schedul", "procedur")
 STOP_STRIP = ("re", "un", "in", "im", "co", "pre", "inter", "non")
 
 
+# A typo of a long stop word is a word too: Legacy's own "Migrations will be perfomed
+# overnight" blocked every Migrate Curriculum frame (M1-1520). Only words of TYPO_MIN+
+# letters, so a short slug ("uwmed", "kfshmed") is never one edit from a stop word.
+TYPO_MIN = 8
+
+
+def _one_edit(a, b):
+    """True when a and b differ by at most one inserted, deleted or changed letter."""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    return a[i + (len(a) == len(b)):] == b[i + 1:]
+
+
 def slug_is_word(w):
     """True when a SLUG_RE match is an ordinary English word, not a tenant slug."""
     cands = [w] + [w[len(p):] for p in STOP_STRIP if w.startswith(p)]
     if any(c in SLUG_STOP for c in cands) or any(h in w for h in STOP_HAS):
         return True
-    return any(c.startswith(st) for c in cands for st in STOP_STEMS + STOP_LEAD)
+    if any(c.startswith(st) for c in cands for st in STOP_STEMS + STOP_LEAD):
+        return True
+    return len(w) >= TYPO_MIN and any(len(s) >= TYPO_MIN and _one_edit(w, s) for s in SLUG_STOP)
 
 
 def slug_stop_spec():
     """The same constants as plain JSON, for the JS probe (one source of truth)."""
     return {"words": sorted(SLUG_STOP), "stems": list(STOP_STEMS),
-            "has": list(STOP_HAS), "lead": list(STOP_LEAD), "strip": list(STOP_STRIP)}
+            "has": list(STOP_HAS), "lead": list(STOP_LEAD), "strip": list(STOP_STRIP),
+            "typo": TYPO_MIN}
 
 
 NONLATIN_MIN = 3
