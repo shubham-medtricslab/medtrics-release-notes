@@ -69,6 +69,12 @@ plus the Mem collection tools (`list_collections`, `create_collection`).
    - Otherwise the part is installed. Note what is missing, in plain words: no
      tesseract → label checks are weaker and articles stay drafts; no LibreOffice
      → no PDF; no Carlito → PDFs use a fallback font.
+   - **Windows** has no apt-get or Homebrew, so nothing is installed for it: show
+     the `winget install --id … -e` line the output gives for each missing tool
+     (the person runs it and accepts the licence). LibreOffice and tesseract are
+     found in Program Files without a PATH entry; LibreOffice installed somewhere
+     else → set `KB_SOFFICE` in `.env` to its `soffice.exe`. The scripts switch
+     themselves to UTF-8 on Windows; `PYTHONUTF8` is not needed.
 2. **Claude in Chrome** — ToolSearch `select:mcp__claude-in-chrome__tabs_context_mcp`,
    then call it. If the tool is missing or the call fails, say, once: "Install
    the Claude in Chrome extension from the Chrome Web Store and connect it to

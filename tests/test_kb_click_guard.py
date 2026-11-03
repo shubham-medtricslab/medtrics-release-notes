@@ -178,7 +178,7 @@ class Mirror(unittest.TestCase):
             self.assertIn(json.dumps(C.CLICK_RX[k])[1:-1], js.replace("\\\\", "\\\\"))
         self.assertTrue(js.rstrip().endswith("})"))
         self.assertNotIn("//", js.replace("javascript:", "").replace("(#|", ""))     # no comments
-        self.assertLess(len(js), 16000)      # 0.28.0: + one-shot allowance, choose mode, group rows (was 4000 before 0.27.0)
+        self.assertLess(len(js), 17500)      # 0.22.1: + check (tick) mode; 0.28.0: + one-shot allowance, choose mode, group rows (was 4000 before 0.27.0)
 
 
 DRIVER = r"""

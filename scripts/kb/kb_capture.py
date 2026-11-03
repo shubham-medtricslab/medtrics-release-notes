@@ -154,7 +154,8 @@ def session_dir(arg=None):
 
 
 def ocr_available():
-    if not shutil.which("tesseract"):
+    import kb_pdf
+    if not kb_pdf.tesseract():
         return False
     try:
         import pytesseract  # noqa: F401
@@ -790,6 +791,7 @@ CLICK_RX = {
     "cc": r"^(?:cancel|close|skip)\b",
     "no": r"^no[.!]?$",
     "cb": r"\b(?:yes|save|submit|confirm|continue|ok|proceed)",
+    "sw": r"switch|toggle",                                # a checkbox styled as a switch often saves on change
 }
 ALLOW_TTL_S = 10          # a one-shot allowance lives this long after kbclick armed it
 ALLOW_METHODS = ("POST", "PUT", "PATCH")
@@ -959,6 +961,46 @@ def click_refusal(el, text_click=True, write=None, vue=False):
     return ""
 
 
+
+def check_refusal(text, box, label=None):
+    """Why kbclick {"check": text} refuses to tick a checkbox, or "" when it ticks it
+    (Python mirror of the JS). The box is found by its <label>'s exact text (the
+    label's own words, the input left out) and must be the label's only control.
+    Ticking changes the page only; the network write guard still blocks anything a
+    change handler sends, so the post_form / write_verb rules of a text click do not
+    apply ("Set migrated sessions to Unpublished" is a box, not a button). Refused:
+    danger words (write_danger), an on* handler attribute on the box or label, a
+    box styled as a switch/toggle (those often save on change), a danger class, a box
+    in a dialog, a box whose form is not the label's, a disabled box, and a box
+    already ticked (a second click would untick it; the start page loads fresh, so
+    this aborts the entry instead of guessing).
+    box: {"attrs", "parent_class", "in_dialog", "same_form", "disabled", "checked"};
+    label: {"attrs"}."""
+    if write_danger(text):
+        return "write_danger"
+
+    def own(e):
+        at = (e or {}).get("attrs") or {}
+        if any(str(n).lower().startswith("on") for n in at):
+            return "onclick"
+        if _CLICK_RE["sw"].search(str(at.get("class") or "")) or "switch" in str(at.get("role") or "").lower():
+            return "switch"
+        if _CLICK_RE["cls"].search(str(at.get("class") or "")):
+            return "danger_class"
+        return ""
+    why = own(box) or own(label) or ("switch" if _CLICK_RE["sw"].search(str(box.get("parent_class") or "")) else "")
+    if why:
+        return why
+    if box.get("in_dialog"):
+        return "in_dialog"
+    if not box.get("same_form", True):
+        return "other_form"
+    if box.get("disabled"):
+        return "disabled"
+    if box.get("checked"):
+        return "already_checked"
+    return ""
+
 def row_group(row):
     """Python mirror of the group test: the row holds an .expand/.triangle/
     [aria-expanded] element (row["has_expand"]) or its class says group/expandable/parent.
@@ -1045,7 +1087,7 @@ __GUARD__
 __KBA__
 var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
 var WR=new RegExp(R.write,'i'),CR=new RegExp(R.cls,'i'),AR=new RegExp(R.attr,'i'),TR=new RegExp(R.tog),KR=new RegExp(R.tok),DR=new RegExp(R.dat),WD=new RegExp(R.wd,'i'),IC=new RegExp(R.icon,'i'),CT=new RegExp(R.ctl,'i'),GR=new RegExp(R.grp,'i');
-var SN=new RegExp(R.sn,'ig'),NG=new RegExp(R.neg,'i');
+var SN=new RegExp(R.sn,'ig'),NG=new RegExp(R.neg,'i'),SW=new RegExp(R.sw,'i');
 var dng=function(s){if(WD.test(s))return true;SN.lastIndex=0;var m;while((m=SN.exec(s))){if(!NG.test(s.slice(0,m.index)))return true;}return false;};
 var WL=(a.write||[]).map(function(t){return norm(t).toLowerCase();});
 var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
@@ -1094,7 +1136,7 @@ return e?{e:e,g:!!r.querySelector(S.grp)||GR.test(String(r.className||''))}:null
 };
 var dls=Array.prototype.slice.call(D.querySelectorAll(S.dlg)).filter(vis);
 var dlg=dls.length?dls[dls.length-1]:null;
-var el=null,grp=false;
+var el=null,grp=false,lab=null;
 if(a.row){
 var p=(0,eval)(sessionStorage.getItem('kbp'));
 if(p(a.pa).tn.v==='BLOCK')throw new Error('KB_TENANT_ROW');
@@ -1114,6 +1156,27 @@ var best=null,bk=9;
 bs.forEach(function(e){var k=rk(txt(e));if(k<bk){bk=k;best=e;}});
 if(!best)throw new Error('KB_CLICK_NOTFOUND:choose');
 el=best;WL.push(txt(el).toLowerCase());
+}else if(a.check){
+var want=norm(a.check).toLowerCase();
+if(!want)throw new Error('KB_CLICK_NOTFOUND:check');
+if(dng(want))no('write_danger');
+var ltx=function(l){var c=l.cloneNode(true);Array.prototype.forEach.call(c.querySelectorAll('input,select,textarea,button'),function(x){x.remove();});return norm(c.textContent).toLowerCase();};
+var cs=Array.prototype.slice.call(D.querySelectorAll('label')).filter(function(l){return vis(l)&&ltx(l)===want;}).map(function(l){var c=l.control;return c&&String(c.type||'').toLowerCase()==='checkbox'&&c.labels&&c.labels.length===1?{l:l,c:c}:null;}).filter(Boolean);
+if(!cs.length)throw new Error('KB_CLICK_NOTFOUND:'+a.check);
+if(cs.length>1)no('ambiguous');
+lab=cs[0].l;var bx=cs[0].c;
+var cw=function(e){if(!e||!e.getAttribute)return '';var g=function(n){var v=e.getAttribute(n);return v===null||v===undefined?'':String(v);};
+if(Array.prototype.some.call(e.attributes||[],function(t){return /^on/i.test(t.name);}))return 'onclick';
+if(SW.test(g('class'))||/switch/i.test(g('role')))return 'switch';
+if(CR.test(g('class')))return 'danger_class';
+return '';};
+var cr=cw(bx)||cw(lab)||(SW.test(String((bx.parentElement&&bx.parentElement.className)||''))?'switch':'');
+if(cr)no(cr);
+if(bx.closest(S.dlg))no('in_dialog');
+if(bx.form!==(lab.closest('form')||null))no('other_form');
+if(bx.disabled)no('disabled');
+if(bx.checked)no('already_checked');
+el=vis(bx)?bx:lab;
 }else{
 var wt=WL.indexOf(norm(a.text).toLowerCase())>=0;
 if(WR.test(a.text)&&!wt)no('write_verb');
@@ -1130,13 +1193,13 @@ var h0=good.length?String(good[0].getAttribute('href')||''):'';
 if(good.some(function(e){return String(e.getAttribute('href')||'')!==h0;}))no('ambiguous');
 el=good[0]||pool[0]||all[0];
 }
-var w=why(el,!a.row);
+var w=a.check?'':why(el,!a.row);
 if(w)no(w);
 el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});
 var r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;
 var t=D.elementFromPoint(x,y);
-if(!t||!(t===el||el.contains(t)))no('occluded');
-var out={ok:true,x:Math.round(x),y:Math.round(y),label:txt(el).slice(0,60)};
+if(!t||!(t===el||el.contains(t)||(lab&&lab.contains(t))))no('occluded');
+var out={ok:true,x:Math.round(x),y:Math.round(y),label:(lab?norm(a.check):txt(el)).slice(0,60)};
 if(grp)out.group=true;
 if(a.allow){
 var al=a.allow,tp=true;
@@ -1396,7 +1459,7 @@ def step_labels(clicks, step, page, last):
     if not clicks:
         return list(last)
     nxt = clicks[step] if step < len(clicks) else None
-    nxt_text = [nxt["text"]] if nxt and nxt.get("text") else []
+    nxt_text = [nxt.get("text") or nxt.get("check")] if nxt and (nxt.get("text") or nxt.get("check")) else []
     if step == 0:
         return ([page] if page else []) + nxt_text
     if nxt is None:
@@ -1412,9 +1475,11 @@ def external_start(link):
 
 
 def _click_spec(c):
-    """Normalise a capture_plan click to {"text"} or {"row": True}."""
+    """Normalise a capture_plan click to {"text"}, {"check"} or {"row": True}."""
     if isinstance(c, dict) and c.get("row"):
         return {"row": True}
+    if isinstance(c, dict) and c.get("check"):
+        return {"check": str(c["check"])}
     text = c.get("text") if isinstance(c, dict) else c
     return {"text": str(text)}
 
@@ -1688,7 +1753,8 @@ def capture_md(calls):
             continue
         if b.get("kind") == "click":
             c = next((v["click"] for v in calls["visits"] if v["visit_id"] == b["visit_ids"][0]), {})
-            what = "the first row" if c.get("row") else f"\"{c.get('text')}\""
+            what = ("the first row" if c.get("row") else f"tick \"{c['check']}\"" if c.get("check")
+                    else f"\"{c.get('text')}\"")
             L += [f"### {b['batch_id']} — {b['persona']} — click visit {b['visit_ids'][0]} "
                   f"(entry {b['entry']}, click {b['step']}: {what})", "",
                   "`pick`:", "", _j(b["pick"]), "", "`act` (substitute `$X`, `$Y`):", "", _j(b["act"]), "",
@@ -2493,4 +2559,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

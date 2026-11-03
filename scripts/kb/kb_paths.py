@@ -139,8 +139,9 @@ def merge(h, extra):
     return save(h, _deep(load(h), extra))
 
 
-def env_names(h):
-    """{key: bool} — set in <folder>/.env or the environment. Never the values."""
+def dotenv(h):
+    """{key: value} of <folder>/.env (empty values left out). Callers print names
+    only, never a value."""
     found = {}
     try:
         for line in (h / ".env").read_text().splitlines():
@@ -149,10 +150,17 @@ def env_names(h):
                 line = line[7:].lstrip()
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
-                if v.strip().strip("'\""):
-                    found[k.strip()] = True
+                v = v.strip().strip("'\"")
+                if v:
+                    found[k.strip()] = v
     except OSError:
         pass
+    return found
+
+
+def env_names(h):
+    """{key: bool} — set in <folder>/.env or the environment. Never the values."""
+    found = dotenv(h)
     return {k: bool(found.get(k) or os.environ.get(k)) for k in ENV_KEYS}
 
 
@@ -198,4 +206,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

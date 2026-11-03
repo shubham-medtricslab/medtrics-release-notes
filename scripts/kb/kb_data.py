@@ -468,6 +468,8 @@ def _click_specs(clicks):
     for k in clicks or []:
         if isinstance(k, dict) and k.get("row"):
             out.append({"row": True})
+        elif isinstance(k, dict) and str(k.get("check") or "").strip():
+            out.append({"check": str(k["check"]).strip()})
         else:
             t = k.get("text") if isinstance(k, dict) else k
             if str(t or "").strip():
@@ -503,7 +505,8 @@ def build_plan(calls, groups, screens, issues, flows, records, today, period_end
             stop("needs_owner", why)
             continue
         path = _click_specs(e.get("clicks"))
-        bad = next((forbidden_in(k["text"]) for k in path if k.get("text") and forbidden_in(k["text"])), "")
+        bad = next((forbidden_in(k.get("text") or k.get("check") or "") for k in path
+                    if forbidden_in(k.get("text") or k.get("check") or "")), "")
         if bad:
             stop("needs_owner", f"path click contains \"{bad}\"")
             continue
@@ -554,7 +557,8 @@ def _fvalue(f):
 
 def preview_line(tid, r):
     """One owner-facing line per record."""
-    where = r["start"] + "".join(" → " + ("first row" if k.get("row") else f"\"{k['text']}\"") for k in r["path"])
+    where = r["start"] + "".join(" → " + ("first row" if k.get("row") else f"tick \"{k['check']}\"" if k.get("check")
+                                                  else f"\"{k['text']}\"") for k in r["path"])
     fields = "; ".join(_fvalue(f) for f in r["fields"]) or "no fields"
     if r["mode"] == SAVE:
         fl = r["flow"]
@@ -662,7 +666,7 @@ def _args_for(calls, persona):
     return visits[0]["args"] if visits else None
 
 
-def click_json(side, text=None, row=False, write=None, pa=None, choose=False, allow=None):
+def click_json(side, text=None, row=False, write=None, pa=None, choose=False, allow=None, check=None):
     """kbclick args — same shape kb_capture builds for a click visit's click_args.
     choose: dry-run mode, the page picks the safe answer in the open dialog itself.
     allow: save mode, {"method", "path", "dlg", "query"} for the one-shot allowance."""
@@ -672,6 +676,8 @@ def click_json(side, text=None, row=False, write=None, pa=None, choose=False, al
         args["pa"] = {**(pa or {}), "labels": []}
     elif choose:
         args["choose"] = True
+    elif check:
+        args["check"] = check
     else:
         args["text"] = text
     if write:
@@ -763,7 +769,7 @@ def record_block(ticket, rec, visit, args, portal_entry=""):
         "visit_id": visit["visit_id"], "gif": visit["gif"],
         "navigate": rec["start"],
         "guard_js": C.stub({**args, "labels": []}),
-        "path_picks": [{"click": k, "js": C.stub(click_json(side, k.get("text"), bool(k.get("row")), pa=pa), C.KBC_KEY)}
+        "path_picks": [{"click": k, "js": C.stub(click_json(side, k.get("text"), bool(k.get("row")), pa=pa, check=k.get("check")), C.KBC_KEY)}
                        for k in rec["path"]],
         "needs_demo_context": any(k.get("row") for k in rec["path"]),
         "fields": [field_block(f, side) for f in rec["fields"]],
@@ -944,7 +950,7 @@ def plan_problems(plan):
             if why:
                 out.append(f"{who}: {why}")
             for k in rec.get("path") or []:
-                bad = forbidden_in(k.get("text") or "") if isinstance(k, dict) else ""
+                bad = forbidden_in(k.get("text") or k.get("check") or "") if isinstance(k, dict) else ""
                 if bad:
                     out.append(f"{who}: path click contains \"{bad}\"")
             if rec.get("mode") == SAVE:
@@ -1328,4 +1334,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

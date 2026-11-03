@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-11-03
+
+Fixes from a Windows run of `/kb-articles M1-1520`.
+
+### Fixed
+- **M1-1520 stopped on the Curriculum Setup page.** The Chrome capture only
+  clicks a path the ticket's own text gives, and this known ticket had none. A
+  surface in `kb_routes.json` can now carry its own `clicks`, used when the
+  ticket gives no path; "Curriculum > Setup > Migrate" opens the Migrate
+  Curriculum tab and ticks Courses → Sessions → Session Schedules → Set
+  migrated sessions to Unpublished. Rerun with `--retry-partial`.
+- **Ticking a checkbox.** New click `{"check": "<exact label>"}`: kbclick finds
+  the one visible label with those words and ticks its checkbox. It never
+  presses a button, so a box inside a Save form is fine, and the write guard
+  still blocks any request a change handler makes. Refused: danger words, an
+  `on…` handler, a box styled as a switch, a box in a dialog or another form,
+  a disabled box, and a box that is already ticked.
+- **Windows: text-encoding crash.** Every script now reruns itself in Python's
+  UTF-8 mode on Windows (`scripts/utf8_mode.py`), so `PYTHONUTF8=1` is no
+  longer needed.
+- **Windows: LibreOffice not found, so no PDF.** The PDF step now looks in
+  Program Files, the per-user Programs folder, and a `KB_SOFFICE` path, as
+  well as PATH. Tesseract (`Tesseract-OCR`) and fonts in the Windows Fonts
+  folders are found the same way. With no apt-get or Homebrew, setup prints
+  the `winget install` command to run.
+
 ## [0.22.0] - 2026-10-29
 
 Client pods: each pod (Slack channel) now hears which released tickets concern

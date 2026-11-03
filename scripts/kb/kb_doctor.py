@@ -80,6 +80,9 @@ SYSTEM = {
     "Carlito font": ("font:Carlito", ["fonts-crosextra-carlito"], None,
                      "the PDF may substitute Calibri and reflow"),
 }
+# Windows has neither apt-get nor Homebrew; setup names the winget package to
+# install by hand (winget asks the person to accept each licence itself).
+WINGET = {"tesseract": "UB-Mannheim.TesseractOCR", "LibreOffice": "TheDocumentFoundation.LibreOffice"}
 CHROMIUM = "chromium"
 OPTIONAL = ("playwright", CHROMIUM)   # legacy path, installed only with --with-playwright
 NOT_REQUESTED = "not requested"
@@ -104,8 +107,10 @@ def site_packages(env):
 
 # ── probes (filesystem only: fast, no imports, no network) ───────────────────
 def _font(name):
-    for d in ("/usr/share/fonts", "/Library/Fonts", "/System/Library/Fonts",
-              str(Path.home() / "Library/Fonts")):
+    win = [os.path.join(os.environ[v], *rest) for v, *rest in
+           (("WINDIR", "Fonts"), ("LOCALAPPDATA", "Microsoft", "Windows", "Fonts")) if os.environ.get(v)]
+    for d in ["/usr/share/fonts", "/Library/Fonts", "/System/Library/Fonts",
+              str(Path.home() / "Library/Fonts")] + win:
         if Path(d).exists():
             for _ in Path(d).rglob(f"*{name}*"):
                 return True
@@ -115,9 +120,9 @@ def _font(name):
 def system_present(probe):
     if probe.startswith("font:"):
         return _font(probe[5:])
-    if probe == "soffice":
+    if probe in ("soffice", "tesseract"):
         import kb_pdf
-        return bool(kb_pdf.soffice())
+        return bool(kb_pdf.soffice() if probe == "soffice" else kb_pdf.tesseract())
     return bool(shutil.which(probe))
 
 
@@ -205,8 +210,12 @@ def install_system(names):
                 f"unavailable: brew failed ({err})"
         else:
             how = "apt-get without root/sudo" if apt else "no apt-get or Homebrew"
-            out[n] = f"unavailable: {how} — install by hand: " + (
-                f"apt-get install -y {' '.join(SYSTEM[n][1])}" if SYSTEM[n][1] else "")
+            if os.name == "nt":
+                hand = (f"winget install --id {WINGET[n]} -e" if n in WINGET
+                        else "download Carlito (fonts.google.com/specimen/Carlito) and install it")
+            else:
+                hand = f"apt-get install -y {' '.join(SYSTEM[n][1])}" if SYSTEM[n][1] else ""
+            out[n] = f"unavailable: {how} — install by hand: {hand}"
     return out
 
 
@@ -416,4 +425,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())
