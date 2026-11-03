@@ -153,6 +153,15 @@ class NoteTests(unittest.TestCase):
                             "\\- C0AAAAAAAA1 · #impact-pod\\_meg · ts 1730.1 · M1-1, ORC-7\\\n")}
         self.assertEqual([e["ticket"] for e in pm.parse_log_note(note)], ["M1-1", "ORC-7"])
 
+    def test_mem_shaped_log_note_with_pod_post_link(self):
+        url = "https://medtrics.slack.com/archives/C0AAAAAAAA1/p17301?thread\\_ts=1730.1"
+        note = {"content": ("Pod notify: 2026-10-20 · /pod-notify\n\n"
+                            "- C0AAAAAAAA1 · #impact-pod\\_meg · ts 1730.1 · M1-1, ORC-7\n"
+                            f"  - Pod post: [{url}]({url})\n")}
+        entries = pm.parse_log_note(note)
+        self.assertEqual([(e["channel_id"], e["ticket"]) for e in entries],
+                         [("C0AAAAAAAA1", "M1-1"), ("C0AAAAAAAA1", "ORC-7")])
+
     def test_heading_template_recognized(self):
         self.assertEqual(pm._title({"content": "# " + pm.render_template()}), pm.TEMPLATE_TITLE)
 
@@ -491,7 +500,7 @@ class PreviewMarkLogTests(unittest.TestCase):
                                    "--kind", "reply", "--file", "x"])
         self.assertEqual(code, 1)   # reply before root
         _run(["mark", "--plan", self.plan, "--channel-id", "C0AAAAAAAA1",
-              "--kind", "root", "--ts", "1730.1"])
+              "--kind", "root", "--ts", "1730.1", "--permalink", "https://x.slack.com/archives/C0AAAAAAAA1/p17301"])
         code, result, _, _ = _run(["mark", "--plan", self.plan, "--channel-id", "C0AAAAAAAA1",
                                    "--kind", "reply", "--file", meg["reply_files"][0]])
         self.assertEqual(result["status"], "posted")
@@ -504,6 +513,7 @@ class PreviewMarkLogTests(unittest.TestCase):
         self.assertEqual(len(writes), 1)
         content = writes[0]["content"]
         self.assertTrue(content.startswith("Pod notify: 2026-10-29 · /release-slack"))
+        self.assertIn("  - Pod post: https://x.slack.com/archives/C0AAAAAAAA1/p17301\n", content)
         entries = pm.parse_log_note({"content": content})
         self.assertEqual([(e["channel_id"], e["ticket"]) for e in entries],
                          [("C0AAAAAAAA1", "M1-60")])

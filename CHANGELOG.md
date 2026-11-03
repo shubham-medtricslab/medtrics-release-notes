@@ -27,7 +27,8 @@ its clients. Before, only `#dream-team` / `#pod-oracle` got the release post.
 - **Pod map in Mem**: the "Release Notes Pod Map" collection
   (`MEM_POD_MAP_COLLECTION`), with one hand-edited note per pod (`Pod: #channel`,
   `Channel ID`, exact Optimus client names). Each pod-notify run adds one
-  pod-log note, so a ticket is announced to a pod once.
+  pod-log note with each pod's ticket ids and a link to its pod post, so a
+  ticket is announced to a pod once.
 - **`/release-note-setup pod`**: creates the collection and a template note,
   adds each client's Optimus id to the pod notes (so a rename in Optimus doesn't
   break the map), and checks every pod channel.

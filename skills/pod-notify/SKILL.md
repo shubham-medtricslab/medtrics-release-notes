@@ -37,7 +37,7 @@ One collection, named by `MEM_POD_MAP_COLLECTION` in `.env` (default `Release No
   ```
 
   Client names are **exactly as Optimus spells them** (look-alikes are different clients: VinUniversity GME vs VinUniversity Medicine and Nursing, UCC vs UCCPA). `/release-note-setup pod` adds each client's Optimus id in `[…]`, so a later rename in Optimus does not break the match; a name without an id still matches by name (case, `&`/`and` and punctuation ignored). The **Channel ID** is what posts go to; the title's name is for people. A client may sit in two pods (both get its tickets — shown as a warning). A note without a valid channel id is skipped with a warning; the `Pod template (copy me)` note is never read as a pod.
-- **Pod-log notes** — written by this skill, one per run that posted. Title `Pod notify: {date} · {source}`, one line per pod: `- <channel id> · #<name> · ts <root ts> · <ticket ids>`. The next run skips any (channel, ticket) pair already logged, so a ticket is announced to a pod once.
+- **Pod-log notes** — written by this skill, one per run that posted. Title `Pod notify: {date} · {source}`, one line per pod: `- <channel id> · #<name> · ts <root ts> · <ticket ids>`, with the pod's root message link under it (`  - Pod post: <permalink>`). The next run skips any (channel, ticket) pair already logged, so a ticket is announced to a pod once.
 
 ## Which clients a ticket has
 
@@ -115,7 +115,7 @@ Send to <R> pod(s)?  (<B> blocked)
 
 Pod by pod, in table order, for each pod with status `ready`:
 
-1. Root: `python3 $P/slack_upload.py --channel <channel_id> --message-file <root_file>`. On `ok: true`, record it: `python3 $P/pod_map.py mark --plan /tmp/pod_notify/plan.json --channel-id <channel_id> --kind root --ts <ts>`.
+1. Root: `python3 $P/slack_upload.py --channel <channel_id> --message-file <root_file>`. On `ok: true`, fetch its link with `python3 $P/slack_upload.py --channel <channel_id> --get-permalink --ts <ts>` and record both: `python3 $P/pod_map.py mark --plan /tmp/pod_notify/plan.json --channel-id <channel_id> --kind root --ts <ts> --permalink <permalink>`. If the link fetch fails, mark without `--permalink` — the post stands and the log keeps the ts.
 2. Each reply in order: `python3 $P/slack_upload.py --channel <channel_id> --message-file <reply_file> --thread-ts <root ts>`, then `pod_map.py mark … --kind reply --file <reply_file>`.
 3. **As soon as the pod is done** — every reply posted, or stopped partway — write its pod-log note at once (step 6 with `--channel-id <channel_id>`), so a crash later in the run can never cause a second announcement to this pod.
 4. A failed post stops **that pod** (log what did post, as in 3) and moves on to the next. If the error says the outcome is unverified ("verify in channel"), say `Pods: check <#name> before re-running — the post may or may not have landed.` A `not_in_channel` error means the bot needs an invite. Never retry a post automatically and never post a second root to a pod.

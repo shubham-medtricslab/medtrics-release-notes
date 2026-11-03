@@ -64,6 +64,7 @@ Pod-log note:
     **Release post:** <permalink or —>
 
     - C06U322U0F4 · #impact-pod_chris · ts 1730000000.000100 · M1-1605, M1-1550
+      - Pod post: <permalink of the pod's root message>
 
 Every subcommand prints a machine-readable block on every exit path:
 
@@ -910,6 +911,8 @@ def cmd_mark(args):
         if pod.get("root_ts") and pod["root_ts"] != args.ts:
             raise ValueError(f"{pod['channel_name']} already has root ts {pod['root_ts']}")
         pod["root_ts"] = args.ts
+        if args.permalink:
+            pod["root_permalink"] = args.permalink
     else:
         if not pod.get("root_ts"):
             raise ValueError("mark the root post before its replies")
@@ -949,6 +952,8 @@ def render_log_note(plan, channel_id=""):
         entries += 1
         lines.append(f"- {pod['channel_id']} · {pod['channel_name']} · ts {pod['root_ts']}"
                      f" · {', '.join(sent)}")
+        if pod.get("root_permalink"):
+            lines.append(f"  - Pod post: {pod['root_permalink']}")
     return "\n".join(lines) + "\n", entries
 
 
@@ -1078,6 +1083,8 @@ def main():
     p.add_argument("--kind", choices=["root", "reply"], required=True)
     p.add_argument("--ts", default="")
     p.add_argument("--file", default="", help="Reply file that was posted")
+    p.add_argument("--permalink", default="",
+                   help="Root post's Slack permalink (with --kind root), kept in the pod log")
 
     p = sub.add_parser("log", help="Emit the pod-log note write")
     p.add_argument("--plan", required=True)
