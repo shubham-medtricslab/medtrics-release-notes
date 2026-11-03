@@ -278,6 +278,19 @@ class Inputs(unittest.TestCase):
         self.assertNotIn("Friday, March 15th", labels)
         self.assertNotIn("Friday, March 15th", I.build_input(issue("M1-2", description=desc))["labels"])
 
+    def test_checklist_labels_read_double_quotes(self):
+        # M1-1520's checklist names its controls in double quotes, not backticks.
+        cl = ('1. Verify\n   Action: Open Curriculum > Setup > Migrate Curriculum tab. Check and uncheck '
+              '"Session Schedules".\n   Expected: The child checkbox "Not An Action Line" appears.\n'
+              '2. Default\n   Action: Select "Session Schedules" but do NOT check '
+              '"Set migrated sessions to Unpublished". Re-run with "keep academic year data".\n')
+        i = issue("M1-1520", description='Near the "Session Dates" sub-panel.')
+        i["qa_checklist"] = {"text": cl, "source": "mr_attachment"}
+        self.assertEqual(I.checklist_labels(i), ["Session Schedules",
+                                                 "Set migrated sessions to Unpublished"])
+        self.assertEqual(I.build_input(i)["labels"][:2],
+                         ["Session Schedules", "Set migrated sessions to Unpublished"])
+
     def test_email_template_strings_are_not_labels(self):
         diffs = [("src/templates/emails/session_updated.html", "+<h1>Important Update</h1>"),
                  ("src/apps/curriculum/templates/curriculum/notification/new_session_email.html",

@@ -48,6 +48,11 @@ class Convert(unittest.TestCase):
             prof = [c for c in cmd if c.startswith("-env:UserInstallation=")][0]
             self.assertTrue(prof.split("=", 1)[1].startswith("file://" + str(tmp)))
 
+    def test_profile_is_a_real_file_url_on_windows(self):
+        from pathlib import PureWindowsPath
+        self.assertEqual(P.profile_url(PureWindowsPath(r"C:\Users\L\AppData\Local\Temp\kb-pdf-x\profile")),
+                         "file:///C:/Users/L/AppData/Local/Temp/kb-pdf-x/profile")
+
     def test_missing_pdf_is_reported_by_absence_and_temp_removed(self):
         seen = []
 

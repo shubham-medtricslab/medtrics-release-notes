@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-11-03
+
+More fixes from the Windows retry of `/kb-articles M1-1520` (run kb-20261103-2055).
+
+### Fixed
+- **Windows: PDF step still failed once LibreOffice was found.** The temp
+  profile was passed as `file://C:\...`, which soffice rejects; it is now a
+  real file URL (`file:///C:/...`).
+- **Labels in a QA checklist written in double quotes were ignored.** Only
+  backticked names were read, so M1-1520 fell back to "Session Dates" from the
+  ticket text. Double-quoted names in the UI-path line and step Actions now
+  count too ("Session Schedules", "Set migrated sessions to Unpublished").
+
 ## [0.22.1] - 2026-11-03
 
 Fixes from a Windows run of `/kb-articles M1-1520`.

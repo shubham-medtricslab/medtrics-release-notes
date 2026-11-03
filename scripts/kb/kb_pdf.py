@@ -106,7 +106,7 @@ def convert(docx_paths, out_dir, timeout=600):
         made = work / "out"
         made.mkdir()
         profile = work / "profile"
-        cmd = [exe, f"-env:UserInstallation=file://{profile}", "--headless",
+        cmd = [exe, f"-env:UserInstallation={profile_url(profile)}", "--headless",
                "--convert-to", "pdf", "--outdir", str(made), *map(str, sources)]
         subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
         result = []
@@ -119,6 +119,12 @@ def convert(docx_paths, out_dir, timeout=600):
         return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def profile_url(profile):
+    """LibreOffice's -env:UserInstallation wants a real file URL: "file://" +
+    the path is file://C:\\... on Windows, which soffice rejects (exit 1)."""
+    return profile.as_uri()
 
 
 def expected_strings(spec):
