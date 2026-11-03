@@ -1,6 +1,6 @@
 ---
 name: pod-notify
-description: Tell each client pod (a Slack channel) which tickets in a release concern its clients — one root post per pod plus one thread reply per ticket. Clients come from the Optimus client links on each ticket; the pod map is ONE hand-edited Mem collection ("Release Notes Pod Map", one note per pod). Runs after the main post and the archive in `/release-slack tickets …` and `/oracle-release tickets …` (skipped with `--no-pod`), and stand-alone as `/pod-notify <ids>` for releases announced by hand. One preview gate for every pod; a pod failure never fails the release.
+description: Tell each client pod (a Slack channel) which tickets in a release concern its clients — one root post per pod plus one thread reply per ticket. Clients come from the Optimus client links on each ticket; the pod map is ONE hand-edited Mem collection ("Release Notes Pod Map", one note per pod). Runs after the main post and the archive in `/release-slack tickets …` and `/oracle-release tickets …` (skipped with `--no-pod`), and stand-alone as `/pod-notify` with ticket ids for releases announced by hand. One preview gate for every pod; a pod failure never fails the release.
 ---
 
 # Pod notify

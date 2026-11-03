@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import re
 import os
 import sys
 import zipfile
@@ -178,6 +179,17 @@ def _verify_bundle(plugin_path: Path) -> None:
                          "hooks/hooks.json", "hooks/kb_guard.py"):
             if required not in names:
                 raise BuildError(f"BUILD FAILED: bundle is missing {required}")
+        # The upload validator rejects a skill/agent/command description with an
+        # XML-like tag ("/pod-notify <ids>" failed it).
+        for entry in sorted(names):
+            if entry.endswith(".md") and entry.split("/", 1)[0] in ("skills", "agents", "commands"):
+                head = zf.read(entry).decode("utf-8", "replace")
+                if head.startswith("---"):
+                    front = head.split("---", 2)[1] if head.count("---") >= 2 else ""
+                    desc = re.search(r"^description:(.*(?:\n[ \t]+.*)*)", front, re.M)
+                    if desc and re.search(r"</?[A-Za-z][^>]*>", desc.group(1)):
+                        raise BuildError(
+                            f"BUILD FAILED: {entry} description contains an XML-like tag")
         # plugin.json must be present and parseable
         if required_file not in names:
             raise BuildError(f"BUILD FAILED: bundle is missing {required_file}")
