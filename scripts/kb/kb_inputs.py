@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parent / "release"))
 import release_archive as RA            # noqa: E402  (summaries block parser)
 
 CAP = 4000

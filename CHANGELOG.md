@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Folder layout.** The release scripts moved to `scripts/release/` (the KB
+  scripts stay in `scripts/kb/`; `scripts/utf8_mode.py` is shared). Commands
+  and skills call the new paths; `/pod-notify` and the setup's pod part set
+  `P=${CLAUDE_PLUGIN_ROOT}/scripts/release`.
+- The bundler moved to `tools/build_plugin.py` and writes to `dist/`. The
+  feature plans moved to `docs/plans/`, the runbook and handoff PDFs to
+  `docs/guides/`. Tests are split into `tests/release/`, `tests/kb/` and
+  `tests/tools/`; run them with `python3 -m unittest discover -s tests -t tests`.
+
+### Fixed
+- **Bundles shipped local run data.** A build made in a folder that had run
+  `/kb-articles` carried its `.kb-runs/` and `.medtrics-release-notes/config.json`.
+  Both are now left out, and the build fails if either gets in.
+
 ## [0.22.3] - 2026-11-03
 
 Fixes from run kb-20261103-2319 of `/kb-articles M1-1520`.

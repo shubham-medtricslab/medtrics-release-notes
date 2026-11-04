@@ -34,7 +34,7 @@ Missing keys → list them and stop before any call. The **Mem MCP must be conne
 
 ## Flow
 
-`P=${CLAUDE_PLUGIN_ROOT}/scripts`; today's date via `date +%Y-%m-%d`; `mkdir -p /tmp/pod_notify`.
+`P=${CLAUDE_PLUGIN_ROOT}/scripts/release`; today's date via `date +%Y-%m-%d`; `mkdir -p /tmp/pod_notify`.
 
 **`resume`:** run the `pod-notify` skill's step 1 (the collection id the log needs), then its step 5 Resume, then step 7.
 

@@ -50,22 +50,22 @@ Run the shared data gathering script with `--filter-integration` to only include
 
 **Status mode (default):**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py status --output /tmp/integration_notes_data.json --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py status --output /tmp/integration_notes_data.json --include-description --filter-integration
 ```
 
 **Tickets mode:**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets M1-583,GEN-128592,M1-848 --output /tmp/integration_notes_data.json --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py tickets M1-583,GEN-128592,M1-848 --output /tmp/integration_notes_data.json --include-description --filter-integration
 ```
 
 **MR mode:**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py mr <iid> --output /tmp/integration_notes_data.json --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py mr <iid> --output /tmp/integration_notes_data.json --include-description --filter-integration
 ```
 
 **Dry-run** (append `--dry-run` to any of the above):
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets M1-583,GEN-128592 --dry-run --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py tickets M1-583,GEN-128592 --dry-run --include-description --filter-integration
 ```
 
 If `dry-run`, display the script's summary output and stop. Do not proceed to Step 2.
@@ -161,7 +161,7 @@ INSTRUCTIONS_EOF
 
 **Run the prompt preparation script:**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prepare_note_prompts.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/prepare_note_prompts.py \
     --data /tmp/integration_notes_data.json \
     --instructions /tmp/in_instructions.txt \
     --prefix in \

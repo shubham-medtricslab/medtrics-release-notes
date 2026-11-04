@@ -33,7 +33,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parent / "release"))
 import gather_notes_data_optimus as G   # noqa: E402  (load_env, gitlab_api)
 
 CAP = 40 * 1024

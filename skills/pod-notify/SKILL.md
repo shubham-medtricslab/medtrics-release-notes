@@ -7,7 +7,7 @@ description: Tell each client pod (a Slack channel) which tickets in a release c
 
 Pods miss which released tickets concern their clients: the release post goes to `#dream-team` / `#pod-oracle` only. This skill sends each pod its own short thread: a root post ("Shipped for your clients — {date}") and one card per ticket, carrying only what the pod needs and nothing that belongs to another client.
 
-All routing, rendering, dedup and log writing is `scripts/pod_map.py` — never hand-compose a pod message or a pod-map note. Mem is reached through the Mem MCP, Slack only through `scripts/slack_upload.py` (never the Slack MCP).
+All routing, rendering, dedup and log writing is `scripts/release/pod_map.py` — never hand-compose a pod message or a pod-map note. Mem is reached through the Mem MCP, Slack only through `scripts/release/slack_upload.py` (never the Slack MCP).
 
 ## When it runs
 
@@ -19,7 +19,7 @@ All routing, rendering, dedup and log writing is `scripts/pod_map.py` — never 
 
 It does **not** run in `status` or `mr` mode (those tickets are not shipped yet, or have no Optimus ticket), or when the user passed `--no-pod`. In `dry-run` it prints the routing table only (below). Nothing in it can surface as a release failure: any failure is one line in chat and the command finishes.
 
-Below, `{data}` and `{summaries}` are the caller's files, `{source}` is the command (`/release-slack`, `/oracle-release`, `/pod-notify`), `{date}` is the date in the release header, `{link}` is the main post's permalink when the caller has one (Step 9b / 11b fetched it), and `P=${CLAUDE_PLUGIN_ROOT}/scripts`.
+Below, `{data}` and `{summaries}` are the caller's files, `{source}` is the command (`/release-slack`, `/oracle-release`, `/pod-notify`), `{date}` is the date in the release header, `{link}` is the main post's permalink when the caller has one (Step 9b / 11b fetched it), and `P=${CLAUDE_PLUGIN_ROOT}/scripts/release`.
 
 ## The pod map (Mem)
 
@@ -66,7 +66,7 @@ Never the internal summary, developer mentions, MR/PR links or another pod's cli
 ### 1 — Find the collection
 
 1. `python3 $P/pod_map.py collection` → the collection name.
-2. If `.medtrics-release-notes/config.json` (`python3 $P/kb/kb_paths.py config`) holds `mem.pod_map`, confirm it with `get_collection`; else, or if that fails, resolve by name exactly as the `release-archive` skill does: paginated `list_collections` following `next_page`, case-insensitive exact title, prefer exact case then the oldest `created_at`; several still tied → stop with every candidate id. Never `search_collections`.
+2. If `.medtrics-release-notes/config.json` (`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_paths.py config`) holds `mem.pod_map`, confirm it with `get_collection`; else, or if that fails, resolve by name exactly as the `release-archive` skill does: paginated `list_collections` following `next_page`, case-insensitive exact title, prefer exact case then the oldest `created_at`; several still tied → stop with every candidate id. Never `search_collections`.
 3. **Never create it here** — only `/release-note-setup pod` does. None found → print `Pods: no pod map in Mem — run /release-note-setup pod, then /pod-notify <ids>.` and finish.
 
 ### 2 — Read it and route

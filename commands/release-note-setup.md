@@ -123,7 +123,7 @@ plus the Mem collection tools (`list_collections`, `create_collection`).
 
 ## Part — `pod` (pod map)
 
-`P=${CLAUDE_PLUGIN_ROOT}/scripts`; `K=$P/kb`; `mkdir -p /tmp/pod_notify`. The `pod-notify`
+`P=${CLAUDE_PLUGIN_ROOT}/scripts/release`; `K=${CLAUDE_PLUGIN_ROOT}/scripts/kb`; `mkdir -p /tmp/pod_notify`. The `pod-notify`
 skill describes the map; this part only prepares it. The team writes the pod
 notes — nothing in Optimus, Mem or Slack says which clients belong to which pod.
 

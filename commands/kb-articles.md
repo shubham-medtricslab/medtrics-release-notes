@@ -80,7 +80,7 @@ Adds tickets to the KB Queue and stops — no capture, no agents, no files. It
 needs only Optimus (no GitLab) and Mem:
 
 1. Mem probe and the queue + ledger collections, as in Step 0 (no setup step).
-2. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids> --task-types feature,critical_feature --no-mrs --output $RUN/data.json`
+2. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py tickets <ids> --task-types feature,critical_feature --no-mrs --output $RUN/data.json`
 3. `python3 $K/kb_ledger.py enqueue --data $RUN/data.json --source manual --date $TODAY --ids <ids> --ledger-notes $RUN/ledger_notes.json --queue-notes $RUN/queue_notes.json --out $RUN/queue_writes.json`
 4. Perform the `create_note` writes (kb-ledger skill), then show the table the
    script printed — one row per id: queued, already queued, or why not (not a
@@ -256,7 +256,7 @@ cp /tmp/release_slack_summaries.txt $RUN/summaries.txt
 Otherwise:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <ids> \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py tickets <ids> \
     --include-description --task-types feature,critical_feature --output $RUN/data.json
 ```
 

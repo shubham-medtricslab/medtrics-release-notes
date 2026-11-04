@@ -63,7 +63,7 @@ A missing key aborts the command before any gather call.
 ### Step 1 — Gather data
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py status --output /tmp/release_notes_data.json --include-description
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py status --output /tmp/release_notes_data.json --include-description
 ```
 
 For `tickets` or `mr` modes, substitute the corresponding subcommand and parameter. For `dry-run`, append `--dry-run` to the gather call, print the summary, and stop.
@@ -134,7 +134,7 @@ INSTRUCTIONS_EOF
 #### 2b. Prepare prompt files
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prepare_note_prompts.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/prepare_note_prompts.py \
     --data /tmp/release_notes_data.json \
     --instructions /tmp/rn_instructions.txt \
     --prefix rn \
@@ -206,7 +206,7 @@ The copy-audit and storyteller skills are deliberately decoupled: the storytelle
 ### Step 5 — Validate via the ip-guard
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ip_guard.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/ip_guard.py \
     --input .claude/outputs/notes/deploy/release-notes-<YYYY-MM-DD>.md \
     --json-out /tmp/ip_guard_result.json
 guard_exit=$?

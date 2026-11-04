@@ -41,7 +41,7 @@ It also surfaces (as warnings, not blocks) two adjacent classes:
 Run the bundled script with the markdown path:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ip_guard.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/ip_guard.py \
     --input .claude/outputs/notes/deploy/release-notes-<YYYY-MM-DD>.md \
     --json-out /tmp/ip_guard_result.json
 ```
@@ -137,7 +137,7 @@ Categories and their rationale:
 
 If a legitimately customer-facing term is being false-flagged, add it to a session-scoped `--allow` file rather than removing the pattern from the script. The pattern set is shared across releases; the allow file is per-release. This keeps the conservative default intact for the next deploy.
 
-If a new vendor or framework name needs to be added to the block list, edit `scripts/ip_guard.py` directly and bump the plugin version. New blocks are not backward-compatible — they may surface as violations on previously-published notes if re-scanned, which is expected.
+If a new vendor or framework name needs to be added to the block list, edit `scripts/release/ip_guard.py` directly and bump the plugin version. New blocks are not backward-compatible — they may surface as violations on previously-published notes if re-scanned, which is expected.
 
 ## Known limits
 
@@ -155,6 +155,6 @@ When the Guard fails inside the release-slack flow, the orchestrator should:
 4. Re-run the Guard.
 5. Loop up to 3 times.
 6. If still failing, stop and surface the residual violations to the user. Show the failing lines, the suggested rewrites, and the path to the draft markdown so the user can edit by hand.
-7. After a manual edit, the user can rerun the Guard alone (`python3 scripts/ip_guard.py --input ...`) before re-entering the release-slack flow at the message-composition step.
+7. After a manual edit, the user can rerun the Guard alone (`python3 scripts/release/ip_guard.py --input ...`) before re-entering the release-slack flow at the message-composition step.
 
 Three iterations is the cap because a fourth almost always indicates a deeper problem in the upstream data (e.g., a customer name baked into a ticket title that the Storyteller cannot abstract without changing meaning).

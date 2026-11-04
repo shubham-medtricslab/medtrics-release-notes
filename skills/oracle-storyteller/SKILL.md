@@ -12,7 +12,7 @@ The Oracle Storyteller takes the per-ticket dual-register summary blocks produce
 - **Dual register in one post.** Unlike `storyteller` (client-only) and `internal-storyteller` (internal-only), this skill produces BOTH registers: a guarded client block AND an unguarded internal block, delivered as one message.
 - **Three header emoji are allowed** in the composed message: `:rocket:` `:clipboard:` `:lock:`. (`internal-storyteller` allows only a single `:rocket:`.) All three live in the assembled root, placed by `assemble_oracle_root.py` — the files this skill writes contain **no emoji**.
 - **No `Clients to notify:` line.** The internal-storyteller root ends with one; the Oracle post never carries it. The upstream blocks have no CLIENTS field and this skill must not invent one.
-- **The root is NOT written by this skill.** The orchestrator runs `scripts/assemble_oracle_root.py`, which embeds the guarded client-section file verbatim by construction. This skill writes only the section files and the reply files below.
+- **The root is NOT written by this skill.** The orchestrator runs `scripts/release/assemble_oracle_root.py`, which embeds the guarded client-section file verbatim by construction. This skill writes only the section files and the reply files below.
 - **GitHub PRs, not GitLab MRs.** PR links are GitHub `html_url`s. Raw PR URLs in technical replies are deliberate and lint-legal; the labeled `<url|PR#n>` form is used only on internal index lines.
 
 ## Audience
@@ -156,8 +156,8 @@ The orchestrator detects the sentinel and skips the assembler, the guard, and th
 
 ## What this skill does not do
 
-- Does not write the root post — `scripts/assemble_oracle_root.py` builds it from the client-section and internal-section files, so the guarded client text lands in the message verbatim by construction.
-- Does not post to Slack — `scripts/slack_upload.py`, invoked by `/oracle-release`, posts the root first, then each reply with `--thread-ts`.
+- Does not write the root post — `scripts/release/assemble_oracle_root.py` builds it from the client-section and internal-section files, so the guarded client text lands in the message verbatim by construction.
+- Does not post to Slack — `scripts/release/slack_upload.py`, invoked by `/oracle-release`, posts the root first, then each reply with `--thread-ts`.
 - Does not run the IP guard or the lint gate — `/oracle-release` runs `ip_guard.py` over the client files and `slack_lint.py` over the root and every reply after composition.
 - Does not resolve Slack user IDs — the orchestrator resolves `DEVELOPER_SLACK_ID` before invoking this skill; empty means plain-name fallback.
 - Does not call GitHub, Optimus, or any external system, and does not read raw diffs.

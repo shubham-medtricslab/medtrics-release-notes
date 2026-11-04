@@ -34,7 +34,7 @@ If any of this fails, treat Mem as not connected for the rest of the run.
 
 ## Note schema
 
-One note per ticket. The first line is the Mem title. Rendered and parsed by `scripts/pr_overrides.py` — never hand-compose it in the command.
+One note per ticket. The first line is the Mem title. Rendered and parsed by `scripts/release/pr_overrides.py` — never hand-compose it in the command.
 
 ```
 PR Override: ORC-232
@@ -65,7 +65,7 @@ Runs before the gather, only when Mem is connected and the collection id is know
 Optional, for the preview or when the user asks what is stored:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pr_overrides.py show --notes /tmp/oracle_pr_overrides.json
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/pr_overrides.py show --notes /tmp/oracle_pr_overrides.json
 ```
 
 If Mem is not connected, `rm -f /tmp/oracle_pr_overrides.json` so a stale dump from an earlier session is not applied, then run the gather without `--pr-overrides` (or with the flag pointing at a file that does not exist — both mean no overrides).
@@ -77,7 +77,7 @@ The preview's **PR discovery** block lists the tickets that need a human (`flagg
 1. Compute the write:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pr_overrides.py pending \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/pr_overrides.py pending \
        --ticket ORC-232 --pr 415 \
        --notes /tmp/oracle_pr_overrides.json \
        --out /tmp/oracle_pr_overrides_pending.json \

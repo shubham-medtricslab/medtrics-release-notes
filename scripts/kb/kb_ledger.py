@@ -92,7 +92,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))           # scripts/ — reuse the release archive parser
+sys.path.insert(0, str(HERE.parent / "release"))   # reuse the release archive parser
 import release_archive as RA                    # noqa: E402
 sys.path.insert(0, str(HERE))
 import kb_usage as U                            # noqa: E402

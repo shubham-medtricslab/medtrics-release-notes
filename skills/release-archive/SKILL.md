@@ -33,7 +33,7 @@ This skill **deliberately differs** from `dev-directory` (hardcoded title) and `
 | Create-if-missing | If no collection matches the configured name, `create_collection({title: <configured name>, description})` — created under the **exact** name the user set |
 | Owner | The user running the command (Mem is per-user) |
 
-**How the name is read.** There is no generic `.env`→process-env loader in this plugin, so `scripts/release_archive.py` parses `.env` at CWD itself for `MEM_RELEASE_ARCHIVE_COLLECTION`, with a process-environment value taking precedence (the same pattern as `pr_overrides.py` reading `GITHUB_REPO`). It never writes to `.env`. `release_archive.py pending` **prints the resolved name on every run**, so the user always sees where notes are going.
+**How the name is read.** There is no generic `.env`→process-env loader in this plugin, so `scripts/release/release_archive.py` parses `.env` at CWD itself for `MEM_RELEASE_ARCHIVE_COLLECTION`, with a process-environment value taking precedence (the same pattern as `pr_overrides.py` reading `GITHUB_REPO`). It never writes to `.env`. `release_archive.py pending` **prints the resolved name on every run**, so the user always sees where notes are going.
 
 **Resolution, once per run — deterministic, via paginated `list_collections`.** Do NOT use `search_collections` for this: it is relevance-ranked and bounded, and is not guaranteed to return an exact title match for a generic name.
 
@@ -60,7 +60,7 @@ The collection is shared across both products — `M1-`/`GEN-` vs `ORC-` prefixe
 
 ## Note schema
 
-One note per release session. The first line is the Mem title. Rendered by `scripts/release_archive.py record` — never hand-compose it in the command.
+One note per release session. The first line is the Mem title. Rendered by `scripts/release/release_archive.py record` — never hand-compose it in the command.
 
 ```
 Release: 2026-09-02 · oracle · #pod-oracle
@@ -133,7 +133,7 @@ The notes are private to the user's Mem workspace, the same audience as the inte
 2. **Permalink** — one Slack read, reusing `slack_upload.py`'s token resolution (`os.environ` → `.env`) and its read-retry (429/5xx) path; needs no scope beyond the bot token:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_upload.py --get-permalink \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_upload.py --get-permalink \
        --channel <channel id> --ts <ts>
    ```
 
@@ -141,7 +141,7 @@ The notes are private to the user's Mem workspace, the same audience as the inte
 3. **Render the note** — deterministic, never hand-composed:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release_archive.py record \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py record \
        --summaries {summaries} --data {data} \
        --root-file {root} --reply-files {reply_01} {reply_02} ... \
        --product {medtrics|oracle} --date <same value as the Slack header> \

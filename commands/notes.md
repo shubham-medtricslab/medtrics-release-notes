@@ -48,20 +48,20 @@ Run the shared data gathering script **once** with `--include-description` (all 
 
 **Status mode:**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py status --output /tmp/release_notes_data.json --include-description
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py status --output /tmp/integration_notes_data.json --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py status --output /tmp/release_notes_data.json --include-description
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py status --output /tmp/integration_notes_data.json --include-description --filter-integration
 ```
 
 **Tickets mode:**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <id1,id2,...> --output /tmp/release_notes_data.json --include-description
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py tickets <id1,id2,...> --output /tmp/integration_notes_data.json --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py tickets <id1,id2,...> --output /tmp/release_notes_data.json --include-description
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py tickets <id1,id2,...> --output /tmp/integration_notes_data.json --include-description --filter-integration
 ```
 
 **MR mode:**
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py mr <iid> --output /tmp/release_notes_data.json --include-description
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_optimus.py mr <iid> --output /tmp/integration_notes_data.json --include-description --filter-integration
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py mr <iid> --output /tmp/release_notes_data.json --include-description
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_optimus.py mr <iid> --output /tmp/integration_notes_data.json --include-description --filter-integration
 ```
 
 If `dry-run`, add `--dry-run` to the first command. Display the summary output and stop. Do not proceed further.
@@ -124,13 +124,13 @@ INSTRUCTIONS_EOF
 #### 2b. Run the prompt preparation script for both types
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prepare_note_prompts.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/prepare_note_prompts.py \
     --data /tmp/release_notes_data.json \
     --instructions /tmp/rn_instructions.txt \
     --prefix rn \
     --output-manifest /tmp/rn_manifest.json
 
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prepare_note_prompts.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/prepare_note_prompts.py \
     --data /tmp/integration_notes_data.json \
     --instructions /tmp/in_instructions.txt \
     --prefix in \
@@ -197,7 +197,7 @@ Write each file using the Write tool:
 **IP guard over the deploy markdown (orchestrator-run).** The deploy notes are customer-facing, so — exactly as the standalone `/deploy-notes` does at its Step 5 — run the guard over the written deploy file (the sub-agent could not, because `/notes` agents are barred from Bash):
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ip_guard.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/ip_guard.py \
     --input .claude/outputs/notes/deploy/deploy-notes-<suffix>.md \
     --json-out /tmp/notes_ip_guard.json
 guard_exit=$?

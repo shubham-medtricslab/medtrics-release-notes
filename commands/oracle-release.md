@@ -123,13 +123,13 @@ If Mem is not connected, or any of these calls fails, print `PR overrides: Mem n
 For `tickets <id1,id2,...>` (primary mode):
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_oracle.py tickets <id1,id2,...> --output /tmp/oracle_notes_data.json --include-description --pr-overrides /tmp/oracle_pr_overrides.json
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_oracle.py tickets <id1,id2,...> --output /tmp/oracle_notes_data.json --include-description --pr-overrides /tmp/oracle_pr_overrides.json
 ```
 
 For `status` (all Oracle tickets in the same five deploy lanes as the classic track — QA1, QA2, Code Review, Needs Changes, Pipeline Issues — filtered with `product=oracle`):
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/gather_notes_data_oracle.py status --output /tmp/oracle_notes_data.json --include-description --pr-overrides /tmp/oracle_pr_overrides.json
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/gather_notes_data_oracle.py status --output /tmp/oracle_notes_data.json --include-description --pr-overrides /tmp/oracle_pr_overrides.json
 ```
 
 For `dry-run`: append `--dry-run` to the call, show the printed discovery table (identifier, PRs, decision, title) plus its sweep/decision summary lines, and exit before any analyzer or Slack call.
@@ -174,7 +174,7 @@ Dev attribution's source for Oracle is the **GitHub PR author**. Step 2's gather
 **3a — Mem developer directory prefill (optional).** If the Mem MCP tools are available in this session, locate (or create) the single collection `Release Notes Developer Directory`, `list_notes` it with content (page through `next_page`), save the merged `{"notes": [...]}` response verbatim to `/tmp/oracle_release_dev_directory.json`, and run:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dev_directory.py prefill \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py prefill \
     --data /tmp/oracle_notes_data.json --notes /tmp/oracle_release_dev_directory.json
 ```
 
@@ -183,13 +183,13 @@ This writes `assignee_slack_id` + `assignee_slack_resolved_via: "mem"` onto ever
 **3b — Slack resolver for the rest.** Run the resolver to fill `assignee_slack_id` on each still-unresolved issue (issues pre-filled in 3a are skipped and counted as `preresolved`):
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_resolve_users.py --data /tmp/oracle_notes_data.json
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_resolve_users.py --data /tmp/oracle_notes_data.json
 ```
 
 **3c — Store new developers in Mem (immediately, before the analyzers).** If Mem is connected and 3b's result block lists any `resolutions`, compute and perform the writes:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dev_directory.py pending \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py pending \
     --data /tmp/oracle_notes_data.json --notes /tmp/oracle_release_dev_directory.json \
     --out /tmp/oracle_release_dev_directory_pending.json --source /oracle-release
 ```
@@ -313,7 +313,7 @@ echo "CODEBASE CONTEXT: a local checkout of the Oracle codebase is at <ORACLE_RE
 #### 5b. Prepare prompt files
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/prepare_note_prompts.py \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/prepare_note_prompts.py \
     --data /tmp/oracle_notes_data.json \
     --instructions /tmp/oracle_rn_instructions.txt \
     --prefix orc \
@@ -351,7 +351,7 @@ The `CLIENT_TITLE` headlines and `For clients` paragraphs are the only client-po
 
 ```bash
 grep -E '^(CLIENT_TITLE|EXEC_SUMMARY):' /tmp/oracle_notes_summaries.txt > /tmp/oracle_exec_ledes.txt
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/ip_guard.py --input /tmp/oracle_exec_ledes.txt \
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/ip_guard.py --input /tmp/oracle_exec_ledes.txt \
     [--customer-list <roster>] --json-out /tmp/oracle_ip_ledes.json
 ```
 
@@ -396,8 +396,8 @@ The storyteller does **not** run through a second IP guard — the exec ledes we
 ### Step 9 — Lint gate (mandatory, before preview)
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_lint.py --input /tmp/oracle_release_root.txt --kind root
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_lint.py --input /tmp/oracle_release_reply_01.txt --kind reply
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_lint.py --input /tmp/oracle_release_root.txt --kind root
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_lint.py --input /tmp/oracle_release_reply_01.txt --kind reply
 # ...one call per reply file
 ```
 
@@ -445,7 +445,7 @@ When the user replies with one or more `ORC-NNN → N` lines (`->` and `=` are a
 1. **Compute the write** (deterministic, no network):
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pr_overrides.py pending \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/pr_overrides.py pending \
        --ticket ORC-232 --pr 415 \
        --notes /tmp/oracle_pr_overrides.json \
        --out /tmp/oracle_pr_overrides_pending.json \
@@ -470,7 +470,7 @@ Picks never touch `github.com` from the command — the gather script performs t
 1. Post the root:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_upload.py \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_upload.py \
        --channel "$SLACK_CHANNEL_ORACLE" \
        --message-file /tmp/oracle_release_root.txt
    ```
@@ -480,7 +480,7 @@ Picks never touch `github.com` from the command — the gather script performs t
 3. If `ok` is true, capture `ts` AND the **resolved channel id** from the result block's `channel` field, then post each reply file **in numeric order**, one invocation per reply:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_upload.py \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_upload.py \
        --channel "<resolved channel id from the result block>" \
        --message-file /tmp/oracle_release_reply_01.txt \
        --thread-ts <ts>
@@ -500,11 +500,11 @@ After all posts succeed:
 Runs **after** the confirmation line, exactly as the `release-archive` skill describes. It writes **one Mem note for this release session** into the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`; shared with `/release-slack` — the `ORC-` prefix disambiguates). The note carries the trace header (date, channel, root ts, permalink, the posted ticket list with client-facing titles and code links) **and the posted root plus every thread reply verbatim**. This is the **only** archive of the post — nothing is written to `.claude/outputs/` or anywhere else on disk. The step can never affect the post itself: the post has already succeeded and is authoritative.
 
 0. **Gate — the post is complete.** Run once the root **and every thread reply** have posted — either in this session, or on a **resume run** (the user re-ran only the remaining replies with `--thread-ts <ts>` after a partial failure and the last one has now posted). On a resume run use the `ts` the user passed, the resolved channel id from the reply result blocks, and the same root / reply files from `/tmp`. Never archive while replies are still outstanding.
-1. **Resolve the collection by name.** Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release_archive.py pending` to get the resolved `collection_name` and `collection_description` (the script reads `MEM_RELEASE_ARCHIVE_COLLECTION` from `.env` at CWD, process env overriding; blank → `Release Notes Archive`). Then `list_collections`, following `next_page` until exhausted, and collect every entry whose title matches the name case-insensitively: none → `create_collection({title: <name>, description})` and print `Release archive: created Mem collection "<name>".`; one → use it; several → prefer the exact-case match, then the oldest `created_at`, and if still ambiguous do not write — warn with every candidate id and fall through to step 5. Never use `search_collections` for this and never pass `collection_titles` to `create_note`.
+1. **Resolve the collection by name.** Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py pending` to get the resolved `collection_name` and `collection_description` (the script reads `MEM_RELEASE_ARCHIVE_COLLECTION` from `.env` at CWD, process env overriding; blank → `Release Notes Archive`). Then `list_collections`, following `next_page` until exhausted, and collect every entry whose title matches the name case-insensitively: none → `create_collection({title: <name>, description})` and print `Release archive: created Mem collection "<name>".`; one → use it; several → prefer the exact-case match, then the oldest `created_at`, and if still ambiguous do not write — warn with every candidate id and fall through to step 5. Never use `search_collections` for this and never pass `collection_titles` to `create_note`.
 2. **Permalink** (one Slack read; omit on failure, never construct one):
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_upload.py --get-permalink \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_upload.py --get-permalink \
        --channel <resolved channel id from the result block> --ts <ts>
    ```
 
@@ -512,7 +512,7 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 3. **Render the note** (deterministic — never hand-compose it). `--reply-files` lists **every** posted reply file in numeric order:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release_archive.py record \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py record \
        --summaries /tmp/oracle_notes_summaries.txt \
        --data /tmp/oracle_notes_data.json \
        --root-file /tmp/oracle_release_root.txt \

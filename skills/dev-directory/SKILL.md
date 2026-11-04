@@ -5,7 +5,7 @@ description: Optional Mem-backed developer directory for the release commands �
 
 # Developer Directory (Mem, optional)
 
-Both release commands need a Slack user id per developer so the post can `@`-mention them. Today that comes from `scripts/slack_resolve_users.py` (email → exact name → fuzzy name against the Slack directory) and is thrown away with the temp data file after every run. This skill adds a persistent, per-user **cache** of those answers in Mem so a developer only has to be resolved once, and so a manual correction (editing the note) sticks.
+Both release commands need a Slack user id per developer so the post can `@`-mention them. Today that comes from `scripts/release/slack_resolve_users.py` (email → exact name → fuzzy name against the Slack directory) and is thrown away with the temp data file after every run. This skill adds a persistent, per-user **cache** of those answers in Mem so a developer only has to be resolved once, and so a manual correction (editing the note) sticks.
 
 Mem is a cache, **not** a source of truth and **not** a requirement. The Slack bot token remains the authority; if Mem is not connected, or any Mem call fails, the command proceeds exactly as it did before this skill existed. There are no hard errors anywhere in this flow.
 
@@ -26,7 +26,7 @@ Bootstrap once per run: `search_collections({query: "Release Notes Developer Dir
 
 ## Note schema
 
-One note per developer. The first line is the Mem title. Rendered and parsed by `scripts/dev_directory.py` — never hand-compose it in the command.
+One note per developer. The first line is the Mem title. Rendered and parsed by `scripts/release/dev_directory.py` — never hand-compose it in the command.
 
 ```
 Developer: Chris Tokodi
@@ -56,7 +56,7 @@ Notes in the collection that do not start with `Developer: ` or lack a plausible
 2. Run the deterministic prefill:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dev_directory.py prefill \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py prefill \
        --data {data} --notes /tmp/{prefix}_dev_directory.json
    ```
 
@@ -67,7 +67,7 @@ If Mem is not connected, skip 3a entirely (do not even create the notes file —
 ### 3b — Resolve the rest with the Slack resolver
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/scripts/slack_resolve_users.py --data {data}
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/slack_resolve_users.py --data {data}
 ```
 
 The resolver **skips** every issue that already carries an `assignee_slack_id` (reported as `preresolved` in its result block) and stamps `assignee_slack_resolved_via` (`email` / `name` / `fuzzy` / `""`) on the ones it handles. Its `resolutions` list names every developer it newly resolved. Unchanged otherwise: best-effort, plain-name fallback, never blocks.
@@ -79,7 +79,7 @@ Runs right after 3b, before the analyzers — not after the preview. Skip if Mem
 1. Compute the writes:
 
    ```bash
-   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/dev_directory.py pending \
+   python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py pending \
        --data {data} --notes /tmp/{prefix}_dev_directory.json \
        --out /tmp/{prefix}_dev_directory_pending.json --source /{command}
    ```

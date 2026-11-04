@@ -219,7 +219,7 @@ Pick the ones most directly touched by the tickets in this release. Do not name 
 
 ## Length
 
-Hard caps, enforced by the deterministic lint gate (`scripts/slack_lint.py`) before any preview:
+Hard caps, enforced by the deterministic lint gate (`scripts/release/slack_lint.py`) before any preview:
 
 - Root post: **≤ 2,500 characters** (Slack collapses long messages around ~3,000 — the root must never collapse).
 - Each thread reply: **≤ 3,900 characters** (split at card boundaries when a section runs long).
@@ -249,9 +249,9 @@ Never silently invent a category, title, or developer.
 
 ## What this skill does not do
 
-- Does not post to Slack. That is `scripts/slack_upload.py` invoked by the calling command (`/release-slack` or `/oracle-release`) — root first, then each reply with `--thread-ts`.
-- Does not run the lint gate. The calling command runs `scripts/slack_lint.py` over the root and every reply after composition.
+- Does not post to Slack. That is `scripts/release/slack_upload.py` invoked by the calling command (`/release-slack` or `/oracle-release`) — root first, then each reply with `--thread-ts`.
+- Does not run the lint gate. The calling command runs `scripts/release/slack_lint.py` over the root and every reply after composition.
 - Does not call the IP guard. The internal post is meant to carry internal vocabulary; the guard would refuse it.
 - Does not produce any artifact beyond the root and reply text files. Internal notes are Slack text only.
-- Does not look up Slack user IDs. The calling command resolves `DEVELOPER_SLACK_ID` (optional Mem developer directory via the `dev-directory` skill, then `scripts/slack_resolve_users.py` using the bot token's `users.lookupByEmail` + name-match fallbacks) before invoking this skill; if it is empty, this skill falls back to the plain developer name.
+- Does not look up Slack user IDs. The calling command resolves `DEVELOPER_SLACK_ID` (optional Mem developer directory via the `dev-directory` skill, then `scripts/release/slack_resolve_users.py` using the bot token's `users.lookupByEmail` + name-match fallbacks) before invoking this skill; if it is empty, this skill falls back to the plain developer name.
 - Does not write or rewrite client copy. The `*_For clients:_*` paragraph and the `Clients` value are final when they arrive — the calling command ran the `engineering-to-client` skill over every block before composition.
