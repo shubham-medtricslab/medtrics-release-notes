@@ -54,8 +54,11 @@ def log(msg):
     print(msg, file=sys.stderr)
 
 
-def load_env(env_path=".env"):
-    """Read .env file and return dict of relevant variables."""
+def load_env(env_path=".env", require_gitlab=True):
+    """Read .env file and return dict of relevant variables.
+
+    With require_gitlab=False (an Optimus-only run, --no-mrs) the GitLab keys
+    are optional."""
     env = {}
     if not os.path.exists(env_path):
         log(f"ERROR: {env_path} not found")
@@ -72,7 +75,9 @@ def load_env(env_path=".env"):
                 if key in ("GITLAB_TOKEN", "GITLAB_URL", "GITLAB_PROJECT_ID", "OPTIMUS_API_KEY"):
                     env[key] = value
     env.setdefault("GITLAB_URL", "https://gitlab.com")
-    for required in ("GITLAB_TOKEN", "GITLAB_PROJECT_ID", "OPTIMUS_API_KEY"):
+    required_keys = ("GITLAB_TOKEN", "GITLAB_PROJECT_ID", "OPTIMUS_API_KEY") \
+        if require_gitlab else ("OPTIMUS_API_KEY",)
+    for required in required_keys:
         if required not in env:
             log(f"ERROR: {required} not found in {env_path}")
             sys.exit(1)
@@ -297,8 +302,12 @@ def query_tasks_project(env, project_name):
     })
 
 
-def query_tasks_by_identifiers(env, identifiers):
-    """Query Optimus for tasks matching a list of identifiers (e.g., M1-583, GEN-128592)."""
+def query_tasks_by_identifiers(env, identifiers, exact=False):
+    """Query Optimus for tasks matching a list of identifiers (e.g., M1-583, GEN-128592).
+
+    Without an exact match the first search result is used, unless `exact`
+    (then the id is reported as not found — /pod-notify must never announce a
+    near-miss ticket to a client pod)."""
     all_tasks = []
     for identifier in identifiers:
         log(f"  Querying {identifier}...")
@@ -316,7 +325,10 @@ def query_tasks_by_identifiers(env, identifiers):
                 break
         else:
             # If no exact match, take first result if search returned something
-            if tasks:
+            if tasks and exact:
+                log(f"    WARNING: No exact match for {identifier} (--exact: skipped; "
+                    f"closest was {resolve_identifier(tasks[0])})")
+            elif tasks:
                 all_tasks.append(tasks[0])
                 log(f"    No exact match for {identifier}, using best match: {resolve_identifier(tasks[0])}")
             else:
@@ -335,6 +347,25 @@ def _module_name(task):
     if isinstance(m, dict):
         m = m.get("name") or m.get("title") or ""
     return str(m)
+
+
+def _linked_clients(task):
+    """Optimus client links as [{id, name}]; [] when the task has none.
+
+    The REST payload carries `linked_clients: [{client_id, client_name}]`.
+    Entries without a name are dropped. Kept apart from the `clients` code
+    string that /release-slack Step 4b writes for the analyzer prompts.
+    """
+    out = []
+    for c in task.get("linked_clients") or []:
+        if isinstance(c, dict):
+            name = (c.get("client_name") or c.get("name") or "").strip()
+            cid = str(c.get("client_id") or c.get("id") or "").strip()
+        else:
+            name, cid = str(c).strip(), ""
+        if name:
+            out.append({"id": cid, "name": name})
+    return out
 
 
 def task_to_issue(task, include_description=False):
@@ -389,6 +420,8 @@ def task_to_issue(task, include_description=False):
         "task_type": task.get("product_type") or task.get("type") or task.get("task_type") or "",
         # Product module (additive) — /kb-articles places tickets by it.
         "module": _module_name(task),
+        # Optimus client links (additive) — pod_map.py routes tickets to pods by them.
+        "optimus_clients": _linked_clients(task),
         "mrs": [],
     }
 
@@ -523,7 +556,10 @@ def main():
     parser.add_argument("--filter-integration", action="store_true", help="Filter diffs to integration-relevant files")
     parser.add_argument("--dry-run", action="store_true", help="Print summary and exit")
     parser.add_argument("--no-mrs", action="store_true",
-                        help="Optimus only: skip the GitLab MR lookup and diffs")
+                        help="Optimus only: skip the GitLab MR lookup and diffs "
+                             "(the GitLab .env keys are then optional)")
+    parser.add_argument("--exact", action="store_true",
+                        help="tickets mode: keep only exact identifier matches")
     parser.add_argument("--task-types", default="",
                         help="Comma-separated Optimus task types to keep (e.g. feature,critical_feature); "
                              "others are dropped BEFORE any GitLab lookup")
@@ -533,7 +569,7 @@ def main():
         log(f"ERROR: '{args.mode}' mode requires a parameter")
         sys.exit(1)
 
-    env = load_env()
+    env = load_env(require_gitlab=not (args.no_mrs and args.mode != "mr"))
     log(f"Mode: {args.mode}, Parameter: {args.parameter or 'N/A'}")
 
     # --- Gather issues ---
@@ -556,7 +592,7 @@ def main():
         elif args.mode == "tickets":
             ticket_ids = [t.strip() for t in args.parameter.split(",") if t.strip()]
             log(f"Querying Optimus for {len(ticket_ids)} tickets...")
-            tasks = query_tasks_by_identifiers(env, ticket_ids)
+            tasks = query_tasks_by_identifiers(env, ticket_ids, exact=args.exact)
             log(f"  Found {len(tasks)} tasks")
             for t in tasks:
                 issues.append(task_to_issue(t, args.include_description))
@@ -699,4 +735,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     main()

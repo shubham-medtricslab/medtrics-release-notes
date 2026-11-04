@@ -43,12 +43,46 @@ def emit(payload):
 
 
 def soffice():
+    """LibreOffice's soffice: KB_SOFFICE (a path, from the environment or the
+    folder's .env) first, then PATH, then where the macOS and Windows installers put
+    it (the Windows installer adds no PATH entry)."""
+    import kb_paths
+    own = (os.environ.get("KB_SOFFICE") or kb_paths.dotenv(kb_paths.folder()).get("KB_SOFFICE") or "")
+    own = own.strip().strip('"')
+    if own and os.path.isfile(own):
+        return own
     for name in ("soffice", "libreoffice"):
         p = shutil.which(name)
         if p:
             return p
-    mac = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
-    return mac if os.path.exists(mac) else None
+    spots = ["/Applications/LibreOffice.app/Contents/MacOS/soffice"] + \
+        _windows_spots(os.path.join("LibreOffice", "program", "soffice.exe"))
+    return next((p for p in spots if os.path.isfile(p)), None)
+
+
+def tesseract():
+    """The tesseract binary: PATH, then where the Windows installer puts it (it adds
+    no PATH entry). Found off PATH, its folder is added to this process's PATH so
+    pytesseract finds it too."""
+    p = shutil.which("tesseract")
+    if p:
+        return p
+    p = next((x for x in _windows_spots(os.path.join("Tesseract-OCR", "tesseract.exe"))
+              if os.path.isfile(x)), None)
+    if p:
+        os.environ["PATH"] = os.path.dirname(p) + os.pathsep + os.environ.get("PATH", "")
+    return p
+
+
+def _windows_spots(rel):
+    """`rel` under each Windows program folder (machine-wide and per-user installs)."""
+    out = []
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        root = os.environ.get(var)
+        if root:
+            out.append(os.path.join(root, rel))
+            out.append(os.path.join(root, "Programs", rel))
+    return out
 
 
 def convert(docx_paths, out_dir, timeout=600):
@@ -72,7 +106,7 @@ def convert(docx_paths, out_dir, timeout=600):
         made = work / "out"
         made.mkdir()
         profile = work / "profile"
-        cmd = [exe, f"-env:UserInstallation=file://{profile}", "--headless",
+        cmd = [exe, f"-env:UserInstallation={profile_url(profile)}", "--headless",
                "--convert-to", "pdf", "--outdir", str(made), *map(str, sources)]
         subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
         result = []
@@ -85,6 +119,12 @@ def convert(docx_paths, out_dir, timeout=600):
         return result
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def profile_url(profile):
+    """LibreOffice's -env:UserInstallation wants a real file URL: "file://" +
+    the path is file://C:\\... on Windows, which soffice rejects (exit 1)."""
+    return profile.as_uri()
 
 
 def expected_strings(spec):
@@ -169,4 +209,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

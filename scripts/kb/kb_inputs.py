@@ -131,19 +131,21 @@ def quoted(text):
 
 
 CODE_RE = re.compile(r"`+\s*['\"“‘]?([^`]+?)['\"”’]?\s*`+")
+DQ_RE = re.compile(r"[\"“]([^\"”`\n]+)[\"”]")
 UI_PATH_LINE_RE = re.compile(r"^\W*(?:main\s+)?UI\s+path\s*:", re.I)
 ACTION_LINE_RE = re.compile(r"^\s*Action\s*:", re.I)
 
 
 def checklist_labels(issue):
-    """Backticked UI names from the QA checklist's UI-path line and step
-    Actions: short, not paths, files, dates, formats or code identifiers."""
+    """Backticked or double-quoted UI names from the QA checklist's UI-path
+    line and step Actions: short, not paths, files, dates, formats or code
+    identifiers."""
     text = (issue.get("qa_checklist") or {}).get("text") or ""
     lines = [ln for ln in text.splitlines() if UI_PATH_LINE_RE.match(ln)] \
         + [ln for ln in text.splitlines() if ACTION_LINE_RE.match(ln)]
     out = []
     for ln in lines:
-        for name in CODE_RE.findall(ln):
+        for name in CODE_RE.findall(ln) + DQ_RE.findall(ln):
             name = name.strip()
             if (name and name not in out and len(name.split()) <= 5 and is_label(name)
                     and name[0].isupper() and not re.search(r"/|\.\w|\d{2}|^[A-Z]{3,}[-/]", name)):
@@ -217,4 +219,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

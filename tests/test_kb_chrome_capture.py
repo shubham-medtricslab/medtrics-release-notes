@@ -247,7 +247,7 @@ global.window=global;global.location={pathname:sc.path||'/users/',search:sc.sear
 global.innerWidth=1470;global.innerHeight=802;global.devicePixelRatio=2;
 global.getComputedStyle=e=>({backgroundColor:e.bg});
 global.document={body:{innerText:sc.body,querySelectorAll:()=>els},
- querySelectorAll:s=>s.indexOf('portal_change')>=0?links:[],
+ querySelectorAll:s=>s.indexOf('portal_change')>=0?links:(s==='select'?(sc.selects||[]):[]),
  querySelector:s=>sc.password?{}:null,
  elementFromPoint:()=>occl||{contains:()=>false,__other:true}};
 const f=(0,eval)(sc.src);
@@ -317,6 +317,34 @@ class ProbeRuns(unittest.TestCase):
         for body in ("Mail a@medtricslab.com", "University of Somewhere", "x kfshmed y", "漢字漢字"):
             py = Q.screen_text(body, "medtricslab.com", allow_strings=["Medtrics Medical Center"])
             self.assertEqual(self.run_probe([], body=body)["tn"]["v"], py["verdict"], body)
+
+    def test_typo_of_a_stop_word_is_not_a_tenant_slug(self):
+        # 0.22.3: Legacy's "Migrations will be perfomed overnight" blocked M1-1520.
+        body = "Migrations will be perfomed overnight."
+        self.assertTrue(Q.slug_is_word("perfomed"))
+        self.assertEqual(Q.screen_text(body, "medtricslab.com")["verdict"], "CLEAR")
+        self.assertEqual(self.run_probe([], body=body)["tn"], {"v": "CLEAR", "k": []})
+        for slug in ("uwmed", "kfshmed", "ucsfmed", "nymedtest", "perfromed"):
+            self.assertFalse(Q.slug_is_word(slug), slug)               # still flagged
+            py = Q.screen_text(f"x {slug} y", "medtricslab.com")["verdict"]
+            self.assertEqual(self.run_probe([], body=f"x {slug} y")["tn"]["v"], py, slug)
+
+    def test_closed_dropdown_options_are_not_screened(self):
+        opts = [{"text": "Medtrics Program", "selected": True},
+                {"text": "College of Veterinary Medicine", "selected": False}]
+        body = "Program\nMedtrics Program\nCollege of Veterinary Medicine\nSave"
+        r = self.run_probe([], body=body, selects=[{"options": opts}])
+        self.assertEqual(r["tn"], {"v": "CLEAR", "k": []})
+        # an open list (multiple / size > 1) shows its options, so they are screened
+        r = self.run_probe([], body=body, selects=[{"options": opts, "multiple": True}])
+        self.assertIn("institution_string", r["tn"]["k"])
+        # the same words shown elsewhere on the page are still caught: only one copy goes
+        r = self.run_probe([], body=body + "\nCollege of Veterinary Medicine", selects=[{"options": opts}])
+        self.assertIn("institution_string", r["tn"]["k"])
+        # the chosen option is what shows: it is screened
+        chosen = [{"text": "College of Veterinary Medicine", "selected": True}]
+        r = self.run_probe([], body="College of Veterinary Medicine", selects=[{"options": chosen}])
+        self.assertIn("institution_string", r["tn"]["k"])
 
 
 # ── 0.28.0: the probe reads the form (`fields`), the dialog (`dlg`) and tenant words (`tw`) ──

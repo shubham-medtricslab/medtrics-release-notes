@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import json
+import re
 import os
 import sys
 import zipfile
@@ -49,7 +50,7 @@ EXCLUDE_FILES = {
     ".DS_Store", ".gitignore", ".gitattributes",
     "requirements.txt", "requirements-dev.txt", "CONTRIBUTING.md",
     "PLAN.md", "ORACLE-PLAN.md", "PR-MATCHER-PLAN.md", "RELEASE-ARCHIVE-PLAN.md",
-    "KB-PLAN.md", ".env", ".env.local",
+    "KB-PLAN.md", "POD-NOTIFY-PLAN.md", ".env", ".env.local",
     "build_plugin.py",  # the bundler itself is a dev tool; never ship it
 }
 # Any filename starting with one of these prefixes is excluded (.env, .env.*, ...).
@@ -178,6 +179,17 @@ def _verify_bundle(plugin_path: Path) -> None:
                          "hooks/hooks.json", "hooks/kb_guard.py"):
             if required not in names:
                 raise BuildError(f"BUILD FAILED: bundle is missing {required}")
+        # The upload validator rejects a skill/agent/command description with an
+        # XML-like tag ("/pod-notify <ids>" failed it).
+        for entry in sorted(names):
+            if entry.endswith(".md") and entry.split("/", 1)[0] in ("skills", "agents", "commands"):
+                head = zf.read(entry).decode("utf-8", "replace")
+                if head.startswith("---"):
+                    front = head.split("---", 2)[1] if head.count("---") >= 2 else ""
+                    desc = re.search(r"^description:(.*(?:\n[ \t]+.*)*)", front, re.M)
+                    if desc and re.search(r"</?[A-Za-z][^>]*>", desc.group(1)):
+                        raise BuildError(
+                            f"BUILD FAILED: {entry} description contains an XML-like tag")
         # plugin.json must be present and parseable
         if required_file not in names:
             raise BuildError(f"BUILD FAILED: bundle is missing {required_file}")
@@ -223,4 +235,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

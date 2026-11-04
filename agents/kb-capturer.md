@@ -100,7 +100,9 @@ write only inside that run folder; never use /tmp.
      status `bridge_down`.
 
    A `{row: true}` click opens the first row of the list, whether it is a link
-   or a clickable row; the `kbclick` result is still the only click point. You
+   or a clickable row; the `kbclick` result is still the only click point. A
+   `{check: "<label>"}` click ticks one checkbox; it is a click batch like any
+   other (same `pick`, same `act`). You
    never use `kbclick`'s write mode: that is the data agent's.
 7. **Abort.** After any stop rule above (except `bridge_down`), send the `abort`
    actions from `capture.md` (a `gif_creator` clear) as one `browser_batch` with

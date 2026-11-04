@@ -1,5 +1,5 @@
 {
- "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. Optional per-surface wait_s (seconds, max 10) overrides demo.settle_s, the pause after navigate before the GIF frame is taken (slow lists). known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs.",
+ "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. Optional per-surface wait_s (seconds, max 10) overrides demo.settle_s, the pause after navigate before the GIF frame is taken (slow lists). known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs. Optional per-surface clicks (Chrome capture) run after the start page when the ticket's own text gives no click path: {\"text\": exact link/tab/button text}, {\"check\": exact checkbox label} (ticks the box; never a button, never submits) or {\"row\": true}.",
  "demo": {
   "base_url": "https://medtrics.medtricslab.com",
   "domain": "medtricslab.com",
@@ -310,6 +310,23 @@
    "also_personas": [],
    "url": "/administration/curriculum/",
    "recipe": [],
+   "clicks": [
+    {
+     "text": "Migrate Curriculum"
+    },
+    {
+     "check": "Courses"
+    },
+    {
+     "check": "Sessions"
+    },
+    {
+     "check": "Session Schedules"
+    },
+    {
+     "check": "Set migrated sessions to Unpublished"
+    }
+   ],
    "match": {
     "modules": [
      "Curriculum & Sessions"

@@ -1,6 +1,6 @@
 ---
-description: Light setup for this plugin in the current folder — installs what the commands need, checks the outside pieces (today, the KB articles part - Python packages, OCR/PDF tools, Claude in Chrome, the .env keys, the three Mem collections and the Downloads folder) and remembers it in one config file. Run it once per folder; run it again and it only redoes what is missing.
-argument-hint: "[kb] [--force]"
+description: Light setup for this plugin in the current folder — installs what the commands need, checks the outside pieces (the KB articles part - Python packages, OCR/PDF tools, Claude in Chrome, the .env keys, the KB Mem collections and the Downloads folder; the pod part - the Mem pod map, its client ids and each pod channel) and remembers it in one config file. Run it once per folder; run it again and it only redoes what is missing.
+argument-hint: "[kb|pod] [--force]"
 ---
 
 # Release Notes Setup
@@ -15,6 +15,7 @@ what is already done, says so, and only redoes what is missing.
 ```
 /release-note-setup             # every part below
 /release-note-setup kb          # only the KB articles part
+/release-note-setup pod         # only the pod map part
 /release-note-setup --force     # redo every step, even what the config says is done
 ```
 
@@ -23,6 +24,7 @@ what is already done, says so, and only redoes what is missing.
 | Part | Needed by | What it sets up |
 |---|---|---|
 | `kb` | `/kb-articles`, `/release-slack --kb` | Python packages in `.kb-env/`, tesseract / LibreOffice / Carlito font, the Claude in Chrome extension, the `.env` keys, the KB Ledger / Queue / Catalogue / Demo Data collections in Mem, the Downloads folder |
+| `pod` | `/release-slack tickets`, `/oracle-release tickets`, `/pod-notify` | The Pod Map collection in Mem with its template note, the Optimus client id behind each client name in the pod notes, and a check of every pod channel |
 
 Each part is its own section below, run in table order. A part that fails does
 not stop the next one. To add a part later: add a row here and a `## Part — <name>`
@@ -67,6 +69,12 @@ plus the Mem collection tools (`list_collections`, `create_collection`).
    - Otherwise the part is installed. Note what is missing, in plain words: no
      tesseract → label checks are weaker and articles stay drafts; no LibreOffice
      → no PDF; no Carlito → PDFs use a fallback font.
+   - **Windows** has no apt-get or Homebrew, so nothing is installed for it: show
+     the `winget install --id … -e` line the output gives for each missing tool
+     (the person runs it and accepts the licence). LibreOffice and tesseract are
+     found in Program Files without a PATH entry; LibreOffice installed somewhere
+     else → set `KB_SOFFICE` in `.env` to its `soffice.exe`. The scripts switch
+     themselves to UTF-8 on Windows; `PYTHONUTF8` is not needed.
 2. **Claude in Chrome** — ToolSearch `select:mcp__claude-in-chrome__tabs_context_mcp`,
    then call it. If the tool is missing or the call fails, say, once: "Install
    the Claude in Chrome extension from the Chrome Web Store and connect it to
@@ -113,6 +121,48 @@ plus the Mem collection tools (`list_collections`, `create_collection`).
    - sign in to https://medtrics.medtricslab.com;
    - Settings → Downloads → turn off "Ask where to save each file".
 
+## Part — `pod` (pod map)
+
+`P=${CLAUDE_PLUGIN_ROOT}/scripts`; `K=$P/kb`; `mkdir -p /tmp/pod_notify`. The `pod-notify`
+skill describes the map; this part only prepares it. The team writes the pod
+notes — nothing in Optimus, Mem or Slack says which clients belong to which pod.
+
+1. **Mem** — probe as in the `kb` part; not connected → record **to do** and
+   skip this part.
+2. **The collection** — `python3 $P/pod_map.py collection` prints the name
+   (`MEM_POD_MAP_COLLECTION`, default `Release Notes Pod Map`) and description.
+   Resolve it as the `release-archive` skill does (paginated `list_collections`,
+   exact title case-insensitively, prefer exact case then the oldest
+   `created_at`, several still tied → stop with every candidate id); none →
+   `create_collection({title, description})`. Skip when the config's `mem.pod_map`
+   id still answers a `get_collection`, unless `--force`. Save it:
+   `python3 $K/kb_paths.py merge '{"mem": {"pod_map": "<id>"}}'`.
+3. **Read it** — `list_notes({collection_id, include_note_content: true, limit: 100})`
+   following `next_page`; save `{"notes": [...]}` to `/tmp/pod_notify/notes.json`;
+   then `python3 $P/pod_map.py names --notes /tmp/pod_notify/notes.json`.
+4. **Template** — when the result says `has_template: false`, create one note
+   whose content is the output of `python3 $P/pod_map.py template` (everything
+   above the `---POD_MAP_RESULT---` line). Tell the user: copy it once per pod,
+   title `Pod: #<channel>`, the channel id from Slack (channel details → bottom),
+   one client per line exactly as Optimus spells it.
+5. **Client ids** — for each name in `missing_ids`, when the Optimus MCP is
+   connected, call its `get_client_context` with the name and keep the client's
+   id only when the returned name matches (case and `&`/`and` aside); otherwise
+   `null`. Save `{name: id-or-null}` to `/tmp/pod_notify/resolved.json`, run
+   `python3 $P/pod_map.py fill-ids --notes /tmp/pod_notify/notes.json --resolved
+   /tmp/pod_notify/resolved.json --out /tmp/pod_notify/fill_writes.json`, and
+   perform each `update_note({note_id, content, version})`. List `unresolved`
+   names: they are probably misspelled, and only a matching ticket client will
+   reach that pod. No Optimus MCP → skip; names still match by name.
+6. **Channels** — for each entry in `channels`:
+   `python3 $P/slack_upload.py --check-channel --channel <channel_id>`. Report
+   a pod whose check fails, whose channel is archived or shared outside Medtrics
+   (Slack Connect — never posted to), or where the bot is not a member ("invite
+   the bot with `/invite @<bot>` in that channel").
+7. **Record** — `python3 $K/kb_paths.py merge '{"pod": {"setup": "done",
+   "pods": <number of pods>}}'`. With no pod notes yet the part is **to do**:
+   "write one pod note per pod in Mem".
+
 ## Finish
 
 One table, one row per part run, then one row per step that needs the user:
@@ -120,6 +170,7 @@ One table, one row per part run, then one row per step that needs the user:
 | Part | Status | To do |
 |---|---|---|
 | kb | ready / ready, with gaps / to do / failed | e.g. "connect Claude in Chrome", "add GITLAB_TOKEN to .env", "no PDF: LibreOffice missing" |
+| pod | ready / ready, with gaps / to do / failed | e.g. "write the pod notes", "invite the bot to #impact-pod_meg", "check the spelling of 2 client names" |
 
 Then **what's next**, in two or three lines: run `/kb-articles M1-1520` (a ticket
 id) or `/kb-articles M1-1520 dry-run` first; the first run after setup is the one that
@@ -130,7 +181,9 @@ can be deleted to start over.
 ## Things this command does NOT do
 
 - Does not write `.env` and does not print or store a key's value.
-- Does not create Mem notes, and touches no Optimus, GitLab or Slack data.
+- Does not create Mem notes, apart from the pod part's template note and the
+  client ids it adds to existing pod notes; touches no Optimus, GitLab or Slack
+  data (the pod part only reads clients and channels).
 - Does not sign in anywhere or change Chrome settings.
 - Does not write outside this folder (`.kb-env/`, `.kb-runs/`,
   `.medtrics-release-notes/`) apart from the system tools it installs when it is

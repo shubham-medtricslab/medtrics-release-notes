@@ -112,6 +112,8 @@ def _route_surface(route, routes):
                 best, size = s, len(prefix)
     personal = "/my/" in path
     persona = "faculty" if personal else (best["persona"] if best else "admin")
+    if best and not route.get("clicks") and best.get("url") == route["start"] and surface_clicks(best):
+        route = {**route, "clicks": surface_clicks(best)}    # the page's own path, when the ticket gives none
     return {"persona": persona,
             "surface": route["start"],      # the path itself: a prefix match can be broader than the page
             "url": route["start"], "also_personas": [], "recipe": [], "match": {},
@@ -170,11 +172,28 @@ def _placement(issue, s, how, routes):
         reason = (status.lower() if status in routes.get("uncapturable_statuses", [])
                   else "no sign-in persona" if persona.get("no_session")
                   else "surface not mapped to a demo URL")
-    return {"ticket": issue["identifier"], "persona": s["persona"],
-            "also_personas": s.get("also_personas", []), "surface": s["surface"],
-            "url": s.get("url", ""), "portal": persona["portal"],
-            "audience": persona["audience"], "how": how,
-            "capturable": not uncapturable, "reason": reason}
+    out = {"ticket": issue["identifier"], "persona": s["persona"],
+           "also_personas": s.get("also_personas", []), "surface": s["surface"],
+           "url": s.get("url", ""), "portal": persona["portal"],
+           "audience": persona["audience"], "how": how,
+           "capturable": not uncapturable, "reason": reason}
+    if not uncapturable and surface_clicks(s):
+        out["route"] = {"start": s["url"], "clicks": surface_clicks(s), "write_gated": "",
+                        "source": "surface"}
+    return out
+
+
+def surface_clicks(s):
+    """A surface's own click path (kb_routes.json "clicks"): what the capture presses
+    after the start page when the ticket's text gives no path of its own, e.g. a tab
+    and the checkboxes under it. Each is {"text"}, {"check"} or {"row": true}."""
+    out = []
+    for k in s.get("clicks") or []:
+        if isinstance(k, dict) and k.get("row"):
+            out.append({"row": True})
+        elif isinstance(k, dict) and (k.get("text") or k.get("check")):
+            out.append({"check": str(k["check"])} if k.get("check") else {"text": str(k["text"])})
+    return out
 
 
 def classifier_bundle(unplaced, routes):
@@ -388,4 +407,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

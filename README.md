@@ -34,12 +34,13 @@ Caps enforced by the lint gate: root ≤ 2,500 chars, each reply ≤ 3,900 chars
 
 | Command | What it does | When to run it |
 |---|---|---|
-| `/release-note-setup` | One-time setup in the folder you run commands from, modelled on the QA plugin's setup. Today it sets up KB articles: installs the Python packages into `.kb-env/`, tries tesseract / LibreOffice / the Carlito font, checks the Claude in Chrome extension and the `.env` keys, finds or creates the KB Mem collections, approves the Downloads folder (Cowork), saves it all in `.medtrics-release-notes/config.json` in the folder, and ends with a table of what is ready and what you still need to do. Re-running only redoes what is missing. More parts will be added here. | Once per folder, and again if a command says so (e.g. after the Cowork sandbox reset). `--force` redoes everything. |
+| `/release-note-setup` | One-time setup in the folder you run commands from, modelled on the QA plugin's setup. Today it sets up KB articles: installs the Python packages into `.kb-env/`, tries tesseract / LibreOffice / the Carlito font, checks the Claude in Chrome extension and the `.env` keys, finds or creates the KB Mem collections, approves the Downloads folder (Cowork), saves it all in `.medtrics-release-notes/config.json` in the folder, and ends with a table of what is ready and what you still need to do. Its `pod` part (`/release-note-setup pod`) creates the Mem pod map with a template note, adds each client's Optimus id to the pod notes and checks every pod channel. Re-running only redoes what is missing. | Once per folder, and again if a command says so (e.g. after the Cowork sandbox reset). `--force` redoes everything. |
 | `/release-slack` | End-to-end combined Monday command. ONE message into `#dream-team` (`SLACK_CHANNEL_INTERNAL`): root index + threaded per-ticket cards, each carrying a client-portable exec lede plus the internal detail (ticket IDs, dev @-mentions, client tags, Optimus URLs). The team ports the lede to clients. | After every production deploy. |
 | `/oracle-release` | End-to-end **Oracle** command, same shape as `/release-slack`: ONE combined message into `SLACK_CHANNEL_ORACLE` (`#pod-oracle`) — root index + per-ticket cards (exec lede + internal detail incl. PR links). Sources: Optimus (ORC tickets) + **GitHub** PRs. Exec ledes IP-guarded as a safety net. | After every medtrics-oracle deploy. |
 | `/notes` | Both note types (deploy / integration) as markdown files in parallel. | Paper-trail backup or when you need both documents at once. |
 | `/deploy-notes` | Client-facing release notes markdown only. | Non-Slack delivery (paste into email, help center). |
 | `/integration-notes` | Integration-partner markdown only. | Separate partner channel. |
+| `/pod-notify` | Tells each client pod (Slack channel) which tickets concern its clients: one root post + thread per pod, one client-safe card per ticket, routed by the tickets' Optimus client links through the Mem pod map. `/release-slack tickets …` and `/oracle-release tickets …` do this themselves after their post (skip with `--no-pod`); this command is for releases announced by hand. See [Client pods](#client-pods). | `/pod-notify M1-1605,ORC-715` after a hand-written release; `dry-run` for the routing table only. |
 | `/release-slack --kb` | The normal release post, then — in the same chat — the release's feature tickets go on the KB queue and `/kb-articles` offers to draft them (plan preview, y/n). Saying no leaves them queued. | After a deploy, when the release's features need KB articles. |
 | `/kb-articles` | One Intercom **KB article draft** (.docx + PDF + markdown) per shipped legacy **feature** ticket, in the Medtrics KB format. Grouped by persona × surface; screenshots captured live on the demo tenant in your signed-in Chrome and ringed by script; prose by a pinned Sonnet writer per group; every article checked by the format gates G1–G7; history in Mem so no ticket is drafted twice. See [KB articles](#kb-articles). | `/kb-articles M1-1520,M1-1256` for specific features; `--kb-queue <ids>` only queues them; `pending` for everything queued or released without an article. |
 
@@ -47,7 +48,7 @@ Caps enforced by the lint gate: root ≤ 2,500 chars, each reply ≤ 3,900 chars
 
 ## Bundled skills
 
-The plugin ships with eleven skills, all packaged inside the plugin so installing it gives you the full pipeline in one shot:
+The plugin ships with twelve skills, all packaged inside the plugin so installing it gives you the full pipeline in one shot:
 
 | Skill | Purpose |
 |---|---|
@@ -56,6 +57,7 @@ The plugin ships with eleven skills, all packaged inside the plugin so installin
 | `medtrics-release-notes:dev-directory` | **Optional** Mem-backed cache of developer Slack ids — one collection (`Release Notes Developer Directory`), one note per developer (name, emails, GitHub/GitLab login, Optimus assignee id, Slack id, resolving tier). Both release commands read it before the Slack resolver runs and write every newly resolved developer back immediately. Active only when the Mem MCP is connected; every Mem failure degrades to the resolver-only behavior with a one-line notice — never a hard error, never blocks the post. Parsing/matching/rendering is `scripts/dev_directory.py`. |
 | `medtrics-release-notes:pr-overrides` | **Optional** Mem-backed store of human PR picks for `/oracle-release` — one collection (`Oracle PR Overrides`), one note per ORC ticket (ticket, PR number + URL, who, when, why). The gather script applies the overrides before the primary rule; the preview lets the user reply `ORC-232 → 415` to record one and re-run. Overrides only, never a cache. Active only when the Mem MCP is connected; without it a pick still applies for the current run (`--pr-override-inline`). Parsing/rendering is `scripts/pr_overrides.py`. |
 | `medtrics-release-notes:release-archive` | **The** release archive — Mem-backed, **required**, and the only copy of a posted release outside Slack (nothing is written to disk). One collection whose **name you set** in `.env` (`MEM_RELEASE_ARCHIVE_COLLECTION`, default `Release Notes Archive`; created under that exact name if absent), **one note per release session**: a trace header (date, product, channel, root ts, Slack permalink, the posted ticket list with client-facing titles, categories, client codes, and PR/MR URLs) **plus the posted root and every thread reply verbatim**. Both release commands check that Mem is connected in Step 1 (hard stop otherwise) and write the note once the post is complete — in the session, or on the resume run that finishes it. Duplicates from a re-post are tolerated and warned, never merged. A failed write prints the note in chat for a manual paste, never to disk. Rendering is `scripts/release_archive.py`; the permalink comes from `scripts/slack_upload.py --get-permalink`. |
+| `medtrics-release-notes:pod-notify` | Tells each client pod which released tickets concern its clients. Routes the posted tickets by their Optimus client links (description `## Reported client(s)` names as a marked fallback) through one Mem collection (`Release Notes Pod Map`, one hand-edited note per pod), checks every channel (archived / Slack Connect / bot not a member → blocked), shows one preview for all pods, posts one root + thread per pod, and logs what was sent so a ticket reaches a pod once. Runs after the archive in `/release-slack tickets` and `/oracle-release tickets` (`--no-pod` skips it) and as `/pod-notify`. Never a release failure. Routing and rendering are `scripts/pod_map.py`. |
 | `medtrics-release-notes:oracle-storyteller` | **Parked (unused since 0.12.0).** Formerly composed the separated `/oracle-release` design (a "safe to forward" client block + internal index, root assembled by `scripts/assemble_oracle_root.py`). Left in the repo in case that design is wanted again; `/oracle-release` now uses `internal-storyteller`. |
 | `medtrics-release-notes:copy-audit` | Sentence-level polish pass that runs between storyteller and ip-guard. Strips AI-sounding language, bloated verbs (`serves as`, `boasts a`, `helps to`), dead openings (`Furthermore`, `Moreover`), negative-parallelism patterns (`Not X. Y.`), decorative metaphor verbs (`mapped`, `surfaced`, `unpacked`), and engagement bait. Customer-facing only. |
 | `medtrics-release-notes:ip-guard` | Deterministic safety net that scans customer-facing output — the deploy markdown AND the composed Slack root + replies — for internal-system names, code-artifact jargon, MR identifiers, file paths, and architecture mechanism vocabulary. Blocks delivery on violation. Iterates with the storyteller + copy-audit up to 3 times to remediate. **Not** run against the internal-storyteller output — internal vocabulary is expected there. |
@@ -243,6 +245,29 @@ Release: 2026-09-02 · oracle · #pod-oracle
 
 To trace a ticket: open the collection in Mem, search the id (`ORC-232`, `M1-1457`), open the release note, click the permalink — or read the posted text right there. The ticket list is read from the per-ticket summaries file — the set that actually posted, with client-facing titles — and the transcript is the exact root and reply files `slack_upload.py` sent, in post order, each in a `~~~` fence so Slack's own code blocks survive. The permalink comes from one `chat.getPermalink` read (`scripts/slack_upload.py --get-permalink`); when that read fails the line is omitted, never constructed. `Product:` is `medtrics` or `oracle`; one shared collection holds both tracks. Every completed session writes one new note — a re-post in a fresh session yields a second note with a reminder to trash the older one; nothing is merged or updated in place. Renaming the key later starts a fresh collection under the new name (old notes stay put); `scripts/release_archive.py pending` prints the resolved name every run. If the Mem write fails after the post, the command prints the whole note in chat so you can paste it into the collection by hand — it never writes it to disk and never re-posts to Slack.
 
+## Client pods
+
+Each client belongs to a pod: a Slack channel such as `#impact-pod_<person>` or `#pod-<project>`. After a release in `tickets` mode, `/release-slack` and `/oracle-release` post each pod a short thread of its own: a root post saying "Shipped for your clients", then one card per ticket with the client title, the client paragraph, that pod's clients and the ticket link. The cards never include the internal summary, developer mentions, code links or another pod's clients. `/pod-notify <ids>` does the same for a release announced by hand.
+
+**The pod map** is the Mem collection `Release Notes Pod Map` (`MEM_POD_MAP_COLLECTION`), with one note per pod, written by the team:
+
+```
+Pod: #impact-pod_meg
+
+**Channel ID:** C0AAAAAAAA1
+**Clients:**
+- King Faisal Specialty Hospital & Resource Center [<optimus client id>]
+- Purdue University - College of Veterinary Medicine
+```
+
+Write client names exactly as Optimus spells them. Look-alikes are separate clients: VinUniversity GME and VinUniversity Medicine and Nursing, or UCC and UCCPA. `/release-note-setup pod` creates the collection and a template, adds the `[id]`s and checks each channel. Invite the bot into every pod channel; the step blocks a pod the bot isn't in, an archived channel, or a channel shared outside Medtrics.
+
+**Routing.**
+- A ticket goes to the pods of its Optimus client links. Without links, it uses the full names under the description's `## Reported client(s)` heading, marked "guessed".
+- Platform-wide and internal tickets go to no pod.
+- Each run writes a `Pod notify:` log note, and a later run skips any ticket a pod already got (`--force` re-sends).
+- The preview lists every ticket and client that reached no pod, so gaps in the map are visible. Many tickets have no client link, especially on Oracle, where internal work is left unlinked on purpose.
+
 ## Oracle track (`/oracle-release`)
 
 The **medtrics-oracle** product (React + Supabase app) gets its own release track. As of 0.12.0 it uses the **same shape as `/release-slack`** — one combined internal post to `#pod-oracle` with a root index plus per-ticket cards — differing only in its data sources: code lives on **GitHub** (`medtrics/medtrics-oracle` PRs) instead of GitLab, and tickets carry the `ORC-` prefix.
@@ -353,7 +378,7 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.21.0**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.3**.
 
 ## Repository layout
 
@@ -361,9 +386,9 @@ Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current vers
 medtrics-release-notes/
 ├── .claude-plugin/plugin.json
 ├── agents/               # kb-writer (Sonnet), kb-classifier (Haiku)
-├── commands/             # /release-slack, /oracle-release, /deploy-notes, /integration-notes, /notes, /kb-articles, /release-note-setup
-├── skills/               # storyteller, internal-storyteller, oracle-storyteller, copy-audit, ip-guard, engineering-to-client, dev-directory, pr-overrides, release-archive, kb-ledger, kb-capture
-├── scripts/              # gather, prompts, slack resolve users, dev directory (Mem), pr overrides (Mem), release archive (Mem), slack upload (+ permalink), slack lint, ip guard, build
+├── commands/             # /release-slack, /oracle-release, /deploy-notes, /integration-notes, /notes, /kb-articles, /release-note-setup, /pod-notify
+├── skills/               # storyteller, internal-storyteller, oracle-storyteller, copy-audit, ip-guard, engineering-to-client, dev-directory, pr-overrides, release-archive, kb-ledger, kb-capture, pod-notify
+├── scripts/              # gather, prompts, slack resolve users, dev directory (Mem), pr overrides (Mem), release archive (Mem), pod map (Mem), slack upload (+ permalink, channel check), slack lint, ip guard, build
 │   └── kb/               # KB format, gates, renderer, capture, selection, assembly, PDF, packaging, ledger
 ├── tests/                # stdlib unittest suite (not shipped in .plugin)
 ├── CHANGELOG.md

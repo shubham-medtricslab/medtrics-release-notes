@@ -52,6 +52,13 @@ Usage:
         --channel C0123ABCD \
         --ts 1724650000.123456
 
+    # check-channel mode — read a channel's state before pod-notify posts to
+    # it (conversations.info, a READ; nothing is posted). Needs channels:read
+    # (+ groups:read for a private channel).
+    python3 slack_upload.py \
+        --check-channel \
+        --channel C0123ABCD
+
 Exit codes:
     0  success — message posted (or permalink fetched)
     1  configuration error (missing env, bad arg, message over the API cap)
@@ -65,6 +72,10 @@ Result contract:
          "permalink": str|null}
     "permalink" is populated only by --get-permalink on success; it is null
     on the post path and on every failure.
+    --check-channel adds one key, "info": {"name", "is_archived",
+    "is_ext_shared", "is_pending_ext_shared", "is_shared", "is_private",
+    "is_member"} on success,
+    null on failure. The other modes never carry it.
 """
 
 import argparse
@@ -287,12 +298,40 @@ def get_permalink(channel_id, ts, token):
     return permalink
 
 
-def emit_result(ok, channel=None, ts=None, error=None, permalink=None):
-    """Print the machine-parseable result block. Called on EVERY exit path."""
+def get_channel_info(channel_id, token):
+    """Read a channel's state (conversations.info, a GET read — retried).
+
+    Returns {"name", "is_archived", "is_ext_shared", "is_pending_ext_shared",
+    "is_shared", "is_private", "is_member"}. Raises SlackError on an API error.
+    """
+    result = slack_get("conversations.info", token, {"channel": channel_id})
+    if not result.get("ok"):
+        raise SlackError(f"conversations.info failed: {result.get('error')}")
+    ch = result.get("channel") or {}
+    return {
+        "name": ch.get("name") or "",
+        "is_archived": bool(ch.get("is_archived")),
+        "is_ext_shared": bool(ch.get("is_ext_shared")),
+        "is_pending_ext_shared": bool(ch.get("is_pending_ext_shared")),
+        "is_shared": bool(ch.get("is_shared")),
+        "is_private": bool(ch.get("is_private")),
+        "is_member": bool(ch.get("is_member")),
+    }
+
+
+def emit_result(ok, channel=None, ts=None, error=None, permalink=None,
+                info=False):
+    """Print the machine-parseable result block. Called on EVERY exit path.
+
+    `info` is only included when the caller passes it (check-channel mode),
+    so the other modes keep their exact five-key contract."""
     print()
     print("---SLACK_UPLOAD_RESULT---")
-    print(json.dumps({"ok": ok, "channel": channel, "ts": ts, "error": error,
-                      "permalink": permalink}))
+    payload = {"ok": ok, "channel": channel, "ts": ts, "error": error,
+               "permalink": permalink}
+    if info is not False:
+        payload["info"] = info
+    print(json.dumps(payload))
 
 
 def main():
@@ -314,11 +353,18 @@ def main():
                          "--message-file / --thread-ts are not accepted.")
     ap.add_argument("--ts", default=None,
                     help="Message ts whose permalink to fetch (only with --get-permalink).")
+    ap.add_argument("--check-channel", action="store_true",
+                    help="Check-channel mode: read the channel's state "
+                         "(conversations.info) instead of posting. Takes only "
+                         "--channel (an id, or a name resolved first).")
     args = ap.parse_args()
 
     # Mode validation happens before any env/API work so a bad invocation is a
     # plain argparse usage error (exit 2), same as a missing --channel.
-    if args.get_permalink:
+    if args.check_channel:
+        if args.get_permalink or args.message_file or args.thread_ts or args.ts:
+            ap.error("--check-channel takes only --channel")
+    elif args.get_permalink:
         if not args.ts:
             ap.error("--get-permalink requires --ts")
         if args.message_file or args.thread_ts:
@@ -331,7 +377,8 @@ def main():
 
     def fail(code, error, channel=None):
         print(f"ERROR: {error}", file=sys.stderr)
-        emit_result(False, channel=channel, error=error)
+        emit_result(False, channel=channel, error=error,
+                    info=None if args.check_channel else False)
         return code
 
     env = load_env(args.env_path)
@@ -341,6 +388,22 @@ def main():
         return fail(1, "SLACK_BOT_TOKEN not set in environment or .env")
     if not token.startswith("xoxb-"):
         return fail(1, "SLACK_BOT_TOKEN must start with xoxb- (bot token, not user)")
+
+    if args.check_channel:
+        # Read-only path, like --get-permalink: nothing here can post.
+        try:
+            channel_id = resolve_channel(args.channel, token)
+        except Exception as e:
+            return fail(2, f"resolving channel: {e}")
+        try:
+            info = get_channel_info(channel_id, token)
+        except Exception as e:
+            return fail(2, f"reading channel: {e}", channel=channel_id)
+        print(f"OK: #{info['name']} ({channel_id}) archived={info['is_archived']} "
+              f"ext_shared={info['is_ext_shared'] or info['is_pending_ext_shared']} "
+              f"bot_member={info['is_member']}")
+        emit_result(True, channel=channel_id, info=info)
+        return 0
 
     if args.get_permalink:
         # Read-only path. Every failure lands in fail() -> ok:false + non-zero
@@ -388,4 +451,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import utf8_mode
+    utf8_mode.ensure()          # Windows: rerun in UTF-8 mode
     sys.exit(main())

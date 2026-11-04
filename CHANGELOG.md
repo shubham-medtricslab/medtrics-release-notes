@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-11-03
+
+Fixes from run kb-20261103-2319 of `/kb-articles M1-1520`.
+
+### Fixed
+- **Migrate Curriculum frames screened BLOCK.** The tenant-slug check read
+  Legacy's own typo "Migrations will be perfomed overnight" as a client slug
+  ("perfo" + "med"). A word one letter off a long stop word ("performed") now
+  counts as an ordinary word; short slugs ("uwmed", "kfshmed") are still
+  flagged. Stored raw files are rescreened under the new rule on ingest.
+- **Closed dropdowns made frames REVIEW.** The page check read every option of
+  a closed `<select>` (program names such as "College of Veterinary
+  Medicine") though only the chosen one shows. Unchosen options of a closed
+  dropdown are left out; open lists and the chosen option are still screened.
+
+## [0.22.2] - 2026-11-03
+
+More fixes from the Windows retry of `/kb-articles M1-1520` (run kb-20261103-2055).
+
+### Fixed
+- **Windows: PDF step still failed once LibreOffice was found.** The temp
+  profile was passed as `file://C:\...`, which soffice rejects; it is now a
+  real file URL (`file:///C:/...`).
+- **Labels in a QA checklist written in double quotes were ignored.** Only
+  backticked names were read, so M1-1520 fell back to "Session Dates" from the
+  ticket text. Double-quoted names in the UI-path line and step Actions now
+  count too ("Session Schedules", "Set migrated sessions to Unpublished").
+
+## [0.22.1] - 2026-11-03
+
+Fixes from a Windows run of `/kb-articles M1-1520`.
+
+### Fixed
+- **M1-1520 stopped on the Curriculum Setup page.** The Chrome capture only
+  clicks a path the ticket's own text gives, and this known ticket had none. A
+  surface in `kb_routes.json` can now carry its own `clicks`, used when the
+  ticket gives no path; "Curriculum > Setup > Migrate" opens the Migrate
+  Curriculum tab and ticks Courses → Sessions → Session Schedules → Set
+  migrated sessions to Unpublished. Rerun with `--retry-partial`.
+- **Ticking a checkbox.** New click `{"check": "<exact label>"}`: kbclick finds
+  the one visible label with those words and ticks its checkbox. It never
+  presses a button, so a box inside a Save form is fine, and the write guard
+  still blocks any request a change handler makes. Refused: danger words, an
+  `on…` handler, a box styled as a switch, a box in a dialog or another form,
+  a disabled box, and a box that is already ticked.
+- **Windows: text-encoding crash.** Every script now reruns itself in Python's
+  UTF-8 mode on Windows (`scripts/utf8_mode.py`), so `PYTHONUTF8=1` is no
+  longer needed.
+- **Windows: LibreOffice not found, so no PDF.** The PDF step now looks in
+  Program Files, the per-user Programs folder, and a `KB_SOFFICE` path, as
+  well as PATH. Tesseract (`Tesseract-OCR`) and fonts in the Windows Fonts
+  folders are found the same way. With no apt-get or Homebrew, setup prints
+  the `winget install` command to run.
+
+## [0.22.0] - 2026-10-29
+
+Client pods: each pod (Slack channel) now hears which released tickets concern
+its clients. Before, only `#dream-team` / `#pod-oracle` got the release post.
+
+### Added
+- **Pod step in `/release-slack tickets …` and `/oracle-release tickets …`**
+  (Step 9b2 / 11c, `pod-notify` skill). It runs after the post and the archive,
+  is on by default, and `--no-pod` skips it. It never runs in `status` or `mr`
+  mode, because those tickets haven't shipped. It has its own preview covering
+  every pod (`[y]/[n]/[e]/[a]`) and its own yes, and it can never fail the
+  release.
+- **`/pod-notify <ids>`**: the same step on its own, for releases announced by
+  hand. It reads the tickets from Optimus only, routes them first, and writes
+  client cards only for tickets a pod gets (one analyzer each, then the
+  engineering-to-client pass). Also `dry-run`, `--force`, `--summaries <file>`
+  and `resume`.
+- **Pod map in Mem**: the "Release Notes Pod Map" collection
+  (`MEM_POD_MAP_COLLECTION`), with one hand-edited note per pod (`Pod: #channel`,
+  `Channel ID`, exact Optimus client names). Each pod-notify run adds one
+  pod-log note with each pod's ticket ids and a link to its pod post, so a
+  ticket is announced to a pod once.
+- **`/release-note-setup pod`**: creates the collection and a template note,
+  adds each client's Optimus id to the pod notes (so a rename in Optimus doesn't
+  break the map), and checks every pod channel.
+- **`scripts/pod_map.py`** does the routing, rendering, channel-check
+  verdicts, preview, resume state, pod log and setup helpers.
+  `tests/test_pod_map.py` covers it.
+- **`slack_upload.py --check-channel`**: a read-only `conversations.info` check.
+  Pods whose channel is archived, shared outside Medtrics (Slack Connect, or an
+  invite pending), or that the bot isn't in, are blocked. A later check that
+  passes unblocks the pod.
+- **`gather_notes_data_optimus.py --exact`**: tickets mode keeps only exact id
+  matches (used by `/pod-notify`, so a mistyped id never reaches a pod).
+
+### Changed
+- With `--no-mrs`, the gather script no longer requires the GitLab `.env` keys.
+- `task_to_issue` now keeps the Optimus REST `linked_clients` as
+  `optimus_clients` (`[{id, name}]`), for both tracks. The `clients` code string
+  that Step 4b writes is unchanged.
+
+### Routing rules
+- A ticket's clients are its Optimus client links. When it has none, routing
+  falls back to full names under the description's `## Reported client(s)`
+  heading, marked "guessed". It never guesses from codes or all-caps words.
+  "All clients / platform-wide" and "Internal" tickets go to no pod and are
+  reported.
+- Each pod gets one root post and one thread reply per ticket. A pod's log
+  note is written as soon as that pod is posted.
+- Pod notes are read the way Mem returns them: Markdown escapes, trailing
+  backslashes, a `#` title, plain `Channel ID:` fields and numbered lists are
+  all handled. `fill-ids` changes only the client lines.
+- A card carries the client title, the client paragraph, that pod's own
+  clients and the ticket link. A ticket without a client title or paragraph
+  is not sent. It never carries the internal summary, developer
+  mentions, MR/PR links or another pod's clients.
+
 ## [0.21.0] - 2026-10-29
 
 KB articles: one Intercom help-centre article per shipped legacy (M1) feature,
