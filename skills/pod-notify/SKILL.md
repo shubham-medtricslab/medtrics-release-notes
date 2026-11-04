@@ -13,11 +13,11 @@ All routing, rendering, dedup and log writing is `scripts/release/pod_map.py` �
 
 | Caller | Runs | Inputs |
 |---|---|---|
-| `/release-slack tickets …` | after Step 9b (archive), before 9c (`--kb`) | `/tmp/release_slack_data.json`, `/tmp/release_slack_summaries.txt` |
-| `/oracle-release tickets …` | after Step 11b (archive) | `/tmp/oracle_notes_data.json`, `/tmp/oracle_notes_summaries.txt` |
+| `/release-slack` (status or tickets mode) | after Step 9b (archive), before 9c (`--kb`) | `/tmp/release_slack_data.json`, `/tmp/release_slack_summaries.txt` |
+| `/oracle-release` (status or tickets mode) | after Step 11b (archive) | `/tmp/oracle_notes_data.json`, `/tmp/oracle_notes_summaries.txt` |
 | `/pod-notify <ids>` | its whole job | `/tmp/pod_notify_data.json`, `/tmp/pod_notify_summaries.txt` |
 
-It does **not** run in `status` or `mr` mode (those tickets are not shipped yet, or have no Optimus ticket), or when the user passed `--no-pod`. In `dry-run` it prints the routing table only (below). Nothing in it can surface as a release failure: any failure is one line in chat and the command finishes.
+It does **not** run in `/release-slack mr` mode (an MR has no Optimus ticket), or when the user passed `--no-pod`. In `dry-run` it prints the routing table only (below). Nothing in it can surface as a release failure: any failure is one line in chat and the command finishes.
 
 Below, `{data}` and `{summaries}` are the caller's files, `{source}` is the command (`/release-slack`, `/oracle-release`, `/pod-notify`), `{date}` is the date in the release header, `{link}` is the main post's permalink when the caller has one (Step 9b / 11b fetched it), and `P=${CLAUDE_PLUGIN_ROOT}/scripts/release`.
 

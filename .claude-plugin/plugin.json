@@ -1,6 +1,6 @@
 {
   "name": "medtrics-release-notes",
-  "version": "0.22.3",
+  "version": "0.23.0",
   "description": "Release notes, client-pod posts and KB articles for Medtrics. /release-slack and /oracle-release post one message per deploy, archive it to Mem and tell each client pod its tickets; /kb-articles drafts one Intercom KB article per shipped legacy feature.",
   "author": {
     "name": "Shubham Jha",

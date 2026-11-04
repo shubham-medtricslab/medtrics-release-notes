@@ -247,7 +247,7 @@ To trace a ticket: open the collection in Mem, search the id (`ORC-232`, `M1-145
 
 ## Client pods
 
-Each client belongs to a pod: a Slack channel such as `#impact-pod_<person>` or `#pod-<project>`. After a release in `tickets` mode, `/release-slack` and `/oracle-release` post each pod a short thread of its own: a root post saying "Shipped for your clients", then one card per ticket with the client title, the client paragraph, that pod's clients and the ticket link. The cards never include the internal summary, developer mentions, code links or another pod's clients. `/pod-notify <ids>` does the same for a release announced by hand.
+Each client belongs to a pod: a Slack channel such as `#impact-pod_<person>` or `#pod-<project>`. After a release (status or tickets mode), `/release-slack` and `/oracle-release` post each pod a short thread of its own: a root post saying "Shipped for your clients", then one card per ticket with the client title, the client paragraph, that pod's clients and the ticket link. The cards never include the internal summary, developer mentions, code links or another pod's clients. `/pod-notify <ids>` does the same for a release announced by hand.
 
 **The pod map** is the Mem collection `Release Notes Pod Map` (`MEM_POD_MAP_COLLECTION`), with one note per pod, written by the team:
 
@@ -378,7 +378,7 @@ Only the markdown-document commands write to disk, under `.claude/outputs/notes/
 
 ## Version history
 
-Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.22.3**.
+Detailed release history lives in [`CHANGELOG.md`](./CHANGELOG.md). Current version: **0.23.0**.
 
 ## Repository layout
 

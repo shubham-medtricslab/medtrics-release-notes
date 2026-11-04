@@ -9,7 +9,7 @@
 | Topic | Decision |
 |---|---|
 | Where it runs | Default step in `/release-slack` and `/oracle-release`, **and** a standalone `/pod-notify <ticket ids>` for hand-written releases |
-| Modes | Runs only in `tickets` mode. `status`, `mr` and `dry-run` skip it (`dry-run` prints the routing table only). `--no-pod` skips it everywhere |
+| Modes | Runs in `status` and `tickets` mode (status since 0.23.0). `mr` and `dry-run` skip it (`dry-run` prints the routing table only). `--no-pod` skips it everywhere |
 | Ticket → clients | `linked_clients` from the Optimus REST data the gather script already pulls (kept as `optimus_clients`). If empty, fall back to full names under the description's `## Reported client(s)` heading, marked "guessed" in the preview. No all-caps-code matching |
 | Platform-wide / internal | "All clients / platform-wide" and "Internal" tickets go to no pod; they're listed in the report |
 | Pod map | Mem collection "Release Notes Pod Map", one hand-edited note per pod: `Pod: #channel`, `Channel ID:`, `Clients:` (exact Optimus names). Names are resolved to client UUIDs; unknown names warn |

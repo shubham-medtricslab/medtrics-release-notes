@@ -1,5 +1,5 @@
 ---
-description: Post ONE combined internal release message to #dream-team — a compact root-post index plus threaded per-ticket cards that carry BOTH a client-portable exec-voice lede AND the internal technical detail (ticket IDs, developer @-mentions, client institution names, Optimus URLs). Replaces the former split /internal-notes + /release-slack commands. Internal-only; the team ports the exec-voice lede to clients themselves. Optional `--kb` queues the release's feature tickets for KB articles after the post. In `tickets` mode it then tells each client pod (Slack channel) which tickets concern its clients, unless `--no-pod` is passed.
+description: Post ONE combined internal release message to #dream-team — a compact root-post index plus threaded per-ticket cards that carry BOTH a client-portable exec-voice lede AND the internal technical detail (ticket IDs, developer @-mentions, client institution names, Optimus URLs). Replaces the former split /internal-notes + /release-slack commands. Internal-only; the team ports the exec-voice lede to clients themselves. Optional `--kb` queues the release's feature tickets for KB articles after the post. In `status` and `tickets` mode it then tells each client pod (Slack channel) which tickets concern its clients, unless `--no-pod` is passed.
 ---
 
 # Release Slack Announcement (combined internal post)
@@ -23,14 +23,15 @@ This command never posts to Slack without explicit user confirmation in the same
 /release-slack dry-run                            # print what would be gathered/posted, then exit without posting
 /release-slack --kb                               # status mode, then queue + offer KB articles after the post (Step 9c)
 /release-slack tickets M1-986,M1-1039 --kb        # explicit ticket list, then queue + offer KB articles
-/release-slack tickets M1-986,M1-1039 --no-pod    # explicit ticket list, without the client-pod posts (Step 9b2)
+/release-slack --no-pod                          # status mode, without the client-pod posts (Step 9b2)
+/release-slack tickets M1-986,M1-1039 --no-pod    # explicit ticket list, without the client-pod posts
 ```
 
 You may combine the mode with `dry-run`, e.g. `/release-slack tickets M1-986 dry-run`.
 
 `--kb` is opt-in and combines with any mode and with `dry-run`. It changes nothing about the release itself — gathering, analyzers, composition, lint, preview, posting and the Step 9b archive run exactly as without it, and it never delays or blocks the post. It only adds Step 9c, after the archive.
 
-In **`tickets` mode** the command also tells each client pod which tickets concern its clients (Step 9b2, `pod-notify` skill) — on by default, with its own preview and its own yes. `--no-pod` skips it and combines with anything; `status` and `mr` runs never post to pods. `/pod-notify <ids>` does the same step on its own later.
+In **`status` and `tickets` mode** the command also tells each client pod which tickets concern its clients (Step 9b2, `pod-notify` skill) — on by default, with its own preview and its own yes. `--no-pod` skips it and combines with anything; `mr` runs never post to pods (an MR has no Optimus ticket). `/pod-notify <ids>` does the same step on its own later.
 
 ## Pipeline overview
 
@@ -54,7 +55,7 @@ In **`tickets` mode** the command also tells each client pod which tickets conce
    9b. once the post is complete (this session, or the resume run that finishes it): archive ONE Mem
        note for this release session — trace header + the posted root and replies verbatim
        (release-archive skill → release_archive.py record; Mem is the only archive, nothing on disk)
-   9b2. only in tickets mode and without --no-pod, after 9b: pod-notify skill — route each posted ticket
+   9b2. in status or tickets mode, without --no-pod, after 9b: pod-notify skill — route each posted ticket
         to the pods whose Optimus clients it links (Mem pod map) → channel checks → ONE preview for all pods
         → one root + thread per pod → pod log in Mem (never a release failure)
    9c. only with --kb, after 9b (and 9b2): resolve the KB Queue + KB Article Ledger collections → kb_ledger.py
@@ -70,7 +71,7 @@ There is **no IP guard and no separate customer-facing markdown** in this pipeli
 
 - Slack root post + thread replies to the channel resolved from `SLACK_CHANNEL_INTERNAL` (default `#dream-team`, channel id `C1BCUHXT9`). Posted only after the user confirms.
 - **One Mem note for the release session** in the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`; `release-archive` skill) — date, channel, root ts, permalink, the posted ticket list, **and the posted root + every thread reply verbatim**. This is the **only** archive of the post: nothing is written to `.claude/outputs/` or anywhere else on disk. Written once the post is complete (this session, or the resume run that finishes it).
-- **In `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_MAP_COLLECTION` (default `Release Notes Pod Map`; `pod-notify` skill).
+- **In `status` or `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_MAP_COLLECTION` (default `Release Notes Pod Map`; `pod-notify` skill).
 - **With `--kb` only:** one queue note per newly queued feature ticket in the collection named by `MEM_KB_QUEUE_COLLECTION` (default `KB Queue`). KB article drafts are produced only if the user answers `y` at the `/kb-articles` plan preview — those drafts, files and ledger notes belong to `/kb-articles`, not to this command.
 - Working files only in `/tmp/` — the per-ticket summary blocks (`/tmp/release_slack_summaries.txt`) and the composed root / reply files (`/tmp/release_slack_root.txt`, `/tmp/release_slack_reply_NN.txt`); the archive step reads them.
 
@@ -452,9 +453,9 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
 4. **Write it:** `create_note({content, collection_ids: [<resolved collection uuid>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
 5. **If the write cannot happen** (collection unresolvable or ambiguous, or `create_note` fails once and again on one immediate retry): print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body from step 3 in a fenced block. Then finish. Never write the note to disk and never re-post to Slack.
 
-### Step 9b2 — Tell the client pods (pod-notify skill; `tickets` mode, on by default)
+### Step 9b2 — Tell the client pods (pod-notify skill; `status` and `tickets` mode, on by default)
 
-Runs only in **`tickets` mode** and only when the user did **not** pass `--no-pod`; never in `status` mode (those tickets have not shipped yet) or in `mr` mode (an `MR-NNNN` item has no Optimus ticket). It runs **after** the post is complete AND Step 9b has run (the archive note written, or its manual-paste fallback printed), and **before** Step 9c (`--kb`) — on a resume run, after the resume run's archive step. Nothing in it can surface as a release failure: the post and the archive are authoritative, and any failure is one line in chat.
+Runs in **`status` mode** (the default) and in **`tickets` mode**, only when the user did **not** pass `--no-pod`; never in `mr` mode (an `MR-NNNN` item has no Optimus ticket). The posted set is the same either way — the tickets in the release just announced — so pods hear about every release, however it was gathered. It runs **after** the post is complete AND Step 9b has run (the archive note written, or its manual-paste fallback printed), and **before** Step 9c (`--kb`) — on a resume run, after the resume run's archive step. Nothing in it can surface as a release failure: the post and the archive are authoritative, and any failure is one line in chat.
 
 Follow the bundled `medtrics-release-notes:pod-notify` skill with:
 
@@ -550,7 +551,7 @@ Follow the `kb-ledger` skill for every Mem call.
 - Does not write to `.env` or to the plugin directory.
 - Does not blind-retry failed posts (`slack_upload.py` retries rate limits internally; a failed or unverified write is surfaced, never re-posted automatically).
 - Does not auto-schedule itself.
-- Does not post to client pods in `status` or `mr` mode, with `--no-pod`, or without the pod preview's own `y`; never puts internal summaries, developer mentions or another pod's clients in a pod message.
+- Does not post to client pods in `mr` mode, with `--no-pod`, or without the pod preview's own `y`; never puts internal summaries, developer mentions or another pod's clients in a pod message.
 - Does nothing KB-related without `--kb` — no KB collection reads, no queue notes, no hand-off.
 - Does not draft KB articles without the user's `y` at the `/kb-articles` plan preview, and never passes `--yes` to it.
 

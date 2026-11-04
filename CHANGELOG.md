@@ -5,9 +5,14 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.23.0] - 2026-11-04
 
 ### Changed
+- **Pods hear about every release.** `/release-slack` and `/oracle-release`
+  now run the client-pod step in `status` mode (the default) too, not only in
+  `tickets` mode — a default run on 2026-11-04 reached no pod. It still has its
+  own preview and yes, and `--no-pod` still skips it; `mr` mode never posts to
+  pods.
 - **Folder layout.** The release scripts moved to `scripts/release/` (the KB
   scripts stay in `scripts/kb/`; `scripts/utf8_mode.py` is shared). Commands
   and skills call the new paths; `/pod-notify` and the setup's pod part set
