@@ -46,6 +46,10 @@ posted: that release's feature tickets are put on the KB queue and this command
 starts in `--from-release` mode, shows its plan and asks y/n. Say no and they
 stay queued for a later `/kb-articles pending`.
 
+**Every mode starts with the Version check** (Step 00 under Flow below) —
+`recheck`, `demo-data`, `--kb-queue` and a full run alike — before its first
+step.
+
 ## Re-check a run: `recheck <run_id>`
 
 Re-screens a finished run with the current rules and repackages it — no
@@ -90,6 +94,7 @@ needs only Optimus (no GitLab) and Mem:
 ## Pipeline overview
 
 ```
+00 version     installed plugin vs latest on GitHub; behind → warn + ask to continue
 0  preflight     paths (kb_paths) + setup check (kb_doctor --check) + Mem probe (hard stop) + .env keys + Claude in Chrome check + Downloads folder (Cowork) + sweep
 1  select        ledger + queue dumps → ids (argv | release archive | queue) → gather (features only,
                  skipped with --from-release) → kb_select filter
@@ -152,6 +157,19 @@ would pay for it twice). Grant nothing broader to them. The `mcp__claude-in-chro
 extension's (including `gif_creator`); the capture agent (Step 5), the canary and the Step 0 check use them. `mcp__cowork__request_cowork_directory` is Cowork-only: it mounts your Downloads folder, where the exported GIFs land (Step 0).
 
 ## Flow
+
+### Step 00 — Version check
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py
+```
+
+Read the `---VERSION_CHECK_RESULT---` block before anything else (before `.env`, Mem, or any API call; `dry-run` too):
+- `behind` → show its `message` (installed vs latest, and how to update) and ask **"Run anyway on the old version?"** Stop unless the user says yes.
+- `unknown` (no network, or the sandbox blocks GitHub) → print the `message` in one line and carry on.
+- `current` / `ahead` → carry on without comment.
+
+Never update or reinstall the plugin yourself.
 
 Set once, via Bash, from the selected folder: `K=${CLAUDE_PLUGIN_ROOT}/scripts/kb`,
 `RUN_ID=kb-$(date +%Y%m%d-%H%M)`, `TODAY=$(date +%Y-%m-%d)`, then

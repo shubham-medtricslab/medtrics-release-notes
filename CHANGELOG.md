@@ -5,6 +5,27 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.1] - 2026-11-10
+
+### Added
+- **Version check first.** Every command now starts by comparing the installed
+  plugin with the latest version on GitHub (`scripts/version_check.py`). If
+  the install is behind, it shows both versions and how to update, and asks
+  before running on the old copy — an old install of `/oracle-release` had
+  silently skipped the pod step. A restart or new chat does not update a
+  plugin, and the message says so. No network, or a sandbox that blocks
+  GitHub, prints one line and carries on.
+
+### Fixed
+- **The Mem developer directory loads again.** Mem returns note lines with a
+  trailing `\` (Markdown hard break), Markdown escapes (`\_`) and emails as
+  autolinks (`<a@b.com>`), so `dev_directory.py` dropped every note and each
+  release fell through to the Slack resolver. It now cleans each line the way
+  `pod_map.py` does, unwraps autolinks and ignores the `—` placeholder in the
+  email list. All 8 notes in the live directory parse (was 0).
+- A directory note that still cannot be read now prints a warning naming it
+  and is counted as `notes_dropped` in the result, instead of failing silently.
+
 ## [0.23.0] - 2026-11-04
 
 ### Changed

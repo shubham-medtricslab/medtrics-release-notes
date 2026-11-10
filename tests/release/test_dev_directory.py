@@ -89,6 +89,82 @@ class ParseRenderTests(unittest.TestCase):
         self.assertEqual(len(dd.load_notes(p_list)), 1)
 
 
+# The same note as Mem's list_notes returns it (shape captured 2026-11-10):
+# trailing `\` hard breaks, Markdown escapes, emails as autolinks, and the
+# `—, <email>` an earlier merge left behind.
+MEM_NOTE = {
+    "id": "33333333-3333-3333-3333-333333333333",
+    "version": 5,
+    "title": "Developer: Chris Tokodi",
+    "content": (
+        "Developer: Chris Tokodi\n\n"
+        "**Slack ID:** U0CHRIS\\\n"
+        "**Emails:** —, <chris@medtricslab.com>, <mailto:ct@medtricslab.com>\\\n"
+        "**GitHub login:** chris\\_tokodi\\\n"
+        "**GitLab username:** —\\\n"
+        "**Optimus assignee id:** 42\\\n"
+        "**Resolved via:** email\\\n"
+        "**First seen:** 2026-09-01\\\n"
+        "**Last used:** 2026-09-01\\\n"
+        "**Source:** medtrics-release-notes /release-slack\n"
+    ),
+}
+BROKEN_NOTE = {"id": "4444", "version": 1, "title": "Developer: Nobody",
+               "content": "Developer: Nobody\n\n**Slack ID:** not-an-id\\\n"}
+
+
+class MemFormatTests(unittest.TestCase):
+    def test_mem_markdown_is_parsed(self):
+        rec = dd.parse_note(MEM_NOTE)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["slack_id"], "U0CHRIS")
+        self.assertEqual(rec["emails"],
+                         ["chris@medtricslab.com", "ct@medtricslab.com"])
+        self.assertEqual(rec["github_login"], "chris_tokodi")
+        self.assertEqual(rec["source"], "medtrics-release-notes /release-slack")
+
+    def test_heading_title_is_accepted(self):
+        note = dict(MEM_NOTE, content="# " + MEM_NOTE["content"])
+        self.assertEqual(dd.parse_note(note)["name"], "Chris Tokodi")
+
+    def test_render_drops_placeholder_and_autolinks(self):
+        body = dd.render_note(dd.parse_note(MEM_NOTE))
+        self.assertIn("**Emails:** chris@medtricslab.com, ct@medtricslab.com\n",
+                      body)
+        self.assertNotIn("\\", body)
+
+    def test_prefill_matches_mem_note_by_email_and_login(self):
+        d = tempfile.mkdtemp()
+        notes = _write(d, "notes.json", {"notes": [MEM_NOTE, BROKEN_NOTE]})
+        data = _write(d, "data.json", {"issues": [
+            {"identifier": "ORC-1", "assignee_email": "Chris@MedtricsLab.com"},
+            {"identifier": "ORC-2", "mrs": [{"author_username": "chris_tokodi"}]},
+        ]})
+        code, result, err = _run(["prefill", "--data", data, "--notes", notes])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["notes_loaded"], 1)
+        self.assertEqual(result["notes_dropped"], 1)
+        self.assertIn("Developer: Nobody", err)
+        self.assertEqual((result["prefilled"], result["by_email"],
+                          result["by_login"]), (2, 1, 1))
+
+    def test_pending_updates_mem_note_instead_of_creating(self):
+        d = tempfile.mkdtemp()
+        notes = _write(d, "notes.json", {"notes": [MEM_NOTE]})
+        data = _write(d, "data.json", {"issues": [
+            {"identifier": "ORC-1", "assignee_email": "new@medtricslab.com",
+             "assignee_name": "Chris Tokodi", "assignee_slack_id": "U0CHRIS",
+             "assignee_slack_resolved_via": "email"}]})
+        out = str(Path(d) / "pending.json")
+        code, result, _ = _run(["pending", "--data", data, "--notes", notes,
+                                "--out", out, "--today", "2026-11-10"])
+        self.assertEqual((code, result["creates"], result["updates"]), (0, 0, 1))
+        write = json.loads(Path(out).read_text())["writes"][0]
+        self.assertEqual(write["note_id"], MEM_NOTE["id"])
+        self.assertIn("chris@medtricslab.com, ct@medtricslab.com, "
+                      "new@medtricslab.com", write["content"])
+
+
 class PrefillTests(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()

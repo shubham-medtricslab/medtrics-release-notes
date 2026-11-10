@@ -29,6 +29,7 @@ In **`status` and `tickets` mode** the command also tells each client pod which 
 ## Pipeline overview
 
 ```
+0. version check — installed plugin vs latest on GitHub; behind → warn + ask to continue
 1. validate .env keys + confirm the Mem MCP is connected (hard stop — Mem is the release archive)
 2-pre. PR overrides: if Mem is connected, dump the "Oracle PR Overrides" collection to /tmp/oracle_pr_overrides.json
    (pr-overrides skill); otherwise print one line and continue on the sweep alone
@@ -102,6 +103,19 @@ In `.claude/settings.local.json` under `permissions.allow`:
 ```
 
 ## Flow
+
+### Step 0 — Version check
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py
+```
+
+Read the `---VERSION_CHECK_RESULT---` block before anything else (before `.env`, Mem, or any API call; `dry-run` too):
+- `behind` → show its `message` (installed vs latest, and how to update) and ask **"Run anyway on the old version?"** Stop unless the user says yes.
+- `unknown` (no network, or the sandbox blocks GitHub) → print the `message` in one line and carry on.
+- `current` / `ahead` → carry on without comment.
+
+Never update or reinstall the plugin yourself.
 
 ### Step 1 — Validate environment
 

@@ -60,6 +60,21 @@ A missing key aborts the command before any gather call.
 
 ## Pipeline
 
+### Step 0 — Version check
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py
+```
+
+Read the `---VERSION_CHECK_RESULT---` block before anything else (before `.env`, Mem, or any API call; `dry-run` too):
+- `behind` → show its `message` (installed vs latest, and how to update) and ask **"Run anyway on the old version?"** Stop unless the user says yes.
+- `unknown` (no network, or the sandbox blocks GitHub) → print the `message` in one line and carry on.
+- `current` / `ahead` → carry on without comment.
+
+Never update or reinstall the plugin yourself.
+
+Skip this step when another command of this plugin already ran it in this session (e.g. `/notes`).
+
 ### Step 1 — Gather data
 
 ```bash

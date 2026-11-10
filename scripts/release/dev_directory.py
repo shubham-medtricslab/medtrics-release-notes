@@ -74,6 +74,12 @@ FIELD_RE = re.compile(r"^\*\*(?P<key>[^*]+?):\*\*\s*(?P<value>.*)$")
 # Sanity shape only (real ids are 9–11 chars); the lint gate enforces Slack's
 # exact mention grammar downstream.
 SLACK_ID_RE = re.compile(r"^[UW][A-Z0-9]{4,}$")
+# Mem hands notes back as Markdown: a trailing `\` as its hard line break,
+# escapes such as `\_` and `\.`, and emails as autolinks (`<a@b.com>`).
+MD_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!~|<>])")
+AUTOLINK_RE = re.compile(r"^<(?:mailto:)?(?P<inner>[^<>\s]+)>$", re.I)
+# What render_note writes for an empty field; never a real list item.
+PLACEHOLDERS = {"—", "-", "–"}
 
 # Note field labels (exact rendering) and their internal keys.
 FIELDS = [
@@ -98,8 +104,25 @@ def normalize_name(value):
     return " ".join(v.split())
 
 
+def clean_line(line):
+    """One note line as written: Mem's trailing hard break and Markdown
+    escapes removed (same rule as pod_map.clean_line)."""
+    line = line.rstrip()
+    if line.endswith("\\") and not line.endswith("\\\\"):
+        line = line[:-1].rstrip()
+    return MD_ESCAPE_RE.sub(r"\1", line)
+
+
+def _clean_item(value):
+    """Unwrap a Markdown autolink (`<a@b.com>`, `<mailto:a@b.com>`)."""
+    value = (value or "").strip()
+    m = AUTOLINK_RE.match(value)
+    return m.group("inner") if m else value
+
+
 def _split_list(value):
-    return [p.strip() for p in re.split(r"[,\s]+", value or "") if p.strip()]
+    items = (_clean_item(p) for p in re.split(r"[,\s]+", value or ""))
+    return [p for p in items if p and p not in PLACEHOLDERS]
 
 
 # --------------------------------------------------------------------------- #
@@ -149,7 +172,7 @@ def parse_note(note):
     lines = content.splitlines()
     if not lines:
         return None
-    title = lines[0].strip()
+    title = re.sub(r"^\s*#{1,6}\s+", "", clean_line(lines[0])).strip()
     if not title.startswith(TITLE_PREFIX):
         return None
     rec = {
@@ -160,11 +183,11 @@ def parse_note(note):
     for label, key in FIELDS:
         rec[key] = [] if key in LIST_FIELDS else ""
     for line in lines[1:]:
-        m = FIELD_RE.match(line.strip())
+        m = FIELD_RE.match(clean_line(line).strip())
         if not m:
             continue
         label = m.group("key").strip().lower()
-        value = m.group("value").strip()
+        value = _clean_item(m.group("value"))
         for flabel, key in FIELDS:
             if flabel.lower() == label:
                 if key in LIST_FIELDS:
@@ -187,11 +210,20 @@ def render_note(rec):
     return "\n".join(out) + "\n"
 
 
-def load_notes(path):
+def _is_directory_note(note):
+    """True when the note is titled as a directory note, parseable or not."""
+    title = note.get("title") or (note.get("content") or "").split("\n", 1)[0]
+    title = re.sub(r"^\s*#{1,6}\s+", "", clean_line(title)).strip()
+    return title.startswith(TITLE_PREFIX)
+
+
+def load_notes(path, stats=None):
     """Load the orchestrator's saved `list_notes` response.
 
     Accepts a JSON object with a `notes` list, a bare list, or a missing/empty
-    file (→ empty directory). Returns the parsed directory records.
+    file (→ empty directory). Returns the parsed directory records. When
+    `stats` is a dict, `stats["dropped"]` lists the titles of directory notes
+    that could not be parsed — so a Mem format change is loud, not silent.
     """
     p = Path(path) if path else None
     if not p or not p.exists() or p.stat().st_size == 0:
@@ -210,7 +242,19 @@ def load_notes(path):
         rec = parse_note(n)
         if rec:
             records.append(rec)
+        elif stats is not None and _is_directory_note(n):
+            stats.setdefault("dropped", []).append(
+                (n.get("title") or (n.get("content") or "").split("\n", 1)[0]).strip())
     return records
+
+
+def _warn_dropped(stats):
+    dropped = stats.get("dropped") or []
+    if dropped:
+        print(f"WARNING: {len(dropped)} directory note(s) could not be read "
+              f"(no valid Slack ID after parsing): {', '.join(dropped)}. "
+              "Check the note format in Mem.", file=sys.stderr)
+    return len(dropped)
 
 
 # --------------------------------------------------------------------------- #
@@ -271,7 +315,9 @@ def _load_data(path):
 
 def cmd_prefill(args):
     data = _load_data(args.data)
-    directory = Directory(load_notes(args.notes))
+    stats = {}
+    directory = Directory(load_notes(args.notes, stats))
+    dropped = _warn_dropped(stats)
     prefilled = 0
     by_how = {"email": 0, "login": 0, "name": 0}
     unmatched = []
@@ -301,6 +347,7 @@ def cmd_prefill(args):
                  "total": total, "by_email": by_how["email"],
                  "by_login": by_how["login"], "by_name": by_how["name"],
                  "notes_loaded": len(directory.records),
+                 "notes_dropped": dropped,
                  "unmatched": unmatched, "error": None})
     return 0
 
@@ -337,7 +384,9 @@ def _merge_identity(rec, ident, via, today, source):
 
 def cmd_pending(args):
     data = _load_data(args.data)
-    records = load_notes(args.notes)
+    stats = {}
+    records = load_notes(args.notes, stats)
+    dropped = _warn_dropped(stats)
     directory = Directory(records)
     today = args.today or _dt.date.today().isoformat()
     source = f"medtrics-release-notes {args.source}".strip()
@@ -399,6 +448,7 @@ def cmd_pending(args):
           f"{skipped_mem} issue(s) already served from Mem.", file=sys.stderr)
     emit_result({"ok": True, "action": "pending", "creates": len(creates),
                  "updates": len(updates), "served_from_mem": skipped_mem,
+                 "notes_dropped": dropped,
                  "out": args.out or None, "error": None})
     return 0
 

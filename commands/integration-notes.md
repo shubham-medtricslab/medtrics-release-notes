@@ -44,6 +44,21 @@ Parse `$ARGUMENTS` as follows:
 - **`mr <iid>`**: Skip Optimus entirely, process a single GitLab MR by its IID number (e.g., `mr 6567`)
 - **`dry-run`** (can be appended to any mode): Show the filtered diffs but skip the analysis step (e.g., `status dry-run`, `tickets M1-583 dry-run`)
 
+## Step 0: Version check
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py
+```
+
+Read the `---VERSION_CHECK_RESULT---` block before anything else (before `.env`, Mem, or any API call; `dry-run` too):
+- `behind` → show its `message` (installed vs latest, and how to update) and ask **"Run anyway on the old version?"** Stop unless the user says yes.
+- `unknown` (no network, or the sandbox blocks GitHub) → print the `message` in one line and carry on.
+- `current` / `ahead` → carry on without comment.
+
+Never update or reinstall the plugin yourself.
+
+Skip this step when another command of this plugin already ran it in this session (e.g. `/notes`).
+
 ## Step 1: Gather Data
 
 Run the shared data gathering script with `--filter-integration` to only include integration-relevant diffs. It reads `.env` automatically, queries Optimus and GitLab, fetches MR diffs, filters to integration-relevant files, and outputs structured JSON.

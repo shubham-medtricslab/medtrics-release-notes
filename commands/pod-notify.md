@@ -36,6 +36,19 @@ Missing keys → list them and stop before any call. The **Mem MCP must be conne
 
 `P=${CLAUDE_PLUGIN_ROOT}/scripts/release`; today's date via `date +%Y-%m-%d`; `mkdir -p /tmp/pod_notify`.
 
+### 0 — Version check (every mode, `resume` too)
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py
+```
+
+Read the `---VERSION_CHECK_RESULT---` block before anything else (before `.env`, Mem, or any API call; `dry-run` too):
+- `behind` → show its `message` (installed vs latest, and how to update) and ask **"Run anyway on the old version?"** Stop unless the user says yes.
+- `unknown` (no network, or the sandbox blocks GitHub) → print the `message` in one line and carry on.
+- `current` / `ahead` → carry on without comment.
+
+Never update or reinstall the plugin yourself.
+
 **`resume`:** run the `pod-notify` skill's step 1 (the collection id the log needs), then its step 5 Resume, then step 7.
 
 ### 1 — Gather (Optimus only)

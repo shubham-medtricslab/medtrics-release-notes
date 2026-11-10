@@ -42,6 +42,19 @@ plus the Mem collection tools (`list_collections`, `create_collection`).
 
 ## Start
 
+### Version check (first)
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/version_check.py
+```
+
+Read the `---VERSION_CHECK_RESULT---` block before anything else (before `.env`, Mem, or any API call; `dry-run` too):
+- `behind` → show its `message` (installed vs latest, and how to update) and ask **"Run anyway on the old version?"** Stop unless the user says yes.
+- `unknown` (no network, or the sandbox blocks GitHub) → print the `message` in one line and carry on.
+- `current` / `ahead` → carry on without comment.
+
+Never update or reinstall the plugin yourself.
+
 `K=${CLAUDE_PLUGIN_ROOT}/scripts/kb`. Work from the folder you were started in.
 
 1. `python3 $K/kb_paths.py ensure` — creates `.kb-runs/` and
