@@ -6,7 +6,9 @@ login → unique name) on both the classic (assignee) and Oracle (PR author)
 issue shapes; prefill never overwrites an existing id; pending emits a create
 for a new developer, an update carrying the note version for a known one,
 nothing for a Mem-served issue, and never overwrites a conflicting mapping;
-a missing notes file is an empty directory, not an error.
+a missing notes file is an empty directory, not an error. A note may list
+several GitHub/GitLab logins (typed by hand or learned by pending), and
+prefill matches on any of them.
 """
 
 import contextlib
@@ -70,7 +72,8 @@ class ParseRenderTests(unittest.TestCase):
         rec = dd.parse_note(CHRIS_NOTE)
         self.assertEqual(rec["slack_id"], "U0CHRIS")
         self.assertEqual(rec["emails"], ["chris@medtricslab.com"])
-        self.assertEqual(rec["github_login"], "ctokodi")
+        self.assertEqual(rec["github_login"], ["ctokodi"])
+        self.assertEqual(rec["gitlab_username"], [])
         self.assertEqual(rec["version"], 3)
         self.assertEqual(dd.render_note(rec), CHRIS_NOTE["content"])
 
@@ -120,7 +123,7 @@ class MemFormatTests(unittest.TestCase):
         self.assertEqual(rec["slack_id"], "U0CHRIS")
         self.assertEqual(rec["emails"],
                          ["chris@medtricslab.com", "ct@medtricslab.com"])
-        self.assertEqual(rec["github_login"], "chris_tokodi")
+        self.assertEqual(rec["github_login"], ["chris_tokodi"])
         self.assertEqual(rec["source"], "medtrics-release-notes /release-slack")
 
     def test_heading_title_is_accepted(self):
@@ -317,6 +320,87 @@ class PendingTests(unittest.TestCase):
         self.assertEqual(result["updates"], 0)
         self.assertEqual(result["creates"], 1)
         self.assertEqual(out["writes"][0]["slack_id"], "U0DIFF")
+
+
+# Santhosh commits as both santhosh2 and toshmd (2026-11-16 Oracle run).
+SANTHOSH_NOTE = {
+    "id": "55555555-5555-5555-5555-555555555555",
+    "version": 2,
+    "content": (
+        "Developer: Santhosh Kumar\n\n"
+        "**Slack ID:** U0TOSH\n"
+        "**Emails:** santhosh@medtricslab.com\n"
+        "**GitHub login:** santhosh2, ToshMD\n"
+        "**GitLab username:** —\n"
+        "**Optimus assignee id:** —\n"
+        "**Resolved via:** manual\n"
+        "**First seen:** 2026-10-01\n"
+        "**Last used:** 2026-10-01\n"
+        "**Source:** medtrics-release-notes /oracle-release\n"
+    ),
+}
+
+
+class MultipleLoginTests(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.notes = _write(self.d, "notes.json",
+                            {"notes": [CHRIS_NOTE, SANTHOSH_NOTE]})
+
+    def test_note_with_several_logins_round_trips(self):
+        rec = dd.parse_note(SANTHOSH_NOTE)
+        self.assertEqual(rec["github_login"], ["santhosh2", "ToshMD"])
+        self.assertEqual(dd.render_note(rec), SANTHOSH_NOTE["content"])
+
+    def test_plural_label_typed_by_hand_is_accepted(self):
+        note = dict(SANTHOSH_NOTE, content=SANTHOSH_NOTE["content"].replace(
+            "**GitHub login:** santhosh2, ToshMD",
+            "**GitHub logins:** santhosh2 toshmd santhosh2"))
+        rec = dd.parse_note(note)
+        self.assertEqual(rec["github_login"], ["santhosh2", "toshmd"])
+        self.assertIn("**GitHub login:** santhosh2, toshmd\n",
+                      dd.render_note(rec))
+
+    def test_prefill_matches_any_login_case_insensitively(self):
+        data = _write(self.d, "data.json", {"issues": [
+            {"identifier": "ORC-965", "mrs": [{"author_username": "toshmd"}]},
+            {"identifier": "ORC-966", "mrs": [{"author_username": "Santhosh2"}]},
+        ]})
+        code, result, _ = _run(["prefill", "--data", data, "--notes", self.notes])
+        issues = json.loads(Path(data).read_text())["issues"]
+        self.assertEqual(code, 0)
+        self.assertEqual([i["assignee_slack_id"] for i in issues],
+                         ["U0TOSH", "U0TOSH"])
+        self.assertEqual(result["by_login"], 2)
+        self.assertEqual(issues[0]["assignee_name_from_directory"],
+                         "Santhosh Kumar")
+
+    def test_pending_adds_a_new_login_to_a_known_developer(self):
+        data = _write(self.d, "data.json", {"issues": [
+            {"identifier": "ORC-1", "assignee_slack_id": "U0CHRIS",
+             "assignee_slack_resolved_via": "email",
+             "mrs": [{"author_email": "chris@medtricslab.com",
+                      "author_name": "Chris Tokodi",
+                      "author_username": "chris-t"}]}]})
+        out = str(Path(self.d) / "pending.json")
+        code, result, _ = _run(["pending", "--data", data, "--notes", self.notes,
+                                "--out", out, "--today", "2026-11-16"])
+        self.assertEqual((code, result["creates"], result["updates"]), (0, 0, 1))
+        w = json.loads(Path(out).read_text())["writes"][0]
+        self.assertEqual((w["note_id"], w["version"]), (CHRIS_NOTE["id"], 3))
+        self.assertIn("**GitHub login:** ctokodi, chris-t\n", w["content"])
+
+    def test_pending_does_not_repeat_a_known_login(self):
+        data = _write(self.d, "data.json", {"issues": [
+            {"identifier": "ORC-2", "assignee_slack_id": "U0TOSH",
+             "assignee_slack_resolved_via": "name",
+             "mrs": [{"author_email": "santhosh@medtricslab.com",
+                      "author_name": "Santhosh Kumar",
+                      "author_username": "TOSHMD"}]}]})
+        out = str(Path(self.d) / "pending.json")
+        code, result, _ = _run(["pending", "--data", data, "--notes", self.notes,
+                                "--out", out])
+        self.assertEqual(json.loads(Path(out).read_text())["writes"], [])
 
 
 if __name__ == "__main__":

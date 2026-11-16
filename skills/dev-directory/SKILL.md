@@ -42,6 +42,8 @@ Developer: Chris Tokodi
 **Source:** medtrics-release-notes /oracle-release
 ```
 
+`Emails`, `GitHub login` and `GitLab username` each take a comma-separated list. A developer who commits under more than one login (for example `**GitHub login:** santhosh2, toshmd`) matches on any of them, case-insensitively. Add a login to a note by hand, or let `pending` add it: when a known developer turns up under a new login, the update appends it. A hand-typed plural label (`GitHub logins:`) is read the same way.
+
 `Resolved via` records the tier that first produced the id (`email`, `name`, `fuzzy`, or `manual` when a human wrote the note). A fuzzy-tier note is cached like any other — the user chose immediate write-back — so if the preview ever shows a wrong `@Name (Author Name)` pairing, fix it at the source: edit the note's `Slack ID` (or trash the note) in Mem. The next run picks up the correction. `--force` on the resolver bypasses the cache for a single run without touching Mem.
 
 Notes in the collection that do not start with `Developer: ` or lack a plausible `Slack ID` are ignored by the parser, so stray notes cannot corrupt a run.

@@ -45,13 +45,17 @@ Note schema (first line = Mem note title):
 
     **Slack ID:** U02AB0913
     **Emails:** chris@medtricslab.com
-    **GitHub login:** ctokodi
+    **GitHub login:** ctokodi, chris-tokodi
     **GitLab username:** ctokodi
     **Optimus assignee id:** 42
     **Resolved via:** email
     **First seen:** 2026-09-02
     **Last used:** 2026-09-02
     **Source:** medtrics-release-notes /oracle-release
+
+`Emails`, `GitHub login` and `GitLab username` each hold a comma-separated
+list, so one developer who commits under several logins matches on any of
+them. A note with a single value is simply a one-item list.
 """
 
 import argparse
@@ -93,7 +97,15 @@ FIELDS = [
     ("Last used", "last_used"),
     ("Source", "source"),
 ]
-LIST_FIELDS = {"emails"}
+LIST_FIELDS = {"emails", "github_login", "gitlab_username"}
+# Emails compare lowercased; logins keep the case they were written in and
+# compare case-insensitively (GitHub and GitLab logins are case-insensitive).
+LOWERCASE_FIELDS = {"emails"}
+# Extra labels a human may type by hand; parsed into the same field.
+LABEL_ALIASES = {
+    "github logins": "github_login",
+    "gitlab usernames": "gitlab_username",
+}
 
 
 def normalize_name(value):
@@ -123,6 +135,20 @@ def _clean_item(value):
 def _split_list(value):
     items = (_clean_item(p) for p in re.split(r"[,\s]+", value or ""))
     return [p for p in items if p and p not in PLACEHOLDERS]
+
+
+def _dedupe(items):
+    """Drop case-insensitive repeats, keeping the first spelling and order."""
+    seen, out = set(), []
+    for item in items:
+        if item.lower() not in seen:
+            seen.add(item.lower())
+            out.append(item)
+    return out
+
+
+def _has(items, value):
+    return value.lower() in {i.lower() for i in items or []}
 
 
 # --------------------------------------------------------------------------- #
@@ -188,12 +214,17 @@ def parse_note(note):
             continue
         label = m.group("key").strip().lower()
         value = _clean_item(m.group("value"))
-        for flabel, key in FIELDS:
-            if flabel.lower() == label:
-                if key in LIST_FIELDS:
-                    rec[key] = [v.lower() for v in _split_list(value)]
-                else:
-                    rec[key] = value
+        key = LABEL_ALIASES.get(label) or next(
+            (k for flabel, k in FIELDS if flabel.lower() == label), None)
+        if key is None:
+            continue
+        if key in LIST_FIELDS:
+            items = _split_list(value)
+            if key in LOWERCASE_FIELDS:
+                items = [v.lower() for v in items]
+            rec[key] = _dedupe(items)
+        else:
+            rec[key] = value
     if not SLACK_ID_RE.match(rec.get("slack_id", "")):
         return None
     return rec
@@ -272,9 +303,8 @@ class Directory:
             self.by_slack.setdefault(r["slack_id"], r)
             for e in r.get("emails", []):
                 self.by_email.setdefault(e.lower(), r)
-            for login in (r.get("github_login"), r.get("gitlab_username")):
-                if login and login != "—":
-                    self.by_login.setdefault(login.lower(), r)
+            for login in (r.get("github_login", []) + r.get("gitlab_username", [])):
+                self.by_login.setdefault(login.lower(), r)
             n = normalize_name(r.get("name"))
             if n and " " in n:
                 self.by_name.setdefault(n, set()).add(r["slack_id"])
@@ -359,9 +389,10 @@ def _merge_identity(rec, ident, via, today, source):
         rec["emails"].append(ident["email"])
         changed = True
     if ident["login"]:
+        # A developer may commit under several logins: add each new one.
         key = "github_login" if ident["track"] == "oracle" else "gitlab_username"
-        if not rec.get(key) or rec[key] == "—":
-            rec[key] = ident["login"]
+        if not _has(rec.get(key), ident["login"]):
+            rec[key] = (rec.get(key) or []) + [ident["login"]]
             changed = True
     if ident["assignee_id"] and (not rec.get("optimus_assignee_id")
                                  or rec["optimus_assignee_id"] == "—"):
@@ -420,8 +451,8 @@ def cmd_pending(args):
         rec = creates.get(uid)
         if rec is None:
             rec = {"note_id": "", "version": None, "name": ident["name"],
-                   "slack_id": uid, "emails": [], "github_login": "",
-                   "gitlab_username": "", "optimus_assignee_id": "",
+                   "slack_id": uid, "emails": [], "github_login": [],
+                   "gitlab_username": [], "optimus_assignee_id": "",
                    "resolved_via": via, "first_seen": today,
                    "last_used": today, "source": source}
             creates[uid] = rec
