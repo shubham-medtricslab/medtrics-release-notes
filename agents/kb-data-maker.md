@@ -38,7 +38,10 @@ calls, export action, write visit id and GIF name) and the raw-file contract.
    throw means they are gone: clear the recording, stop, reply
    `KB_DATA_DONE ok=<n> failed=<m> stop=needs_install`), then follow its "Start"
    section (`navigate` to the Admin portal entry, `wait`, run its `probe_js`; a
-   `KB_PERSONA` / `KB_LOGIN` throw ends the run with `bridge_down`), then do each
+   `KB_PERSONA` / `KB_LOGIN` throw ends the run with `bridge_down`; its `tn` tenant
+   verdict is NOT a stop: the portal entry lands on a list such as the users page;
+   each form fill's first `guard_js` on its own start page is the tenant check, and a
+   `BLOCK` there skips only that form fill with `write_error` "tenant_block"), then do each
    form fill in order with the "Each form fill" steps, using each block's `js`, `export` and
    `navigate` values exactly. **Run the block's `guard_js` (the probe stub) right
    after every `navigate` and right after every path click, before any field is

@@ -448,6 +448,10 @@ class Brief(Base):
         self.assertIn('"write": ["Save"]', b["save_pick"]["js"])
         self.assertIn('"choose": true', b["choose_pick"]["js"])
         self.assertNotIn("allow", b["choose_pick"]["js"])                  # a dry run never asks for an allowance
+        # the Start probe lands on the portal's own page (the users list on the demo): its
+        # tenant verdict must not stop the run (kb-20261116-2131 stopped M1-465 there)
+        start = md.split("## Start (before the first form fill)", 1)[1].split("## Form fills", 1)[0]
+        self.assertIn("ignore its `tn`", start)
         self.assertNotIn("pending", b)
         self.assertNotIn("expect", b)
         self.assertIn('"labels": ["Save"]', b["pre_save_probe_js"])

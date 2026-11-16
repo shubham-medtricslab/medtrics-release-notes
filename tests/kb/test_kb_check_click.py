@@ -160,7 +160,7 @@ class CheckJs(unittest.TestCase):
 
 
 class SurfaceClicks(unittest.TestCase):
-    MIGRATE = [{"text": "Migrate Curriculum"}, {"check": "Courses"}, {"check": "Sessions"},
+    MIGRATE = [{"text": "Migrate Curriculum", "named": True}, {"check": "Courses"}, {"check": "Sessions"},
                {"check": "Session Schedules"}, {"check": "Set migrated sessions to Unpublished"}]
 
     def test_m1_1520_gets_the_migrate_tab_path(self):
@@ -182,15 +182,31 @@ class SurfaceClicks(unittest.TestCase):
         deeper = {**route, "start": "/administration/curriculum/sessions/"}
         self.assertEqual(S._route_surface(deeper, ROUTES)["route"]["clicks"], [])
 
+    def test_surface_text_clicks_are_named_ticket_clicks_are_not(self):
+        self.assertEqual(S.surface_clicks({"clicks": [{"text": "Submit"}, {"row": True}, {"check": "A"}]}),
+                         [{"text": "Submit", "named": True}, {"row": True}, {"check": "A"}])
+        self.assertEqual(C._click_spec({"text": "View", "named": True}), {"text": "View", "named": True})
+        self.assertEqual(C._click_spec({"text": "View"}), {"text": "View"})
+        # the form-fill path keeps it too, and a named click carries the probe args (tenant check)
+        self.assertEqual(KD._click_specs([{"text": "Submit", "named": True}, {"text": "Go"}]),
+                         [{"text": "Submit", "named": True}, {"text": "Go"}])
+        a = KD.click_json("nav", "Submit", pa={"v": 1}, named=True)
+        self.assertEqual((a["named"], a["pa"]), (True, {"v": 1, "labels": []}))
+        self.assertNotIn("named", KD.click_json("nav", "Go"))
+
     def test_every_surface_click_in_the_table_is_safe(self):
         for s in ROUTES["surfaces"]:
             for k in s.get("clicks") or []:
                 with self.subTest(surface=s["surface"], click=k):
                     self.assertEqual(len(k), 1)
-                    self.assertTrue(set(k) <= {"text", "check", "row"})
+                    self.assertTrue(set(k) <= {"text", "check", "row"})       # "named" is added by kb_select
                     if "text" in k:
                         self.assertEqual(C.click_refusal({"tag": "a", "text": k["text"],
-                                                          "attrs": {"href": "#t", "data-bs-toggle": "tab"}}), "")
+                                                          "attrs": {"href": "#t", "data-bs-toggle": "tab"}},
+                                                         named=True), "")
+                        # named lets a plain button through, but never danger words
+                        self.assertEqual(C.click_refusal({"tag": "button", "text": k["text"], "attrs": {}},
+                                                         named=True), "")
                     if "check" in k:
                         self.assertEqual(C.check_refusal(k["check"], box()), "")
 

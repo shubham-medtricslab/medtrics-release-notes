@@ -473,7 +473,8 @@ def _click_specs(clicks):
         else:
             t = k.get("text") if isinstance(k, dict) else k
             if str(t or "").strip():
-                out.append({"text": str(t).strip()})
+                out.append({"text": str(t).strip(),
+                            **({"named": True} if isinstance(k, dict) and k.get("named") else {})})
     return out
 
 
@@ -666,7 +667,8 @@ def _args_for(calls, persona):
     return visits[0]["args"] if visits else None
 
 
-def click_json(side, text=None, row=False, write=None, pa=None, choose=False, allow=None, check=None):
+def click_json(side, text=None, row=False, write=None, pa=None, choose=False, allow=None, check=None,
+               named=False):
     """kbclick args — same shape kb_capture builds for a click visit's click_args.
     choose: dry-run mode, the page picks the safe answer in the open dialog itself.
     allow: save mode, {"method", "path", "dlg", "query"} for the one-shot allowance."""
@@ -680,6 +682,9 @@ def click_json(side, text=None, row=False, write=None, pa=None, choose=False, al
         args["check"] = check
     else:
         args["text"] = text
+        if named:                      # a kb_routes.json click: soft refusals off, tenant check on
+            args["named"] = True
+            args["pa"] = {**(pa or {}), "labels": []}
     if write:
         args["write"] = list(write)
     if allow:
@@ -769,7 +774,8 @@ def record_block(ticket, rec, visit, args, portal_entry=""):
         "visit_id": visit["visit_id"], "gif": visit["gif"],
         "navigate": rec["start"],
         "guard_js": C.stub({**args, "labels": []}),
-        "path_picks": [{"click": k, "js": C.stub(click_json(side, k.get("text"), bool(k.get("row")), pa=pa, check=k.get("check")), C.KBC_KEY)}
+        "path_picks": [{"click": k, "js": C.stub(click_json(side, k.get("text"), bool(k.get("row")), pa=pa, check=k.get("check"),
+                                                                     named=bool(k.get("named"))), C.KBC_KEY)}
                        for k in rec["path"]],
         "needs_demo_context": any(k.get("row") for k in rec["path"]),
         "fields": [field_block(f, side) for f in rec["fields"]],
@@ -863,8 +869,10 @@ The orchestrator re-sends the install (`data_install.json`) and starts you again
    `wait` 4 seconds, run `guard_js`; this form fill runs on that portal.
 1. `navigate` to the base URL + `navigate` below; `computer` `wait` 4 seconds, then
    run `guard_js` (the probe: it installs the write guard in the fresh page; nothing
-   is filled or clicked before it ran). If a click path follows a group row, send
-   the same row `kbclick` once more when the result says `"group": true`.
+   is filled or clicked before it ran). If its `tn.v` is `BLOCK`, this page shows
+   tenant data: write `write_error` "tenant_block" for this form fill, fill and
+   click nothing, and go on to the next form fill. If a click path follows a group
+   row, send the same row `kbclick` once more when the result says `"group": true`.
 2. For each entry of `path_picks`, in order: run its `js` with `javascript_tool`
    (it returns `{{"ok":true,"x":…,"y":…}}` or throws), `computer` `left_click` at
    exactly that `x`,`y`, `wait` 2 seconds, then run `guard_js` again (a click can
@@ -1018,7 +1026,10 @@ def cmd_brief(a):
     md += (f"\nBase URL: `{calls.get('base_url', '')}`\n\n## Start (before the first form fill)\n\n"
            "Form fills run on the Admin portal: `navigate` to the base URL + `navigate` below, "
            "`computer` `wait` 4 seconds, then run `probe_js` (it throws `KB_PERSONA` or `KB_LOGIN` "
-           "if this is not the signed-in Admin portal: stop and write `bridge_down`).\n\n"
+           "if this is not the signed-in Admin portal: stop and write `bridge_down`). This probe only "
+           "confirms the portal and sign-in: ignore its `tn` (tenant) verdict. The portal entry lands "
+           "on whatever page the portal opens (often the user list), not on a form; the tenant check "
+           "belongs to each form fill's own start page (step 1 below). Never stop the run for `tn` here.\n\n"
            f"```json\n{json.dumps(setup, indent=1)}\n```\n\n## Form fills\n")
     for b in blocks:
         md += f"\n### {b['ticket']} / {b['record_id']}: {b['what']} ({b['mode']})\n\n```json\n{json.dumps(b, indent=1, ensure_ascii=False)}\n```\n"

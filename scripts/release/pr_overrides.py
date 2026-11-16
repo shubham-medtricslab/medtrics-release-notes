@@ -152,6 +152,8 @@ def parse_note(note):
     lines = content.splitlines()
     if not lines:
         return None
+    # Mem returns a markdown hard line break as a trailing backslash ("**PR:** 415\\")
+    lines = [re.sub(r"\\+\s*$", "", x).rstrip() for x in lines]
     title = lines[0].strip()
     if not title.startswith(TITLE_PREFIX):
         return None

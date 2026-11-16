@@ -186,13 +186,18 @@ def _placement(issue, s, how, routes):
 def surface_clicks(s):
     """A surface's own click path (kb_routes.json "clicks"): what the capture presses
     after the start page when the ticket's text gives no path of its own, e.g. a tab
-    and the checkboxes under it. Each is {"text"}, {"check"} or {"row": true}."""
+    and the checkboxes under it. Each is {"text", "named": true}, {"check"} or {"row": true}:
+    a text click from the routes file is "named" (the owner wrote that exact text for that
+    page), so kbclick lets it press a filter's Submit or a plain button / href-less link
+    (danger words, classes and attributes are still refused). Click paths parsed from a
+    ticket's own text are never named."""
     out = []
     for k in s.get("clicks") or []:
         if isinstance(k, dict) and k.get("row"):
             out.append({"row": True})
         elif isinstance(k, dict) and (k.get("text") or k.get("check")):
-            out.append({"check": str(k["check"])} if k.get("check") else {"text": str(k["text"])})
+            out.append({"check": str(k["check"])} if k.get("check")
+                       else {"text": str(k["text"]), "named": True})
     return out
 
 

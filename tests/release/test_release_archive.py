@@ -554,6 +554,20 @@ class ParseRoundTripTests(unittest.TestCase):
                                rec["reply_texts"])
         self.assertEqual(again, ORACLE_GOLDEN)
 
+    def test_mem_hard_break_backslashes_are_stripped(self):
+        # Mem returns a markdown hard line break as a trailing backslash on every
+        # header line; it used to land in the date, product, item count and the
+        # last ticket, so `pending` matched no release.
+        head, sep, tail = ORACLE_GOLDEN.partition(ra.TRANSCRIPT_HEADING)
+        broken = "\n".join(l + "\\" if l.strip() else l
+                           for l in head.split("\n")) + sep + tail
+        self.assertNotEqual(broken, ORACLE_GOLDEN)
+        clean, rec = ra.parse_note(ORACLE_GOLDEN), ra.parse_note(broken)
+        self.assertEqual(rec["date"], "2026-09-02")
+        self.assertEqual(rec["item_count"], 3)
+        self.assertEqual(rec["tickets"], ["ORC-232", "ORC-234", "ORC-240"])
+        self.assertEqual(rec, clean)
+
     def test_transcript_lines_are_never_items_and_trace_is_untouched(self):
         rec = ra.parse_note(ORACLE_GOLDEN)
         self.assertEqual(len(rec["items"]), 3)      # the dash line in REPLY_1

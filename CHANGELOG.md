@@ -5,6 +5,64 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-11-16
+
+### Added
+- **Named route clicks.** A text click written into a `kb_routes.json`
+  surface's `clicks` is now "named": the click guard lets it press a filter's
+  Submit, a plain button that opens a popup, or a link with no address, which
+  it refused before on non-Vue pages. In place of the skipped rules: its
+  onclick / data-href / formaction and a submit's form action must not point
+  at a delete-style URL; its words get the danger test (delete, remove,
+  archive, approve, publish, invite, send, notify); a write verb is still
+  refused unless the whole text is a filter word (Submit, Search, Filter,
+  Apply, Go); and it is refused on a page with hard tenant data, like a row
+  click. POST forms, AJAX links and danger classes / attributes are still
+  refused, and the network write guard still lets only GET leave the page.
+  Click paths read from a ticket's own text are never named; the form-fill
+  path keeps the flag.
+- **Cases > Case logs surface** for M1-1459 (Reassign Case Log Reviewer):
+  `/cases/procedures/logs/` → **Submit** → **Proceed without date** → a row's
+  **View**, which opens the case log popup with the reassign bar. Before, the
+  ticket had no admin case-log surface at all.
+- **Click paths for the other kb-20261116-2131 partials**, each checked on
+  the demo in Chrome:
+  - M1-1245: Time Off → **Requests** tab (the list with descriptions and
+    attachment counts). The approve popup opens from **Approve**, a danger
+    word, so that screen stays out.
+  - M1-1446: now starts on the institution calendar
+    (`/institution/calendar/`, which opens from the Admin portal too; the
+    `/administration/calendar/` prefix still places tickets here) with
+    **Select all** / **Clear all**, then **Create Event** opens the form.
+  - M1-1413: new surface Form Builder > Step 1 (demo template), starting on
+    `/forms/evaluation/templates/18/step_1/`; the list's Edit link is hidden
+    behind an icon-only expand button. The shared Form Builder > Step 1
+    surface keeps the list page, so other tickets don't land on that record.
+  - M1-1166: new surface Curriculum > Setup > Permissions,
+    `/administration/curriculum/` → **Curriculum Permissions** tab. It was
+    placed on Courses before.
+  - M1-1643 and M1-1571 are marked Needs SME: the demo admin has no document
+    template editor, and confidential-question access needs an account with
+    site-level Manage Evaluations.
+
+### Fixed
+- **`/kb-articles` `pending` reads the Mem release archive again.** Mem returns a
+  markdown hard line break as a trailing backslash, and `release_archive.py
+  parse_note` kept it: the date read `2026-11-10\`, the item count was lost and
+  the last ticket read `M1-1520\`, so `pending` skipped most releases and KB
+  runs had to name tickets by id. Header lines and bullets now drop it (as
+  `kb_ledger` and `kb_data` already did); the posted-message text is kept as is.
+- **A KB form fill no longer stops at the portal check.** The data maker's
+  Start probe opens the Admin portal entry, which lands on the users list; on
+  the demo that list holds outside email domains, so the probe said tenant
+  BLOCK and the run stopped before reaching the form (M1-465 in
+  kb-20261116-2131). That probe now only checks the portal and sign-in; each
+  form fill now checks the tenant verdict on its own start page and skips
+  just that fill (`write_error` "tenant_block") on BLOCK.
+- **PR override notes read Mem's backslashes too.** `pr_overrides.py
+  parse_note` had the same trailing-backslash bug: `**PR:** 415\` parsed as
+  no PR and the override was silently ignored.
+
 ## [0.23.2] - 2026-11-16
 
 ### Changed

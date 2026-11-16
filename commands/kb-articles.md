@@ -394,7 +394,11 @@ Safety, all enforced by code, not by the model:
 - **Click targets.** Every click is chosen by the `kbclick` page script, which
   refuses delete / remove / toggle / portal-switch links, red buttons, write
   words (Save, Send …, outside an approved form fill), submit buttons and POST
-  forms, and two different targets with the same text. A first-row click
+  forms, and two different targets with the same text. A click written into a
+  `kb_routes.json` surface is "named": it may press a filter's Submit / Search,
+  a plain button or a link without an address, but never on a page with hard
+  tenant data, never a danger word, and never one whose onclick / form action
+  points at a delete-style URL. A first-row click
   happens only when the page shows no hard tenant data, and prefers a real row
   over a course group that only expands.
 - **Keys.** The plugin hook (`hooks/kb_guard.py`) blocks typing, keys, drags and

@@ -1,5 +1,5 @@
 {
- "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. Optional per-surface wait_s (seconds, max 10) overrides demo.settle_s, the pause after navigate before the GIF frame is taken (slow lists). known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs. Optional per-surface clicks (Chrome capture) run after the start page when the ticket's own text gives no click path: {\"text\": exact link/tab/button text}, {\"check\": exact checkbox label} (ticks the box; never a button, never submits) or {\"row\": true}.",
+ "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. Optional per-surface wait_s (seconds, max 10) overrides demo.settle_s, the pause after navigate before the GIF frame is taken (slow lists). known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs. Optional per-surface clicks (Chrome capture) run after the start page when the ticket's own text gives no click path: {\"text\": exact link/tab/button text}, {\"check\": exact checkbox label} (ticks the box; never a button, never submits) or {\"row\": true}. A text click here is \"named\" (0.24.0): kbclick may press it even when it is a submit button, a plain button or a link without an address (the Case Logs filter Submit, a row's View), because the owner wrote that exact text for that page; danger words, classes and attributes and POST forms are still refused, and only GET leaves the page.",
  "demo": {
   "base_url": "https://medtrics.medtricslab.com",
   "domain": "medtricslab.com",
@@ -101,19 +101,25 @@
     "M1-1245": "Partly captured",
     "M1-1294": "Captured"
    },
-   "demo_status": "capturable"
+   "demo_status": "capturable",
+   "clicks": [
+    {
+     "text": "Requests"
+    }
+   ]
   },
   {
    "surface": "Calendar > Institution events",
    "persona": "admin",
    "also_personas": [],
-   "url": "/administration/calendar/",
+   "url": "/institution/calendar/",
    "recipe": [],
    "match": {
     "modules": [
      "Calendar"
     ],
     "url_prefixes": [
+     "/institution/calendar/",
      "/administration/calendar/"
     ],
     "template_globs": []
@@ -121,7 +127,12 @@
    "known_tickets": {
     "M1-1446": "Needs admin pass"
    },
-   "demo_status": "capturable"
+   "demo_status": "capturable",
+   "clicks": [
+    {
+     "text": "Create Event"
+    }
+   ]
   },
   {
    "surface": "Calendar > Schedule pickers",
@@ -164,6 +175,35 @@
    "demo_status": "capturable"
   },
   {
+   "surface": "Cases > Case logs",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/cases/procedures/logs/",
+   "recipe": [],
+   "clicks": [
+    {
+     "text": "Submit"
+    },
+    {
+     "text": "Proceed without date"
+    },
+    {
+     "text": "View"
+    }
+   ],
+   "match": {
+    "modules": [],
+    "url_prefixes": [
+     "/cases/procedures/logs/"
+    ],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1459": "Needs capture"
+   },
+   "demo_status": "capturable"
+  },
+  {
    "surface": "Curriculum > Courses and Sessions",
    "persona": "admin",
    "also_personas": [],
@@ -179,7 +219,6 @@
     "template_globs": []
    },
    "known_tickets": {
-    "M1-1166": "Captured",
     "M1-1387": "No demo data",
     "M1-1346": "No demo data",
     "M1-1310": "No demo data"
@@ -305,6 +344,27 @@
    "demo_status": "uncapturable"
   },
   {
+   "surface": "Curriculum > Setup > Permissions",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/administration/curriculum/",
+   "recipe": [],
+   "clicks": [
+    {
+     "text": "Curriculum Permissions"
+    }
+   ],
+   "match": {
+    "modules": [],
+    "url_prefixes": [],
+    "template_globs": []
+   },
+   "known_tickets": {
+    "M1-1166": "Needs capture"
+   },
+   "demo_status": "capturable"
+  },
+  {
    "surface": "Curriculum > Setup > Migrate",
    "persona": "admin",
    "also_personas": [],
@@ -357,7 +417,8 @@
     "template_globs": []
    },
    "known_tickets": {
-    "M1-1377": "Partly captured"
+    "M1-1377": "Partly captured",
+    "M1-1643": "Needs SME"
    },
    "demo_status": "capturable"
   },
@@ -398,7 +459,8 @@
     "template_globs": []
    },
    "known_tickets": {
-    "M1-1308": "Ready to capture"
+    "M1-1308": "Ready to capture",
+    "M1-1571": "Needs SME"
    },
    "demo_status": "capturable"
   },
@@ -417,8 +479,22 @@
     ],
     "template_globs": []
    },
+   "known_tickets": {},
+   "demo_status": "capturable"
+  },
+  {
+   "surface": "Form Builder > Step 1 (demo template)",
+   "persona": "admin",
+   "also_personas": [],
+   "url": "/forms/evaluation/templates/18/step_1/",
+   "recipe": [],
+   "match": {
+    "modules": [],
+    "url_prefixes": [],
+    "template_globs": []
+   },
    "known_tickets": {
-    "M1-1413": "Captured"
+    "M1-1413": "Needs capture"
    },
    "demo_status": "capturable"
   },

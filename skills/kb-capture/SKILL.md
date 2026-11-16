@@ -156,7 +156,19 @@ aria-label or text starting with a write verb (save, submit, send, confirm,
 delete, remove, archive, publish, approve, reject, sign); a `<button>` (or
 `role=button`) without `data-bs-toggle`/`data-toggle` of `modal|tab|collapse|dropdown`;
 an `<a>` with no real target (`#`, `javascript:`, none) and no toggle (**both
-dropped on a Vue page**, see below); and a point covered by another element. `{row: true}` takes the first body row of the
+dropped on a Vue page**, see below); and a point covered by another element. **Named clicks (0.24.0):** a `{"text"}` click
+written into a `kb_routes.json` surface's `clicks` reaches kbclick as
+`{"text", "named": true}` (with the probe args). It skips the soft refusals
+(submit, button without toggle, link without target, `onclick`, `data-href`) so a
+list's filter Submit, a popup's plain button and an href-less View link can be
+pressed. In their place: the `onclick` / `data-href` / `formaction` value and a
+submit's form `action` must not hold a danger-URL word; the text gets the
+write-danger test (delete, remove, archive, approve, publish, invite, send,
+notify); a write verb is still refused unless the whole text is a filter word
+(`NAMED_VERB_OK`: Submit, Search, Filter, Apply, Apply filters, Go); and the
+click is refused on a tenant BLOCK page (`KB_TENANT_ROW`), like a row click.
+POST forms, AJAX links and danger classes / attributes are still refused. Click paths parsed from a ticket's own
+text are never named. `{row: true}` takes the first body row of the
 largest visible table that holds a GET `<a href>` or is a clickable row (class
 `clickable`, or `cursor: pointer` on the row or its first cell, the session list
 being one: `<tr class="clickable">`, no anchors, Vue click handler). A link wins;

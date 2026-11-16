@@ -814,6 +814,15 @@ KBC_ERRORS = {"KB_CLICK_REFUSED": "click_refused", "KB_CLICK_NOTFOUND": "click_n
               "KB_TENANT_ROW": "tenant_row"}
 
 
+# Texts a named click may press although they start with a write verb: a list's filter /
+# search button. Anything else with a write verb stays refused even when named.
+NAMED_VERB_OK = ("submit", "search", "filter", "apply", "apply filters", "go")
+
+
+def _named_verb_ok(text):
+    return " ".join(str(text or "").split()).lower() in NAMED_VERB_OK
+
+
 def _write_ok(el, write):
     """Write mode: the element's visible text equals one of the allowed texts
     (case-insensitive, trimmed, exact)."""
@@ -908,7 +917,7 @@ def allowance_passes(armed, method, url, origin, now, src="fetch", top=True, bas
     return True, {**armed, "used": True}
 
 
-def click_refusal(el, text_click=True, write=None, vue=False):
+def click_refusal(el, text_click=True, write=None, vue=False, named=False):
     """Why kbclick refuses `el`, or "" when the click is allowed (Python mirror of
     the JS). el: {"tag", "attrs": {name: value, incl. data-*, type, href, class, title,
     aria-label, onclick, role}, "text", "visible", "in_sidebar", "in_post_form", "occluded"}.
@@ -920,27 +929,42 @@ def click_refusal(el, text_click=True, write=None, vue=False):
     don't / do not / not).
     vue: the page is a Vue app (see is_vue_page); the network write guard makes the
     button_no_toggle and anchor_no_target refusals unnecessary there, so they are
-    dropped. Every danger_* / write_verb / submit / post_form refusal stays."""
+    dropped. Every danger_* / write_verb / submit / post_form refusal stays.
+    named: a text click written into a kb_routes.json surface's "clicks" (the owner named
+    that exact text for that page, kbclick {"text", "named": true}). It skips the soft
+    refusals - submit, data_href, onclick, button_no_toggle and anchor_no_target - so a
+    filter's Submit, a View link without an href or a plain button that opens a panel can
+    be pressed. Its words get the write_danger test, and write_verb still applies unless
+    the whole text is one of NAMED_VERB_OK (a filter's "Submit" / "Search"). The skipped
+    rules get a narrower check instead: an onclick / data-href value and a submit's form
+    action / formaction must not hit the danger-URL words (el["form_action"]). It never
+    skips post_form, ajax_link or the danger ones; kbclick also refuses a named click on
+    a tenant BLOCK page, and the network write guard still lets only GET leave the page."""
     at = el.get("attrs") or {}
     g = lambda n: str(at.get(n, "") or "")
     tag = str(el.get("tag") or "").lower()
     ty, href = g("type").lower(), g("href")
     plain_get = tag == "a" and href and not re.match(r"(#|javascript:)", href, re.I)
     wr = text_click and _write_ok(el, write)
+    nm = text_click and bool(named)
     if not el.get("visible", True):
         return "not_visible"
     if el.get("in_sidebar") and not text_click:
         return "sidebar"
     if not text_click and not str(el.get("text") or "").strip():
         return "icon_only"                       # a row link with no words: can't tell what it does
-    if ty == "submit" and not wr:
+    if ty == "submit" and not wr and not nm:
         return "submit"
     if el.get("in_post_form") and not plain_get and not wr:
         return "post_form"
-    if "data-href" in at:
+    if "data-href" in at and not nm:
         return "data_href"
-    if "onclick" in at:
+    if "onclick" in at and not nm:
         return "onclick"
+    if nm and any(_CLICK_RE["attr"].search(v) or write_danger(v) for v in (
+            g("onclick"), g("data-href"), g("formaction"),
+            str(el.get("form_action") or "") if ty == "submit" else "")):
+        return "danger_attr"
     if _CLICK_RE["cls"].search(g("class")):
         return "danger_class"
     if tag == "a" and (any(_CLICK_RE["tok"].search(t) for t in g("class").split())
@@ -951,15 +975,20 @@ def click_refusal(el, text_click=True, write=None, vue=False):
             for n, v in at.items()):
         return "danger_attr"
     words = (g("title"), g("aria-label"), str(el.get("text") or ""))
-    if wr:
+    if wr or nm:
         if any(write_danger(t) for t in words):
             return "write_danger"
+    if wr:
+        pass
+    elif nm and _named_verb_ok(el.get("text")) and not any(
+            _CLICK_RE["write"].search(t) for t in (g("title"), g("aria-label"))):
+        pass
     elif any(_CLICK_RE["write"].search(t) for t in words):
         return "write_verb"
     ok = bool(_CLICK_RE["tog"].search(g("data-bs-toggle") or g("data-toggle")))
-    if (tag == "button" or ty == "button" or g("role") == "button") and not ok and not wr and not vue:
+    if (tag == "button" or ty == "button" or g("role") == "button") and not ok and not wr and not vue and not nm:
         return "button_no_toggle"
-    if tag == "a" and not ok and not vue and (not href or re.match(r"(#|javascript:)", href, re.I)):
+    if tag == "a" and not ok and not vue and not nm and (not href or re.match(r"(#|javascript:)", href, re.I)):
         return "anchor_no_target"
     if el.get("occluded"):
         return "occluded"
@@ -1094,7 +1123,7 @@ var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
 var WR=new RegExp(R.write,'i'),CR=new RegExp(R.cls,'i'),AR=new RegExp(R.attr,'i'),TR=new RegExp(R.tog),KR=new RegExp(R.tok),DR=new RegExp(R.dat),WD=new RegExp(R.wd,'i'),IC=new RegExp(R.icon,'i'),CT=new RegExp(R.ctl,'i'),GR=new RegExp(R.grp,'i');
 var SN=new RegExp(R.sn,'ig'),NG=new RegExp(R.neg,'i'),SW=new RegExp(R.sw,'i');
 var dng=function(s){if(WD.test(s))return true;SN.lastIndex=0;var m;while((m=SN.exec(s))){if(!NG.test(s.slice(0,m.index)))return true;}return false;};
-var WL=(a.write||[]).map(function(t){return norm(t).toLowerCase();});
+var WL=(a.write||[]).map(function(t){return norm(t).toLowerCase();}),NV=__NV__;
 var no=function(w){throw new Error('KB_CLICK_REFUSED:'+w);};
 __ALLOW__
 var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
@@ -1105,15 +1134,16 @@ var why=function(e,tc){
 var tag=String(e.tagName||'').toLowerCase();
 var g=function(n){var v=e.getAttribute(n);return v===null||v===undefined?'':String(v);};
 var ty=g('type').toLowerCase(),href=g('href'),plain=tag==='a'&&href&&!/^(#|javascript:)/i.test(href);
-var wr=tc&&WL.indexOf(txt(e).toLowerCase())>=0;
+var wr=tc&&WL.indexOf(txt(e).toLowerCase())>=0,nm=tc&&!!a.named;
 if(!vis(e))return 'not_visible';
 if(inSb(e)&&!tc)return 'sidebar';
 if(!tc&&!txt(e))return 'icon_only';
-if(ty==='submit'&&!wr)return 'submit';
+if(ty==='submit'&&!wr&&!nm)return 'submit';
 var f=e.closest('form');
 if(f&&/^post$/i.test(f.getAttribute('method')||'')&&!plain&&!wr)return 'post_form';
-if(e.hasAttribute('data-href'))return 'data_href';
-if(e.hasAttribute('onclick'))return 'onclick';
+if(e.hasAttribute('data-href')&&!nm)return 'data_href';
+if(e.hasAttribute('onclick')&&!nm)return 'onclick';
+if(nm){var fa=ty==='submit'&&e.form?String(e.form.getAttribute('action')||''):'';if([g('onclick'),g('data-href'),g('formaction'),fa].some(function(v){return AR.test(v)||dng(v);}))return 'danger_attr';}
 if(CR.test(String(e.className||'')))return 'danger_class';
 var tk=g('class').split(/\s+/).filter(Boolean).some(function(c){return KR.test(c);});
 var da=Array.prototype.some.call(e.attributes,function(t){return DR.test(t.name);});
@@ -1122,11 +1152,11 @@ var bad=AR.test(href);
 Array.prototype.forEach.call(e.attributes,function(t){if(/^data-/i.test(t.name)&&AR.test(t.value))bad=true;});
 if(bad)return 'danger_attr';
 var ws=[g('title'),g('aria-label'),txt(e)];
-if(wr){if(ws.some(dng))return 'write_danger';}
-else if(ws.some(function(s){return WR.test(s);}))return 'write_verb';
+if(wr||nm){if(ws.some(dng))return 'write_danger';}
+if(!wr&&!(nm&&NV.indexOf(txt(e).toLowerCase())>=0&&!WR.test(g('title'))&&!WR.test(g('aria-label')))&&ws.some(function(s){return WR.test(s);}))return 'write_verb';
 var ok=TR.test(g('data-bs-toggle')||g('data-toggle'));
-if((tag==='button'||ty==='button'||g('role')==='button')&&!ok&&!wr&&!vue)return 'button_no_toggle';
-if(tag==='a'&&!ok&&!vue&&(!href||/^(#|javascript:)/i.test(href)))return 'anchor_no_target';
+if((tag==='button'||ty==='button'||g('role')==='button')&&!ok&&!wr&&!vue&&!nm)return 'button_no_toggle';
+if(tag==='a'&&!ok&&!vue&&!nm&&(!href||/^(#|javascript:)/i.test(href)))return 'anchor_no_target';
 return '';
 };
 var pickRow=function(r){
@@ -1184,10 +1214,11 @@ if(bx.checked)no('already_checked');
 el=vis(bx)?bx:lab;
 }else{
 var wt=WL.indexOf(norm(a.text).toLowerCase())>=0;
-if(WR.test(a.text)&&!wt)no('write_verb');
+if(WR.test(a.text)&&!wt){if(a.named&&dng(a.text))no('write_danger');if(!a.named||NV.indexOf(norm(a.text).toLowerCase())<0)no('write_verb');}
+if(a.named&&a.pa){var pn=(0,eval)(sessionStorage.getItem('kbp'));if(pn(a.pa).tn.v==='BLOCK')throw new Error('KB_TENANT_ROW');}
 var want=norm(a.text).toLowerCase();
 var dl2=WL.length?dlg:null;
-var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]'+(WL.length?',input[type=submit]':''))).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want&&(!dl2||dl2.contains(e));});
+var all=Array.prototype.slice.call(D.querySelectorAll('a,button,input[type=button],[role=button],[role=tab],[role=menuitem]'+(WL.length||a.named?',input[type=submit]':''))).filter(function(e){return vis(e)&&txt(e).toLowerCase()===want&&(!dl2||dl2.contains(e));});
 if(!all.length)throw new Error('KB_CLICK_NOTFOUND:'+a.text);
 if(WL.length&&all.length>1)no('ambiguous');
 var pool=all.filter(function(e){return !inSb(e);});
@@ -1256,7 +1287,7 @@ def _sel_json():
 
 def click_source():
     """kbclick as one JS function expression (evaluates to a function)."""
-    src = _CLICK_JS.replace("__ALLOW__", ALLOW_JS).replace("__KBA__", KBA_JS).replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
+    src = _CLICK_JS.replace("__ALLOW__", ALLOW_JS).replace("__KBA__", KBA_JS).replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()).replace("__NV__", json.dumps(list(NAMED_VERB_OK))) \
                    .replace("__GUARD__", guard_source()).replace("__TTL__", str(ALLOW_TTL_S * 1000))
     src = src.replace("__TOK__", ARM_TOKEN)
     return " ".join(l.strip() for l in src.strip().splitlines())
@@ -1480,13 +1511,14 @@ def external_start(link):
 
 
 def _click_spec(c):
-    """Normalise a capture_plan click to {"text"}, {"check"} or {"row": True}."""
+    """Normalise a capture_plan click to {"text"[, "named": True]}, {"check"} or {"row": True}.
+    "named" (set only by kb_select.surface_clicks for a kb_routes.json click) is kept."""
     if isinstance(c, dict) and c.get("row"):
         return {"row": True}
     if isinstance(c, dict) and c.get("check"):
         return {"check": str(c["check"])}
     text = c.get("text") if isinstance(c, dict) else c
-    return {"text": str(text)}
+    return {"text": str(text), **({"named": True} if isinstance(c, dict) and c.get("named") else {})}
 
 
 def _write_visits(data_plan, entries, args_of, gif_dir):
@@ -1590,7 +1622,7 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
                 k = clicks[step - 1]
                 v["click"] = k
                 v["click_args"] = {"side": args["side"], **k,
-                                   **({"pa": {**args, "labels": []}} if k.get("row") else {})}
+                                   **({"pa": {**args, "labels": []}} if k.get("row") or k.get("named") else {})}
             if clicks and step == 0:
                 v["has_clicks"] = True
             visits.append(v)

@@ -404,6 +404,13 @@ def is_archive_note(note):
     return bool(lines) and lines[0].strip().startswith(TITLE_PREFIX)
 
 
+def _unbreak(line):
+    """A line without Mem's hard-break marker: Mem returns a markdown hard line
+    break as a trailing backslash (`**Date:** 2026-11-10\\`), which would
+    otherwise end up in every value (date, product, last ticket, item count)."""
+    return re.sub(r"\\+\s*$", "", line).rstrip()
+
+
 def parse_note(note):
     """Parse one archive note (a content string, or a Mem note dict with
     content/id/version) into a record; None when it is not an archive note
@@ -426,7 +433,7 @@ def parse_note(note):
     lines = content.splitlines()
     if not lines:
         return None
-    title = lines[0].strip()
+    title = _unbreak(lines[0]).strip()
     if not title.startswith(TITLE_PREFIX):
         return None
     rec = {
@@ -439,10 +446,11 @@ def parse_note(note):
     for _label, key in FIELDS:
         if key not in ("item_count", "tickets", "clients"):
             rec[key] = ""
-    body, transcript = lines[1:], []
+    body, transcript = [_unbreak(x) for x in lines[1:]], []
     for i, line in enumerate(body):
         if line.strip() == TRANSCRIPT_HEADING:
-            body, transcript = body[:i], body[i + 1:]
+            # message text stays raw: only headings and fences are unbroken there
+            body, transcript = body[:i], lines[1:][i + 1:]
             break
     _parse_transcript(transcript, rec)
     for line in body:
@@ -490,12 +498,13 @@ def _parse_transcript(lines, rec):
     for line in lines:
         s = line.rstrip()
         if in_fence:
-            if s.strip() == FENCE:
+            if _unbreak(s).strip() == FENCE:
                 in_fence = False
                 close()
             else:
                 buf.append(s)
             continue
+        s = _unbreak(s)
         if s.strip() == ROOT_HEADING:
             section = "root"
         elif s.strip().startswith(REPLY_HEADING_PREFIX):

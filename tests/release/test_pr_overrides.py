@@ -79,6 +79,13 @@ class ParseRenderTests(unittest.TestCase):
         self.assertEqual(rec["version"], 3)
         self.assertEqual(po.render_note(rec), ORC232_NOTE["content"])
 
+    def test_mem_hard_break_backslashes_are_stripped(self):
+        # Mem returns a hard line break as a trailing backslash: "**PR:** 415\" used to
+        # parse as no PR, so the override note was silently ignored.
+        broken = {**ORC232_NOTE, "content": "\n".join(
+            l + "\\" if l.strip() else l for l in ORC232_NOTE["content"].split("\n"))}
+        self.assertEqual(po.parse_note(broken), po.parse_note(ORC232_NOTE))
+
     def test_title_alone_names_the_ticket_and_pr_tolerates_hash_and_url(self):
         rec = po.parse_note({"id": "x", "content":
                              "PR Override: orc-12\n**PR:** #77\n"})

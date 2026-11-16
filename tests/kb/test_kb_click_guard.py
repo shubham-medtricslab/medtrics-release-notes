@@ -122,6 +122,84 @@ NEW_WORD_CASES = [
 ]
 
 
+# kbclick {"text", "named": true}: a click the owner wrote into kb_routes.json. (name, element,
+# refusal when named; the un-named refusal is in CASES or obvious)
+NAMED_CASES = [
+    ("filter Submit button", el("button", "Submit", type="submit", id="search"), ""),
+    ("plain button", el("button", "Proceed without date"), ""),
+    ("View link without href", {**el("a", "View"), "attrs": {}}, ""),
+    ("anchor #", el("a", "Requests", href="#"), ""),
+    ("onclick link", el(onclick="openLog(3)"), ""),
+    ("data-href row link", el(**{"data-href": "/cases/3/"}), ""),
+    ("still: Delete", el("button", "Delete"), "write_danger"),
+    ("still: Approve", el("button", "Approve"), "write_danger"),
+    ("still: Send notifications", el("button", "Send notifications"), "write_danger"),
+    ("still: danger class", el("button", "Open", **{"class": "btn btn-danger"}), "danger_class"),
+    ("still: delete href", el(href="/x/delete/3/"), "danger_attr"),
+    ("still: ajax link", el(**{"data-method": "post"}), "ajax_link"),
+    ("still: POST form", el("button", "Submit", type="submit", in_post_form=True), "post_form"),
+    ("sidebar text click", el(in_sidebar=True), ""),
+    ("Search button", el("button", "Search", type="submit"), ""),
+    ("onclick to a delete URL", {**el("a", "View", onclick="location='/x/3/delete/'"), "attrs":
+                                 {"onclick": "location='/x/3/delete/'"}}, "danger_attr"),
+    ("data-href to a remove URL", el(**{"data-href": "/x/3/remove/"}), "danger_attr"),
+    ("formaction to an archive URL", el("button", "Submit", type="submit", formaction="/x/archive/"), "danger_attr"),
+    ("still: Clone (write verb, not a filter word)", el("button", "Clone"), "write_verb"),
+    ("still: Save", el("button", "Save"), "write_verb"),
+    ("still: Submit titled Save", el("button", "Submit", type="submit", title="Save record"), "write_verb"),
+]
+
+
+class NamedClicks(unittest.TestCase):
+    def test_mirror(self):
+        for name, e, refusal in NAMED_CASES:
+            with self.subTest(name):
+                self.assertEqual(C.click_refusal(e, named=True), refusal)
+
+    def test_a_named_submit_checks_its_form_action(self):
+        e = {**el("button", "Submit", type="submit"), "form_action": "/cases/3/delete/"}
+        self.assertEqual(C.click_refusal(e, named=True), "danger_attr")
+        e = {**el("button", "Submit", type="submit"), "form_action": "/cases/procedures/logs/"}
+        self.assertEqual(C.click_refusal(e, named=True), "")
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_named_click_refused_on_a_tenant_block_page(self):
+        e = el("button", "View")
+        args = {"text": "View", "side": "nav", "named": True, "pa": {"labels": []}}
+        r = subprocess.run([NODE, "-e", DRIVER], input=json.dumps({"src": C.click_source(), "cases": [
+            {"els": [e], "args": args, "tn": "BLOCK"}, {"els": [e], "args": args, "tn": "REVIEW"}]}),
+            capture_output=True, text=True, timeout=60)
+        block, review = json.loads(r.stdout)
+        self.assertEqual(block["threw"], "KB_TENANT_ROW")
+        self.assertTrue(review["ok"])
+
+    def test_soft_refusals_return_without_named(self):
+        self.assertEqual(C.click_refusal(NAMED_CASES[0][1]), "submit")
+        self.assertEqual(C.click_refusal(NAMED_CASES[1][1]), "button_no_toggle")
+        self.assertEqual(C.click_refusal(NAMED_CASES[2][1]), "anchor_no_target")
+
+    def test_named_never_reaches_a_row_click(self):
+        self.assertEqual(C.click_refusal(NAMED_CASES[1][1], text_click=False, named=True), "button_no_toggle")
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_agrees_with_the_mirror(self):
+        cases = [{"els": [e], "args": {"text": e["text"], "side": "nav", "named": True}, "occlude": False}
+                 for _, e, _ in NAMED_CASES]
+        r = subprocess.run([NODE, "-e", DRIVER], input=json.dumps({"src": C.click_source(), "cases": cases}),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for (name, e, want), got in zip(NAMED_CASES, json.loads(r.stdout)):
+            with self.subTest(name):
+                self.assertEqual(got.get("threw", ""), "KB_CLICK_REFUSED:" + want if want else "")
+
+    @unittest.skipUnless(NODE, "node not installed")
+    def test_js_unnamed_submit_text_is_still_a_write_verb(self):
+        e = el("button", "Submit", type="submit")
+        r = subprocess.run([NODE, "-e", DRIVER], input=json.dumps({"src": C.click_source(), "cases": [
+            {"els": [e], "args": {"text": "Submit", "side": "nav"}}]}), capture_output=True, text=True, timeout=60)
+        self.assertEqual(json.loads(r.stdout)[0]["threw"], "KB_CLICK_REFUSED:write_verb")
+
+
 class NewWriteWords(unittest.TestCase):
     def test_mirror(self):
         for name, e, refusal in NEW_WORD_CASES:
