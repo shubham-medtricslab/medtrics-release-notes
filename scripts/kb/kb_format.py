@@ -140,13 +140,16 @@ SUBTITLE_DRAFT_SUFFIX = " · draft, not published"
 # ── gates ────────────────────────────────────────────────────────────────────
 LABEL_CUTOFF = 0.82        # same floor the OCR verifier uses; see qa_gif_to_shots.py
 TENANT_VERDICTS = ("CLEAR", "REVIEW", "BLOCK")
-ANCHORS = ("label_box", "click_transient", "dom_box", "none")
+SCREEN_ANCHOR = "screen"   # an unringed screenshot of the settled page (0.26.0 fallback)
+ANCHORS = ("label_box", "click_transient", "dom_box", SCREEN_ANCHOR, "none")
 # dom_box: the DOM text equals the label exactly and the element is visible and
 # unoccluded, but no OCR confirmed the pixels. Accepted in the final render only
 # on a frame the owner confirmed (evidence.tenant_confirmed_by): the owner saw
 # the ring on the contact sheet, which is the check OCR would have made.
 # Unconfirmed, it is refused on publish.
-DRAFT_ONLY_ANCHORS = ("dom_box",)
+# screen: nothing is ringed, so there is no label to verify; it ships only on a frame
+# the owner confirmed on the contact sheet, where it is marked "no ring".
+DRAFT_ONLY_ANCHORS = ("dom_box", SCREEN_ANCHOR)
 
 # A published article is client-facing copy. These never appear in it. The list
 # is the standing release-notes rule, restated here so the renderer can enforce

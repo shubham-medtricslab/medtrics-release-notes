@@ -119,6 +119,7 @@ wait_for_file is vendored from medtrics-qa-automation 0.17.1
 import argparse
 import datetime as _dt
 import hashlib
+import traceback
 import json
 import os
 import re
@@ -133,6 +134,7 @@ sys.path.insert(0, str(HERE))
 import kb_format as F                   # noqa: E402
 import qa_gif_to_shots as Q             # noqa: E402
 
+import kb_overrides as O           # local overrides laid over kb_routes.json (0.26.0)
 DEFAULT_ROUTES = HERE / "kb_routes.json"
 VIEWPORT = {"width": 1440, "height": 900}
 SCALE = 2                 # deviceScaleFactor: crisp OCR crops; shots are downscaled later
@@ -316,7 +318,7 @@ def cmd_login(a):
     credentials file (headless unless --headed); without it a visible browser
     waits for a person to sign in. Run by a person or their scheduler —
     /kb-articles never runs it."""
-    routes = json.loads(Path(a.routes).read_text())
+    routes = O.load_routes(a.routes)
     demo = routes["demo"]
     d = session_dir(a.session_dir)
     d.mkdir(parents=True, exist_ok=True)
@@ -390,7 +392,7 @@ def check_sessions(routes, d):
 
 
 def cmd_check(a):
-    routes = json.loads(Path(a.routes).read_text())
+    routes = O.load_routes(a.routes)
     status = check_sessions(routes, session_dir(a.session_dir))
     if a.out:
         Path(a.out).write_text(json.dumps(status, indent=1))
@@ -402,7 +404,7 @@ def cmd_check(a):
 def cmd_run(a):
     plan = json.loads(Path(a.plan).read_text())
     inputs = json.loads(Path(a.inputs).read_text())
-    routes = json.loads(Path(a.routes).read_text())
+    routes = O.load_routes(a.routes)
     demo = routes["demo"]
     d = session_dir(a.session_dir)
     out_dir = Path(a.out_dir)
@@ -751,6 +753,69 @@ LOADER_SEL = ("[class^=loader],[class*=' loader'],[class^=spinner],[class*=' spi
               ".loading,.fa-spin,[aria-busy=true],"
               ".dataTables_processing,.blockUI.blockOverlay,.vld-overlay,.el-loading-mask")
 
+# The app's own loader is `h3.loader-txt` ("please wait… spinning up the hamster..."), so any
+# class TOKEN starting with loader / spinner counts ("uploader" does not). A leaf element
+# whose whole text is "Loading…" / "Please wait…" counts too (LOADER_TEXT), and a page may
+# name one more selector of its own (kb_routes.json / overrides "loader_sel", args.ld).
+LOADER_TEXT = r"^(please wait|loading)\s*(\u2026|\.{2,}|$)"
+_BUSY_JS = r"""
+var kbBusy=function(D,W,sel,extra){
+var iw=W.innerWidth,ih=W.innerHeight;
+var on=function(e){var r=e.getBoundingClientRect();if(!(r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<ih&&r.left<iw))return false;var cs=W.getComputedStyle(e);return cs.visibility!=='hidden'&&+cs.opacity>0;};
+var nm=function(e){return String(e.className&&e.className.baseVal!==undefined?e.className.baseVal:e.className||'').slice(0,60)||String(e.tagName);};
+var q=function(x){try{return Array.prototype.slice.call(D.querySelectorAll(x));}catch(er){return [];}};
+var l=q(sel).concat(extra?q(extra):[]).filter(on);
+if(l.length)return nm(l[0]);
+var LT=new RegExp(__LTEXT__,'i');
+var t=q('h1,h2,h3,h4,h5,h6,p,span,div,td,li,em,i,b,strong').filter(function(e){if(e.children.length)return false;var x=String(e.textContent||'').trim();return x.length>0&&x.length<80&&LT.test(x)&&on(e);});
+return t.length?'text:'+String(t[0].textContent).trim().slice(0,40):'';
+};
+"""
+
+
+def busy_source():
+    return " ".join(l.strip() for l in _BUSY_JS.strip().splitlines()).replace("__LTEXT__", json.dumps(LOADER_TEXT))
+
+
+# Texts offered as near matches for a label the probe did not find (0.26.0): the visible
+# controls and headings outside the sidebar whose text is closest to it (bigram overlap).
+# Nothing is ringed from these on the first attempt; kb_heal picks one for a retry.
+CAND_SEL = ("button,a,[role=button],[role=tab],[role=menuitem],label,legend,summary,"
+            "h1,h2,h3,h4,h5,th,.btn,.nav-link,.card-header")
+# ... plus any element with no child elements: a radio's name is often a <b> or <span>
+# inside a <label> whose whole text (name + help sentence) is too long to be a candidate.
+CAND_LEAF_SEL = "b,strong,span,em,td,li,p,dt,dd,div"
+CAND_MAX = 2000
+CAND_MIN = 0.45
+
+# kbw: wait until the page is quiet (0.26.0). Awaited by javascript_tool after the fixed
+# settle wait: resolves {q:true} once no loader is visible and no node was added or removed
+# for `quiet` ms, or {q:false, ld} at `cap` ms. It replaces guessing a wait per page.
+QUIET_MS = 500
+QUIET_CAP_S = 10          # first attempt and retry pass 1
+QUIET_CAP_MAX_S = 20      # retry pass 2 / a page's quiet_cap_s
+_WAIT_JS = r"""
+(function(a){
+var D=document,W=window;
+__BUSY__
+var cap=Math.min(Math.max(+a.cap||__CAP__,300),__CAPMAX__),quiet=Math.min(Math.max(+a.quiet||__QUIET__,100),5000);
+return new Promise(function(res){
+var t0=Date.now(),last=t0,mo=null,iv=null;
+var done=function(q,b){if(iv)clearInterval(iv);if(mo)mo.disconnect();res({q:q,ms:Date.now()-t0,ld:b||''});};
+try{mo=new MutationObserver(function(){last=Date.now();});mo.observe(D.body,{childList:true,subtree:true});}catch(er){mo=null;}
+iv=setInterval(function(){var now=Date.now(),b=kbBusy(D,W,__LOADER__,a.ld||'');if(!b&&now-last>=quiet)done(true,'');else if(now-t0>=cap)done(false,b);},100);
+});
+})
+"""
+
+
+def wait_source():
+    """kbw as one JS function expression: args {"cap": ms, "quiet": ms, "ld": "<extra selector>"}."""
+    src = _WAIT_JS.replace("__BUSY__", busy_source()).replace("__LOADER__", json.dumps(LOADER_SEL)) \
+                  .replace("__CAPMAX__", str(QUIET_CAP_MAX_S * 1000)).replace("__CAP__", str(QUIET_CAP_S * 1000)) \
+                  .replace("__QUIET__", str(QUIET_MS))
+    return " ".join(l.strip() for l in src.strip().splitlines())
+
 
 def find_source():
     return " ".join(l.strip() for l in _FIND_JS.strip().splitlines()) \
@@ -833,9 +898,14 @@ var dx=dlg?norm(dlg.innerText):'';
 W.__kbSeen=dlg?(norm(dt.length?dt[dt.length-1].innerText:'')+' '+dx).toLowerCase().slice(0,600):'';
 var fl=kfList(dlg||D,a.side).map(function(x){return x.d;});
 __FIND__
+var CAND=null;
+var cands=function(){if(CAND)return CAND;CAND=[];Array.prototype.slice.call(D.querySelectorAll(__CAND__)).concat(Array.prototype.slice.call(D.querySelectorAll(__CAND_LEAF__)).filter(function(e){return !e.children.length;})).slice(0,__CAND_MAX__).forEach(function(e){if(!vis(e)||inSb(e))return;var t=norm(e.innerText);if(t.length<3||t.length>80||CAND.indexOf(t)>=0)return;CAND.push(t);});return CAND;};
+var big=function(x){x=' '+String(x).toLowerCase()+' ';var o={};for(var i=0;i<x.length-1;i++){o[x.substr(i,2)]=1;}return o;};
+var dice=function(x,y){var A=big(x),B=big(y),n=0,ka=Object.keys(A),kb=Object.keys(B);ka.forEach(function(k){if(B[k])n++;});return 2*n/(ka.length+kb.length);};
+var near=function(l){var w=norm(l);if(w.length<4)return [];return cands().map(function(t){return [t,dice(w,t)];}).filter(function(x){return x[1]>=__CAND_MIN__;}).sort(function(x,y){return y[1]-x[1];}).slice(0,3).map(function(x){return x[0];});};
 var labels=a.labels.map(function(l){
 var fd=kbFind(l,all,vis,inSb,norm);
-if(!fd)return {l:l,f:false,t:'',b:null,iv:false,oc:false,sb:false};
+if(!fd){var nf0={l:l,f:false,t:'',b:null,iv:false,oc:false,sb:false};var cc=near(l);if(cc.length)nf0.c=cc;return nf0;}
 var e=fd.e;
 var r=e.getBoundingClientRect();
 var t=D.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
@@ -843,8 +913,8 @@ var o={l:l,f:true,t:norm(e.innerText),b:[rd(r.left),rd(r.top),rd(r.width),rd(r.h
 if(fd.pm)o.pm=true;
 return o;
 });
-var LDS=Array.prototype.slice.call(D.querySelectorAll(__LOADER__)).filter(function(e){var r=e.getBoundingClientRect();if(!(r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<ih&&r.left<iw))return false;var cs=W.getComputedStyle(e);return cs.visibility!=='hidden'&&+cs.opacity>0;});
-var ld=LDS.length?String(LDS[0].className&&LDS[0].className.baseVal!==undefined?LDS[0].className.baseVal:LDS[0].className||LDS[0].tagName).slice(0,60):'';
+__BUSY__
+var ld=kbBusy(D,W,__LOADER__,a.ld||'');
 var T=__TENANT__;
 var rx=function(k,g){return new RegExp(T[k][0],T[k][1]+(g?'g':''));};
 var raw=String(D.body.innerText||'');
@@ -920,6 +990,7 @@ _CLICK_RE = {k: re.compile(v, re.I if k != "tog" else 0) for k, v in CLICK_RX.it
 KBC_KEY = "kbc"
 KBO_KEY = "kbo"
 KBS_KEY = "kbs"
+KBW_KEY = "kbw"
 KBC_ERRORS = {"KB_CLICK_REFUSED": "click_refused", "KB_CLICK_NOTFOUND": "click_not_found",
               "KB_TENANT_ROW": "tenant_row"}
 
@@ -1460,6 +1531,9 @@ def probe_source(reads=()):
                    .replace("__FIELDS__", fields_source()) \
                    .replace("__FIND__", find_source()) \
                    .replace("__LOADER__", json.dumps(LOADER_SEL)) \
+                   .replace("__BUSY__", busy_source()) \
+                   .replace("__CAND__", json.dumps(CAND_SEL)).replace("__CAND_LEAF__", json.dumps(CAND_LEAF_SEL)).replace("__CAND_MAX__", str(CAND_MAX)) \
+                   .replace("__CAND_MIN__", str(CAND_MIN)) \
                    .replace("__DLG__", json.dumps(DIALOG_SEL)) \
                    .replace("__TENANT__", json.dumps(tenant_regexes())) \
                    .replace("__NF__", json.dumps(NF_SOURCE)) \
@@ -1470,11 +1544,12 @@ def probe_source(reads=()):
 
 def install_action(reads=()):
     """javascript_tool input that stores the probe (kbp), the click guard (kbc), the
-    option picker (kbo) and the scroll step (kbs) in sessionStorage. Sent first in the first batch of every run."""
+    option picker (kbo), the scroll step (kbs) and the quiet wait (kbw) in sessionStorage. Sent first in the first batch of every run."""
     text = (f"{JS_MARKER}var S={json.dumps(probe_source(reads))};sessionStorage.setItem('{KEY}',S);"
             f"var K={json.dumps(click_source(reads))};sessionStorage.setItem('{KBC_KEY}',K);"
             f"var O={json.dumps(option_source(reads))};sessionStorage.setItem('{KBO_KEY}',O);"
             f"var Z={json.dumps(scroll_source())};sessionStorage.setItem('{KBS_KEY}',Z);"
+            f"var Q={json.dumps(wait_source())};sessionStorage.setItem('{KBW_KEY}',Q);"
             f"'{KEY}:'+S.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
 
@@ -1496,9 +1571,10 @@ def install_actions(demo=None, reads=()):
     return install_prefix(demo) + [{"name": "javascript_tool", "input": install_action(reads)}]
 
 
-def stub(args, key=KEY):
-    """Short per-visit call: runs the stored function, throws KB_NOPROBE if absent."""
-    return (f"{JS_MARKER}(sessionStorage.getItem('{key}')?(0,eval)(sessionStorage.getItem('{key}'))"
+def stub(args, key=KEY, wait=False):
+    """Short per-visit call: runs the stored function, throws KB_NOPROBE if absent.
+    wait=True awaits the promise the function returns (kbw)."""
+    return (f"{JS_MARKER}{'await ' if wait else ''}(sessionStorage.getItem('{key}')?(0,eval)(sessionStorage.getItem('{key}'))"
             f":()=>{{throw new Error('KB_NOPROBE')}})({json.dumps(args)})")
 
 
@@ -1530,6 +1606,15 @@ def _park(demo):
     return demo.get("cursor_park") or [1465, 740]
 
 
+def _quiet(visit):
+    """kbw after the fixed settle wait: carry on as soon as the page is quiet (no frame)."""
+    q = visit.get("quiet") or {}
+    args = {"cap": int(float(q.get("cap_s") or QUIET_CAP_S) * 1000)}
+    if q.get("ld"):
+        args["ld"] = q["ld"]
+    return _act("javascript_tool", action="javascript_exec", text=stub(args, KBW_KEY, wait=True))
+
+
 def _scroll(visit):
     """kbs before the hover: the label the shot needs is in the last frame (no frame itself)."""
     args = visit.get("args") or {}
@@ -1543,6 +1628,7 @@ def visit_actions(base_url, visit, demo):
     return [_act("gif_creator", action="start_recording"),
             _act("navigate", url=base_url + visit["url"]),
             _wait(settle_seconds(demo, visit.get("wait_s"))),
+            _quiet(visit),
             _scroll(visit),
             _act("computer", action="hover", coordinate=list(_park(demo))),
             _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
@@ -1560,6 +1646,7 @@ def click_visit_actions(visit, demo):
                  text=stub(visit["click_args"], KBC_KEY))]
     act = [_act("computer", action="left_click", coordinate=["$X", "$Y"]),
            _wait(settle_seconds(demo, visit.get("wait_s"))),
+           _quiet(visit),
            _scroll(visit),
            _act("computer", action="hover", coordinate=list(_park(demo))),
            _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
@@ -1685,6 +1772,8 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
     gif_dir = f"{DL_ROOT}/{plan.get('run_id') or 'run'}"
     surface_wait = {(s.get("persona"), s.get("surface")): s.get("wait_s")
                     for s in routes.get("surfaces", []) if s.get("wait_s") is not None}
+    surf = {(p_, s.get("surface")): s for s in routes.get("surfaces", [])
+            for p_ in [s.get("persona")] + list(s.get("also_personas") or [])}
     base = demo["base_url"]
     entry = demo.get("portal_entry") or {}
     labels_of = demo.get("portal_label") or {}
@@ -1724,9 +1813,24 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
             entries[eid]["private"] = True
         args_of[eid] = args
         page = page_label(url)
+        srow = surf.get((c["persona"], c["surface"])) or {}
+        aliases = {str(k): [str(x) for x in v or []] for k, v in (srow.get("aliases") or {}).items()}
+        quiet = {}
+        if srow.get("quiet_cap_s") is not None:
+            quiet["cap_s"] = min(max(float(srow["quiet_cap_s"]), 1), QUIET_CAP_MAX_S)
+        if srow.get("loader_sel"):
+            quiet["ld"] = ",".join(str(x) for x in srow["loader_sel"])
+            args["ld"] = quiet["ld"]
         for step in range(len(clicks) + 1):
             vid = (f"{eid}-s{step}" if clicks else eid)
             per_step = {t: step_labels(clicks, step, page, ls) for t, ls in per_ticket.items()}
+            near = {}                 # alias text -> the label it stands for (overrides "alias")
+            for t, ls in per_step.items():
+                for l in list(ls):
+                    for al in aliases.get(l, []):
+                        if al not in ls:
+                            ls.append(al)
+                            near[al] = l
             flat = []
             for ls in per_step.values():
                 for l in ls:
@@ -1741,6 +1845,10 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
                 v["private"] = True
             if wait is not None:
                 v["wait_s"] = wait
+            if quiet:
+                v["quiet"] = dict(quiet)
+            if near:
+                v["near"] = near
             if step:
                 k = clicks[step - 1]
                 v["click"] = k
@@ -1854,8 +1962,9 @@ def _accounts_md(calls):
 
 
 def capture_md(calls):
-    first = (calls.get("batches") or [{"batch_id": "b01", "visit_ids": []}])[0]
-    L = ["# KB capture — instructions for the capturer", "",
+    recorded = [b for b in calls.get("batches") or [] if b.get("visit_ids")]
+    first = (recorded or calls.get("batches") or [{"batch_id": "b01", "visit_ids": []}])[0]
+    L = [f"# {calls.get('title') or 'KB capture'} — instructions for the capturer", "",
          "You only drive the user's Chrome. Never type, never press keys, never drag, never click "
          "anything except the one point a `kbclick` result gives you. Never close a tab. "
          "Replace the string `\"$TAB\"` with the numeric tab id (no quotes) in every action "
@@ -1879,11 +1988,12 @@ def capture_md(calls):
          "and starts you again with `--from-batch <batch_id>`.", ""]
     L += [f"## 3. Batches ({len(calls['batches'])})", "",
           "For each batch, in order, follow its heading. Visits are `gif_creator` recordings: "
-          "start_recording, navigate, wait, scroll, hover, probe, stop_recording, export. There are no "
-          "screenshots: never call `computer` with `screenshot`, and you never receive a page "
-          "image. The scroll step is a short `javascript_tool` call before the hover; its small "
-          "result (`{\"s\":…}`) is not kept. The probe result is the `javascript_tool` result "
-          "AFTER the hover. The `export` result says "
+          "start_recording, navigate, wait, quiet wait, scroll, hover, probe, stop_recording, export. "
+          "There are no screenshots: never call `computer` with `screenshot`, and you never receive a "
+          "page image. The quiet wait and the scroll step are short `javascript_tool` calls before "
+          "the hover (the quiet wait can take up to 20 seconds to answer; that is normal); their "
+          "small results (`{\"q\":…}`, `{\"s\":…}`) are not kept. The probe result is the "
+          "`javascript_tool` result AFTER the hover. The `export` result says "
           "`Downloaded \"<filename>\"`; that filename is the visit's `gif`.", "",
           "**Visit batches** (`actions`): call `browser_batch` with exactly the `actions` array.", "",
           "**Click batches** (`pick` and `act`) open the next screen by one click and are sent in two "
@@ -1914,6 +2024,28 @@ def capture_md(calls):
             L += [f"### {b['batch_id']} — return to the {b['persona']} portal (restore batch)", "",
                   "Send once, after the owner has signed back in as admin:", "", _j(b["actions"]), "",
                   f"Then write `raw/{b['batch_id']}.json` with an empty `items` list and reply as in section 6.", ""]
+            continue
+        if b.get("kind") == "open":
+            L += [f"### {b['batch_id']} — {b['persona']} — open the start page of entry {b['entry']} "
+                  f"(no recording)", "", _j(b["actions"]), "",
+                  f"Then write `raw/{b['batch_id']}.json` with an empty `items` list and continue.", ""]
+            continue
+        if b.get("kind") == "replay":
+            L += [f"### {b['batch_id']} — {b['persona']} — replay click {b['step']} of entry {b['entry']} "
+                  f"(\"{b.get('what', '')}\", no recording)", "",
+                  "A click batch without a recording: send `pick`, substitute, send `act`. If `pick` "
+                  "fails with a `KB_CLICK_*` or `KB_TENANT_ROW` error: do not send `act`, write this "
+                  "batch's raw file with an empty `items` list and the error text in `error`, and skip "
+                  "every later batch of this entry.", "",
+                  "`pick`:", "", _j(b["pick"]), "", "`act` (substitute `$X`, `$Y`):", "", _j(b["act"]), "",
+                  f"Then write `raw/{b['batch_id']}.json` with an empty `items` list and continue.", ""]
+            continue
+        if b.get("kind") == "frames":
+            L += [f"### {b['batch_id']} — {b['persona']} — more frames of the same screen: visits "
+                  f"{', '.join(b['visit_ids'])} (entry {b['entry']})", "",
+                  "No navigation and no click: the page is the one the batch before left. Skip this "
+                  "batch if that batch was skipped or refused.", "", _j(b["actions"]), "",
+                  f"After this batch write `raw/{b['batch_id']}.json` (see section 4), then continue.", ""]
             continue
         if b.get("kind") == "click":
             c = next((v["click"] for v in calls["visits"] if v["visit_id"] == b["visit_ids"][0]), {})
@@ -1976,7 +2108,7 @@ def data_plan_sha256(plan):
 def cmd_plan_calls(a):
     plan = json.loads(Path(a.plan).read_text())
     inputs = json.loads(Path(a.inputs).read_text())
-    routes = json.loads(Path(a.routes).read_text())
+    routes = O.load_routes(a.routes)
     out_dir = Path(a.out_dir)
     use_run_token(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2091,7 +2223,7 @@ def route_fix(plan, results):
 
 def cmd_route_check_js(a):
     plan = json.loads(Path(a.plan).read_text())
-    routes = json.loads(Path(a.routes).read_text())
+    routes = O.load_routes(a.routes)
     urls, dropped = route_check_urls(plan)
     if dropped:
         print(f"note: {dropped} URL(s) over the {ROUTE_CHECK_MAX} cap not checked", file=sys.stderr)
@@ -2377,6 +2509,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
             tenant_ocr = Q.screen_frame(str(dest), demo["domain"],
                                         allow_strings=demo["allow_strings"])["verdict"]
         by_label = {l.get("l"): l for l in probe["labels"]}
+        near = visit.get("near") if isinstance(visit.get("near"), dict) else {}
         entries = []
         host = calls['base_url'].split('//')[-1]
         source = (f"chrome:{host} external-link {now}" if visit.get("private")      # never the link
@@ -2408,6 +2541,8 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                 "visit_id": visit["visit_id"], "sidebar": bool(pl.get("sb")),
                                 "frame_source": frame_source,
                                 **({"label_match": "prefix"} if pl.get("pm") else {}),
+                                **({"label_match": "near", "label_wanted": near[label]} if label in near else {}),
+                                **({"retry": visit["retry"], "of": visit.get("of")} if visit.get("retry") else {}),
                                 **({"reason": "still_loading"} if loading and not problem else {}),
                                 **(ev or {"label": label})})
         h = probe.get("h") if isinstance(probe.get("h"), dict) else None
@@ -2428,6 +2563,21 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                 "visit_id": visit["visit_id"], "sidebar": False,
                                 "frame_source": frame_source, "fallback": "heading", **ev})
     return entries, None
+
+
+def safe_ingest_visit(visit, item, calls, demo, out_dir, *rest):
+    """ingest_visit, but an unexpected error on one screen is that screen's reason
+    (`internal_error`, the message kept in <out_dir>/errors.log), never the end of the run."""
+    try:
+        return ingest_visit(visit, item, calls, demo, out_dir, *rest)
+    except Exception as e:                      # noqa: BLE001 - any failure here is one lost screen
+        try:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+            with open(Path(out_dir) / "errors.log", "a") as f:
+                f.write(f"{visit.get('visit_id')}: {type(e).__name__}: {e}\n{traceback.format_exc()}\n")
+        except OSError:
+            pass
+        return [], "internal_error"
 
 
 def blocked_before(visits, visit, items):
@@ -2494,7 +2644,7 @@ def _screens_missing(calls, screens, shots):
 
 def cmd_ingest(a):
     calls = json.loads(Path(a.calls).read_text())
-    routes = json.loads(Path(a.routes).read_text())
+    routes = O.load_routes(a.routes)
     demo = routes["demo"]
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2548,8 +2698,8 @@ def cmd_ingest(a):
             timeout = FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S
             if it.get("gif"):
                 fetched += 1
-            entries, reason = ingest_visit(v, it, calls, demo, out_dir, use_ocr, now,
-                                           a.downloads_dir, timeout)
+            entries, reason = safe_ingest_visit(v, it, calls, demo, out_dir, use_ocr, now,
+                                                a.downloads_dir, timeout)
             if reason is None:
                 ingested.add(vid)
                 settled.add(vid)
@@ -2579,8 +2729,8 @@ def cmd_ingest(a):
         else:
             if it.get("gif"):
                 fetched += 1
-            entries, reason = ingest_visit(wv, it, calls, demo, out_dir, use_ocr, now, a.downloads_dir,
-                                           FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S)
+            entries, reason = safe_ingest_visit(wv, it, calls, demo, out_dir, use_ocr, now, a.downloads_dir,
+                                                FIRST_FILE_TIMEOUT_S if not fetched else NEXT_FILE_TIMEOUT_S)
             if reason is None:
                 ingested.add(vid)
                 new += entries
@@ -2668,7 +2818,8 @@ def cmd_cleanup(a):
     emptied run folders. Only paths under Downloads/kb-capture are ever touched."""
     calls = json.loads(Path(a.names_from).read_text())
     root = (Path(a.downloads_dir) / DL_ROOT).resolve()
-    names = [v["gif"] for v in calls.get("visits", []) + calls.get("write_visits", [])]
+    names = [v["gif"] for v in calls.get("visits", []) + calls.get("write_visits", [])
+             + calls.get("retry_visits", [])]
     if (calls.get("canary") or {}).get("gif"):
         names.append(calls["canary"]["gif"])
     deleted, absent, kept = [], [], []

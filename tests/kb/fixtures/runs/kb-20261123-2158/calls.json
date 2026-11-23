@@ -1,0 +1,610 @@
+{
+ "run_id": "kb-20261123-2158",
+ "base_url": "https://medtrics.medtricslab.com",
+ "probe_version": 1,
+ "gif_dir": "kb-capture/kb-20261123-2158",
+ "install": [],
+ "read_posts": [
+  "/api/rotations/procedure_logs/logs_filter_list/"
+ ],
+ "visits": [
+  {
+   "visit_id": "v01-s0",
+   "entry": "v01",
+   "step": 0,
+   "kind": "start",
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "url": "/budgets/benefits/time-off/",
+   "tickets": [
+    "M1-1245"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1245": [
+     "Time Off",
+     "Requests"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v01-s0.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "Time Off",
+     "Requests"
+    ]
+   },
+   "has_clicks": true
+  },
+  {
+   "visit_id": "v01-s1",
+   "entry": "v01",
+   "step": 1,
+   "kind": "click",
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "url": "/budgets/benefits/time-off/",
+   "tickets": [
+    "M1-1245"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1245": [
+     "Off Today",
+     "Delete",
+     "Attachments",
+     "View PDF",
+     "Download",
+     "No Accounts To Show"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v01-s1.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "Off Today",
+     "Delete",
+     "Attachments",
+     "View PDF",
+     "Download",
+     "No Accounts To Show"
+    ]
+   },
+   "click": {
+    "text": "Requests",
+    "named": true
+   },
+   "click_args": {
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "text": "Requests",
+    "named": true,
+    "pa": {
+     "v": 1,
+     "login": "/users/login/",
+     "portal": "Admin",
+     "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+     "allow": [
+      "Medtrics School of Medicine",
+      "School of Medicine",
+      "Medtrics Medical Center",
+      "Medtrics",
+      "Geriatric",
+      "Internal Medicine",
+      "IM program",
+      "ZZ DEMO",
+      "ZZDEMO"
+     ],
+     "domain": "medtricslab.com",
+     "labels": []
+    }
+   }
+  },
+  {
+   "visit_id": "v02-s0",
+   "entry": "v02",
+   "step": 0,
+   "kind": "start",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "url": "/cases/procedures/logs/",
+   "tickets": [
+    "M1-1459"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1459": [
+     "Logs",
+     "Submit"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v02-s0.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "Logs",
+     "Submit"
+    ]
+   },
+   "has_clicks": true
+  },
+  {
+   "visit_id": "v02-s1",
+   "entry": "v02",
+   "step": 1,
+   "kind": "click",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "url": "/cases/procedures/logs/",
+   "tickets": [
+    "M1-1459"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1459": [
+     "Proceed without date"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v02-s1.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "Proceed without date"
+    ]
+   },
+   "click": {
+    "text": "Submit",
+    "named": true
+   },
+   "click_args": {
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "text": "Submit",
+    "named": true,
+    "pa": {
+     "v": 1,
+     "login": "/users/login/",
+     "portal": "Admin",
+     "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+     "allow": [
+      "Medtrics School of Medicine",
+      "School of Medicine",
+      "Medtrics Medical Center",
+      "Medtrics",
+      "Geriatric",
+      "Internal Medicine",
+      "IM program",
+      "ZZ DEMO",
+      "ZZDEMO"
+     ],
+     "domain": "medtricslab.com",
+     "labels": []
+    }
+   }
+  },
+  {
+   "visit_id": "v02-s2",
+   "entry": "v02",
+   "step": 2,
+   "kind": "click",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "url": "/cases/procedures/logs/",
+   "tickets": [
+    "M1-1459"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1459": [
+     "View"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v02-s2.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "View"
+    ]
+   },
+   "click": {
+    "text": "Proceed without date",
+    "named": true
+   },
+   "click_args": {
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "text": "Proceed without date",
+    "named": true,
+    "pa": {
+     "v": 1,
+     "login": "/users/login/",
+     "portal": "Admin",
+     "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+     "allow": [
+      "Medtrics School of Medicine",
+      "School of Medicine",
+      "Medtrics Medical Center",
+      "Medtrics",
+      "Geriatric",
+      "Internal Medicine",
+      "IM program",
+      "ZZ DEMO",
+      "ZZDEMO"
+     ],
+     "domain": "medtricslab.com",
+     "labels": []
+    }
+   }
+  },
+  {
+   "visit_id": "v02-s3",
+   "entry": "v02",
+   "step": 3,
+   "kind": "click",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "url": "/cases/procedures/logs/",
+   "tickets": [
+    "M1-1459"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1459": [
+     "Reassign Case Log Reviewer",
+     "Can manage case logs",
+     "Limit the underlying faculty selection",
+     "Case log not available"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v02-s3.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "Reassign Case Log Reviewer",
+     "Can manage case logs",
+     "Limit the underlying faculty selection",
+     "Case log not available"
+    ]
+   },
+   "click": {
+    "text": "View",
+    "named": true
+   },
+   "click_args": {
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "text": "View",
+    "named": true,
+    "pa": {
+     "v": 1,
+     "login": "/users/login/",
+     "portal": "Admin",
+     "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+     "allow": [
+      "Medtrics School of Medicine",
+      "School of Medicine",
+      "Medtrics Medical Center",
+      "Medtrics",
+      "Geriatric",
+      "Internal Medicine",
+      "IM program",
+      "ZZ DEMO",
+      "ZZDEMO"
+     ],
+     "domain": "medtricslab.com",
+     "labels": []
+    }
+   }
+  },
+  {
+   "visit_id": "v03",
+   "entry": "v03",
+   "step": 0,
+   "kind": "start",
+   "persona": "admin",
+   "surface": "Form Builder > Step 1 (demo template)",
+   "url": "/forms/evaluation/templates/18/step_1/",
+   "tickets": [
+    "M1-1413"
+   ],
+   "session": "unknown",
+   "labels": {
+    "M1-1413": [
+     "Automatic Alerts",
+     "Manual Alerts",
+     "No submission alert",
+     "Yes",
+     "No",
+     "Enable Review Process"
+    ]
+   },
+   "gif": "kb-capture/kb-20261123-2158/v03.gif",
+   "args": {
+    "v": 1,
+    "login": "/users/login/",
+    "portal": "Admin",
+    "side": "nav, aside, .sidebar, #sidebar, [class*=sidebar]",
+    "allow": [
+     "Medtrics School of Medicine",
+     "School of Medicine",
+     "Medtrics Medical Center",
+     "Medtrics",
+     "Geriatric",
+     "Internal Medicine",
+     "IM program",
+     "ZZ DEMO",
+     "ZZDEMO"
+    ],
+    "domain": "medtricslab.com",
+    "labels": [
+     "Automatic Alerts",
+     "Manual Alerts",
+     "No submission alert",
+     "Yes",
+     "No",
+     "Enable Review Process"
+    ]
+   }
+  }
+ ],
+ "entries": {
+  "v01": {
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "url": "/budgets/benefits/time-off/",
+   "tickets": [
+    "M1-1245"
+   ],
+   "session": "unknown",
+   "clicks": [
+    {
+     "text": "Requests",
+     "named": true
+    }
+   ],
+   "write_gated": ""
+  },
+  "v02": {
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "url": "/cases/procedures/logs/",
+   "tickets": [
+    "M1-1459"
+   ],
+   "session": "unknown",
+   "clicks": [
+    {
+     "text": "Submit",
+     "named": true
+    },
+    {
+     "text": "Proceed without date",
+     "named": true
+    },
+    {
+     "text": "View",
+     "named": true
+    }
+   ],
+   "write_gated": ""
+  },
+  "v03": {
+   "persona": "admin",
+   "surface": "Form Builder > Step 1 (demo template)",
+   "url": "/forms/evaluation/templates/18/step_1/",
+   "tickets": [
+    "M1-1413"
+   ],
+   "session": "unknown",
+   "clicks": [],
+   "write_gated": ""
+  }
+ },
+ "screens": [],
+ "accounts": [
+  {
+   "account": "main",
+   "personas": [
+    "admin"
+   ],
+   "batches": [
+    "b01",
+    "b02",
+    "b03",
+    "b04",
+    "b05",
+    "b06",
+    "b07"
+   ]
+  }
+ ],
+ "write_visits": [],
+ "batches": [
+  {
+   "batch_id": "b01",
+   "persona": "admin",
+   "kind": "visits",
+   "visit_ids": [
+    "v01-s0"
+   ],
+   "account": "main"
+  },
+  {
+   "batch_id": "b02",
+   "persona": "admin",
+   "kind": "click",
+   "entry": "v01",
+   "step": 1,
+   "visit_ids": [
+    "v01-s1"
+   ],
+   "account": "main"
+  },
+  {
+   "batch_id": "b03",
+   "persona": "admin",
+   "kind": "visits",
+   "visit_ids": [
+    "v02-s0"
+   ],
+   "account": "main"
+  },
+  {
+   "batch_id": "b04",
+   "persona": "admin",
+   "kind": "click",
+   "entry": "v02",
+   "step": 1,
+   "visit_ids": [
+    "v02-s1"
+   ],
+   "account": "main"
+  },
+  {
+   "batch_id": "b05",
+   "persona": "admin",
+   "kind": "click",
+   "entry": "v02",
+   "step": 2,
+   "visit_ids": [
+    "v02-s2"
+   ],
+   "account": "main"
+  },
+  {
+   "batch_id": "b06",
+   "persona": "admin",
+   "kind": "click",
+   "entry": "v02",
+   "step": 3,
+   "visit_ids": [
+    "v02-s3"
+   ],
+   "account": "main"
+  },
+  {
+   "batch_id": "b07",
+   "persona": "admin",
+   "kind": "visits",
+   "visit_ids": [
+    "v03"
+   ],
+   "account": "main"
+  }
+ ],
+ "restore": [
+  {
+   "name": "navigate",
+   "input": {
+    "url": "https://medtrics.medtricslab.com/?portal_change=administration",
+    "tabId": "$TAB"
+   }
+  },
+  {
+   "name": "computer",
+   "input": {
+    "action": "wait",
+    "duration": 2,
+    "tabId": "$TAB"
+   }
+  }
+ ],
+ "abort": [
+  {
+   "name": "gif_creator",
+   "input": {
+    "action": "clear",
+    "tabId": "$TAB"
+   }
+  }
+ ],
+ "canary": {
+  "gif": "kb-capture/kb-20261123-2158/canary.gif"
+ }
+}

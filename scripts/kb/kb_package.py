@@ -450,7 +450,11 @@ def candidates(specs_dir):
         for i, st in enumerate(json.loads(p.read_text())["steps"], 1):
             if st.get("image"):
                 ev = st.get("evidence") or {}
+                flag = ("no ring" if ev.get("anchor") == F.SCREEN_ANCHOR
+                        else f"near match: {ev.get('label')}" if ev.get("label_match") == "near"
+                        else "")
                 items.append({"n": len(items) + 1, "ticket": tid, "step": i, "image": st["image"],
+                              "flag": flag,
                               "tenant": ev.get("tenant") or "unscreened",
                               "words": words_text(ev.get("tenant_words")),
                               "confirmed_by": ev.get("tenant_confirmed_by") or "",
@@ -505,7 +509,8 @@ def render_sheets(items, specs_dir, out):
             d.text((x, y + th.height + 6), f"#{it['n']}  {it['ticket']} · step {it['step']}",
                    font=f_n, fill=red if block else A.INK)
             verdict = "BLOCK — will not ship" if block else it["tenant"]
-            line = verdict + (f" · {it['words']}" if it["words"] else "")
+            line = verdict + (f" · {it['flag']}" if it.get("flag") else "") \
+                + (f" · {it['words']}" if it["words"] else "")
             for j, ln in enumerate(textwrap.wrap(line, 56)[:3]):
                 d.text((x, y + th.height + 30 + j * 17), ln, font=f_s, fill=red if block else F_MIDRGB)
         path = out if pi == 1 else out.with_name(f"{out.stem}-{pi}{out.suffix}")

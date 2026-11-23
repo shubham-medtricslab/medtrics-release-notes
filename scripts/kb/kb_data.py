@@ -992,7 +992,7 @@ def cmd_brief(a):
         emit({"ok": False, "action": "brief", "error": "unsafe_plan", "problems": problems})
         return 2
     try:
-        routes = _load(a.routes)
+        routes = C.O.load_routes(a.routes)
     except (OSError, json.JSONDecodeError) as e:
         emit({"ok": False, "action": "brief", "error": f"routes: {e}"})
         return 1
@@ -1222,7 +1222,7 @@ def cmd_records(a):
         plan = _load(a.plan)
         existing = demo_records(load_dump(a.records))
         calls = _load(a.calls) if a.calls else {}
-        routes = _load(a.routes)
+        routes = C.O.load_routes(a.routes)
     except (OSError, ValueError) as e:
         emit({"ok": False, "action": "records", "error": str(e)})
         return 1

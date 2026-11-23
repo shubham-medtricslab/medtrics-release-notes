@@ -17,7 +17,10 @@ A plugin hook blocks typing, key presses, drags and form input for you.
 The orchestrator gives you the run folder (`<folder>/.kb-runs/<run_id>/`, given
 as an argument; never assume or invent one), the capture file (`capture.md`,
 inside its `shots/` folder) and the raw folder (`shots/raw/` in the run
-folder), and optionally `--from-batch <batch_id>` (see "Accounts" below). `capture.md` holds each batch (fenced JSON blocks),
+folder), and optionally `--from-batch <batch_id>` (see "Accounts" below). The capture file is `capture.md`, or a
+retry file `retry-1.md` / `retry-2.md` in the same folder and the same format (its batch ids
+start with `r1` / `r2`), or a route-check file `routes-check.md` (see "Route check" below).
+Follow the file you were given and no other. It holds each batch (fenced JSON blocks),
 the `abort` actions, the `restore` actions and the raw-file contract. Read and
 write only inside that run folder; never use /tmp.
 
@@ -49,8 +52,21 @@ write only inside that run folder; never use /tmp.
      `KB_CLICK_NOTFOUND` or `KB_TENANT_ROW`: do not send `act`; send the `abort`
      actions; write the batch's raw file with `"items": [{"visit_id": "<id>",
      "click_error": "<the error text>"}]` and status `ok`; skip every later
-     click batch with the same `entry`; carry on with the next batch of another
-     entry. This is not a stop.
+     batch with the same `entry` (any kind); carry on with the next batch of
+     another entry. This is not a stop.
+   - Retry files add three kinds, named in the batch heading:
+     an **open batch** (`actions`, "no recording"): send its `actions`, write
+     its raw file with `"items": []`.
+     A **replay batch** (`pick` and `act`, "no recording"): a click batch
+     without a recording or a probe: send `pick`, substitute `$X` / `$Y`, send
+     `act`, write its raw file with `"items": []`. A refused click: do not send
+     `act`, write the raw file with `"items": []` and the error text in
+     `error`, skip every later batch of that `entry`.
+     A **frames batch** (`actions`, "more frames of the same screen"): a visit
+     batch with no navigation; skip it if the batch before it was skipped or
+     refused.
+   - Some `javascript_tool` calls take up to 20 seconds to answer (the quiet
+     wait). That is normal: wait for the result, never resend the call.
    - **Group rows.** If the `pick` result has `"group":true`, the row is a group
      header: send only `act`'s first action (the `left_click` at its `x`,`y`),
      wait 1 second with a `browser_batch` `wait`, then send the last action of
@@ -110,6 +126,16 @@ write only inside that run folder; never use /tmp.
 8. **Restore.** Always send the `restore` actions at the end, as one
    `browser_batch` with `"$TAB"` replaced, even after a stop. Skip it when the
    status is `bridge_down` and when you stopped for `needs_signin` or `needs_install`.
+
+## Route check
+
+A `routes-check.md` file has no recordings and no clicks. Each batch is one
+`browser_batch` of navigate, wait and `javascript_tool` calls; the probe is the
+LAST `javascript_tool` result of each route. Write `raw/<batch_id>.json` with
+one `{"visit_id", "probe"}` item per route that answered (no `gif`). Same stop
+rules. An error that is not a stop rule: status `ok`, its text in `error`,
+carry on with the next batch. Send the restore at the end and reply
+`KB_CHECK_DONE ok=<n> stop=<status|none>`.
 
 ## Never
 

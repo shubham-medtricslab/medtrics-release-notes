@@ -67,6 +67,12 @@ you, which costs a second pass, so get them right the first time.
    - A step that uses a shot MUST print that shot's label in bold, exactly as
      listed. If the label carries a number that changes per tenant ("2
      selected"), write the general form in bold ("**N selected**").
+   - A shot listed as "the whole screen, nothing ringed" shows the page
+     without a ring. Use it only on a step that opens or describes that screen;
+     that step needs no particular bold label for it.
+   - A shot listed with "(the ticket calls it …)" rings the text as the screen
+     shows it. Print the label as listed (the on-screen text) in bold, not the
+     ticket's wording.
    - A step with a shot MUST have a `caption`: one plain sentence saying what
      the picture shows.
    - When a ticket has no shots, use `"missing"` on the one or two steps where

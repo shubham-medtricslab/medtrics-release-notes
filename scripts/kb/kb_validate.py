@@ -124,6 +124,8 @@ def g3_evidence(spec, mode="draft"):
                                f"anchor '{anchor}' was never OCR-verified; "
                                "publish needs label_box or an owner-confirmed frame"))
             continue
+        if anchor == F.SCREEN_ANCHOR:
+            continue                      # no ring, so no ringed label to print in bold
         if anchor == "none":
             out.append(Failure("G3", f"step {i}",
                                "screenshot has no anchor; annotate it or drop the image"))

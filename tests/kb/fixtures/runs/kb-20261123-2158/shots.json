@@ -1,0 +1,1242 @@
+{
+ "shots": [
+  {
+   "shot_id": "s1",
+   "ticket": "M1-1245",
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v01-s0.png",
+   "verified": true,
+   "source": "chrome:medtrics.medtricslab.com/budgets/benefits/time-off/ 2026-11-23T22:11",
+   "visit_id": "v01-s0",
+   "sidebar": true,
+   "frame_source": "gif",
+   "anchor": "label_box",
+   "label": "Requests",
+   "label_score": 1.0,
+   "dom_box": [
+    304,
+    151,
+    104,
+    35
+   ],
+   "tenant": "CLEAR",
+   "tenant_dom": "CLEAR",
+   "tenant_ocr": "CLEAR"
+  },
+  {
+   "shot_id": "s2",
+   "ticket": "M1-1245",
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v01-s1.png",
+   "verified": true,
+   "source": "chrome:medtrics.medtricslab.com/budgets/benefits/time-off/ 2026-11-23T22:11",
+   "visit_id": "v01-s1",
+   "sidebar": false,
+   "frame_source": "gif",
+   "fallback": "heading",
+   "anchor": "dom_box",
+   "label": "Time Off Benefits",
+   "label_score": 1.0,
+   "dom_box": [
+    196,
+    90,
+    1315,
+    62
+   ],
+   "tenant": "REVIEW",
+   "tenant_dom": "CLEAR",
+   "tenant_ocr": "REVIEW"
+  },
+  {
+   "shot_id": "s3",
+   "ticket": "M1-1459",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v02-s0.png",
+   "verified": true,
+   "source": "chrome:medtrics.medtricslab.com[BLOCKED: Base64 encoded data] 2026-11-23T22:11",
+   "visit_id": "v02-s0",
+   "sidebar": true,
+   "frame_source": "gif",
+   "anchor": "label_box",
+   "label": "Logs",
+   "label_score": 1.0,
+   "dom_box": [
+    312,
+    62,
+    28,
+    17
+   ],
+   "tenant": "REVIEW",
+   "tenant_dom": "REVIEW",
+   "tenant_ocr": "REVIEW"
+  },
+  {
+   "shot_id": "s4",
+   "ticket": "M1-1459",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v02-s0.png",
+   "verified": false,
+   "source": "chrome:medtrics.medtricslab.com[BLOCKED: Base64 encoded data] 2026-11-23T22:11",
+   "visit_id": "v02-s0",
+   "sidebar": false,
+   "frame_source": "gif",
+   "label": "Submit"
+  },
+  {
+   "shot_id": "s5",
+   "ticket": "M1-1459",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v02-s1.png",
+   "verified": true,
+   "source": "chrome:medtrics.medtricslab.com[BLOCKED: Base64 encoded data] 2026-11-23T22:11",
+   "visit_id": "v02-s1",
+   "sidebar": false,
+   "frame_source": "gif",
+   "anchor": "label_box",
+   "label": "Proceed without date",
+   "label_score": 1.0,
+   "dom_box": [
+    668,
+    458,
+    200,
+    41
+   ],
+   "tenant": "REVIEW",
+   "tenant_dom": "REVIEW",
+   "tenant_ocr": "CLEAR"
+  },
+  {
+   "shot_id": "s6",
+   "ticket": "M1-1459",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v02-s2.png",
+   "verified": false,
+   "source": "chrome:medtrics.medtricslab.com[BLOCKED: Base64 encoded data] 2026-11-23T22:11",
+   "visit_id": "v02-s2",
+   "sidebar": false,
+   "frame_source": "gif",
+   "label": "View"
+  },
+  {
+   "shot_id": "s7",
+   "ticket": "M1-1459",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v02-s2.png",
+   "verified": true,
+   "source": "chrome:medtrics.medtricslab.com[BLOCKED: Base64 encoded data] 2026-11-23T22:11",
+   "visit_id": "v02-s2",
+   "sidebar": false,
+   "frame_source": "gif",
+   "fallback": "heading",
+   "anchor": "dom_box",
+   "label": "Case Logs",
+   "label_score": 1.0,
+   "dom_box": [
+    196,
+    -450,
+    1315,
+    62
+   ],
+   "tenant": "REVIEW",
+   "tenant_dom": "REVIEW",
+   "tenant_ocr": "CLEAR"
+  },
+  {
+   "shot_id": "s8",
+   "ticket": "M1-1459",
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v02-s3.png",
+   "verified": true,
+   "source": "chrome:medtrics.medtricslab.com[BLOCKED: Base64 encoded data] 2026-11-23T22:11",
+   "visit_id": "v02-s3",
+   "sidebar": false,
+   "frame_source": "gif",
+   "fallback": "heading",
+   "anchor": "dom_box",
+   "label": "Case Logs",
+   "label_score": 1.0,
+   "dom_box": [
+    196,
+    -926,
+    1315,
+    62
+   ],
+   "tenant": "REVIEW",
+   "tenant_dom": "REVIEW",
+   "tenant_ocr": "CLEAR"
+  },
+  {
+   "shot_id": "s9",
+   "ticket": "M1-1413",
+   "persona": "admin",
+   "surface": "Form Builder > Step 1 (demo template)",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v03.png",
+   "verified": false,
+   "source": "chrome:medtrics.medtricslab.com/forms/evaluation/templates/18/step_1/ 2026-11-23T22:11",
+   "visit_id": "v03",
+   "sidebar": false,
+   "frame_source": "gif",
+   "label": "Automatic Alerts"
+  },
+  {
+   "shot_id": "s10",
+   "ticket": "M1-1413",
+   "persona": "admin",
+   "surface": "Form Builder > Step 1 (demo template)",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v03.png",
+   "verified": false,
+   "source": "chrome:medtrics.medtricslab.com/forms/evaluation/templates/18/step_1/ 2026-11-23T22:11",
+   "visit_id": "v03",
+   "sidebar": false,
+   "frame_source": "gif",
+   "label": "Manual Alerts"
+  },
+  {
+   "shot_id": "s11",
+   "ticket": "M1-1413",
+   "persona": "admin",
+   "surface": "Form Builder > Step 1 (demo template)",
+   "frame": "/home/claude/.kb-runs/kb-20261123-2158/shots/frames/v03.png",
+   "verified": false,
+   "source": "chrome:medtrics.medtricslab.com/forms/evaluation/templates/18/step_1/ 2026-11-23T22:11",
+   "visit_id": "v03",
+   "sidebar": false,
+   "frame_source": "gif",
+   "label": "No submission alert"
+  }
+ ],
+ "screens": [
+  {
+   "visit_id": "v01-s0",
+   "entry": "v01",
+   "step": 0,
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "tickets": [
+    "M1-1245"
+   ],
+   "reason": null,
+   "detail": "",
+   "fields": [
+    {
+     "kind": "text",
+     "label": "Select Role",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Select Person",
+     "name": "",
+     "required": false,
+     "type": "text"
+    }
+   ],
+   "found": [
+    "Requests"
+   ]
+  },
+  {
+   "visit_id": "v01-s1",
+   "entry": "v01",
+   "step": 1,
+   "persona": "admin",
+   "surface": "Benefits > Time Off",
+   "tickets": [
+    "M1-1245"
+   ],
+   "reason": null,
+   "detail": "",
+   "fields": [
+    {
+     "kind": "text",
+     "label": "All Users",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "All Statuses",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "All Roles",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "All Classes",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "All Categories",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "All Home Institutions",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Submitted From",
+     "name": "req-filter-date-from",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Submitted To",
+     "name": "req-filter-date-to",
+     "required": false,
+     "type": "text"
+    }
+   ]
+  },
+  {
+   "visit_id": "v02-s0",
+   "entry": "v02",
+   "step": 0,
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "tickets": [
+    "M1-1459"
+   ],
+   "reason": null,
+   "detail": "",
+   "fields": [
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "id_3",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "text",
+     "label": "Select",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "id_5",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "text",
+     "label": "Select",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Select Graded Course Rotation",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "From",
+     "name": "from_date",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "To",
+     "name": "to_date",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "id_6",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "select",
+     "label": "Log Status",
+     "name": "status-filter",
+     "opts": [
+      "--",
+      "Approved",
+      "Draft",
+      "Pending",
+      "Rejected"
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "select",
+     "label": "Trainee",
+     "name": "trainee-filter",
+     "opts": [
+      ""
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Select trainee",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "select",
+     "label": "Supervisor",
+     "name": "supervisor-filter",
+     "opts": [
+      ""
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Select supervisor",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "text",
+     "label": "Select",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Trainee Role",
+     "name": "role-filter",
+     "required": false,
+     "type": "select-multiple"
+    },
+    {
+     "kind": "multiselect",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "select",
+     "label": "Preceptor",
+     "name": "preceptor-filter",
+     "opts": [
+      ""
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Select Preceptor",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "select",
+     "label": "Clinical Settings",
+     "name": "clinical_setting",
+     "opts": [
+      "",
+      "Clinic",
+      "Emergency Room/Urgent Care",
+      "Home",
+      "Inpatient",
+      "Inpatient - Clinical Care Unit",
+      "Inpatient - Labor & Delivery",
+      "Inpatient - Operating Room",
+      "Outpatient",
+      "Outpatient - Nursing Home/Extended Care "
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "text",
+     "label": "Select Site...",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "select",
+     "label": "Gender",
+     "name": "gender-filter",
+     "opts": [
+      "",
+      "Female",
+      "Male",
+      "Other"
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "select",
+     "label": "Performance Level",
+     "name": "performance-filter",
+     "opts": [
+      "",
+      "Performed without any assistance",
+      "Performed with minimal assistance",
+      "Performed with significant assistance",
+      "Observed"
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "text",
+     "label": "Age Range - From",
+     "name": "age_from",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Age Range - To",
+     "name": "age_to",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Cases",
+     "name": "procedure-log-filter",
+     "required": false,
+     "type": "select-multiple"
+    },
+    {
+     "kind": "multiselect",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "text",
+     "label": "Select Diagnosis",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Select Rotation...",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Select Graded Status",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Filter cases logs by current program",
+     "name": "filter_cases_logs_by_current_program",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "custom-question-filter",
+     "required": false,
+     "type": "checkbox"
+    }
+   ],
+   "tw": {
+    "discipline_word": [
+     "dental"
+    ]
+   },
+   "found": [
+    "Logs",
+    "Submit"
+   ]
+  },
+  {
+   "visit_id": "v02-s1",
+   "entry": "v02",
+   "step": 1,
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "tickets": [
+    "M1-1459"
+   ],
+   "reason": null,
+   "detail": "",
+   "tw": {
+    "discipline_word": [
+     "dental"
+    ]
+   },
+   "btn": [
+    "Cancel and enter a date",
+    "Proceed without date"
+   ],
+   "found": [
+    "Proceed without date"
+   ]
+  },
+  {
+   "visit_id": "v02-s2",
+   "entry": "v02",
+   "step": 2,
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "tickets": [
+    "M1-1459"
+   ],
+   "reason": null,
+   "detail": "",
+   "fields": [
+    {
+     "kind": "text",
+     "label": "Select Graded Course Rotation",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "From",
+     "name": "from_date",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "To",
+     "name": "to_date",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "select",
+     "label": "Log Status",
+     "name": "status-filter",
+     "opts": [
+      "--",
+      "Approved",
+      "Draft",
+      "Pending",
+      "Rejected"
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "select",
+     "label": "Trainee",
+     "name": "trainee-filter",
+     "opts": [
+      ""
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Select trainee",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "select",
+     "label": "Supervisor",
+     "name": "supervisor-filter",
+     "opts": [
+      ""
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Select supervisor",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Trainee Role",
+     "name": "role-filter",
+     "required": false,
+     "type": "select-multiple"
+    },
+    {
+     "kind": "multiselect",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "select",
+     "label": "Preceptor",
+     "name": "preceptor-filter",
+     "opts": [
+      ""
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Select Preceptor",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "select",
+     "label": "Clinical Settings",
+     "name": "clinical_setting",
+     "opts": [
+      "",
+      "Clinic",
+      "Emergency Room/Urgent Care",
+      "Home",
+      "Inpatient",
+      "Inpatient - Clinical Care Unit",
+      "Inpatient - Labor & Delivery",
+      "Inpatient - Operating Room",
+      "Outpatient",
+      "Outpatient - Nursing Home/Extended Care "
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "text",
+     "label": "Select Site...",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "select",
+     "label": "Gender",
+     "name": "gender-filter",
+     "opts": [
+      "",
+      "Female",
+      "Male",
+      "Other"
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "select",
+     "label": "Performance Level",
+     "name": "performance-filter",
+     "opts": [
+      "",
+      "Performed without any assistance",
+      "Performed with minimal assistance",
+      "Performed with significant assistance",
+      "Observed"
+     ],
+     "required": false,
+     "type": "select-one"
+    },
+    {
+     "kind": "text",
+     "label": "Age Range - From",
+     "name": "age_from",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Age Range - To",
+     "name": "age_to",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "multiselect",
+     "label": "Cases",
+     "name": "procedure-log-filter",
+     "required": false,
+     "type": "select-multiple"
+    },
+    {
+     "kind": "multiselect",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "span"
+    },
+    {
+     "kind": "text",
+     "label": "Select Diagnosis",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "id_3",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "text",
+     "label": "Select Rotation...",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Select Graded Status",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Select",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Filter cases logs by current program",
+     "name": "filter_cases_logs_by_current_program",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "id_5",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "text",
+     "label": "Select",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "id_6",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "custom-question-filter",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "text",
+     "label": "Select",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "select-all-logs",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "",
+     "name": "",
+     "required": false,
+     "type": "checkbox"
+    }
+   ],
+   "tw": {
+    "discipline_word": [
+     "dental",
+     "medicine"
+    ]
+   },
+   "found": [
+    "View"
+   ]
+  },
+  {
+   "visit_id": "v02-s3",
+   "entry": "v02",
+   "step": 3,
+   "persona": "admin",
+   "surface": "Cases > Case logs",
+   "tickets": [
+    "M1-1459"
+   ],
+   "reason": null,
+   "detail": "",
+   "fields": [
+    {
+     "kind": "radio",
+     "label": "Yes",
+     "name": "5",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "No",
+     "name": "5",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "Observed",
+     "name": "6",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "Assisted",
+     "name": "6",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "Performed under supervision",
+     "name": "6",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "Performed independently",
+     "name": "6",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "select",
+     "label": "Level",
+     "name": "performance_level",
+     "opts": [
+      "---------",
+      "Performed without any assistance",
+      "Performed with minimal assistance",
+      "Performed with significant assistance",
+      "Observed"
+     ],
+     "required": true,
+     "type": "select-one"
+    },
+    {
+     "kind": "textarea",
+     "label": "Faculty comments",
+     "name": "supervisor_comments",
+     "required": false,
+     "type": "textarea"
+    }
+   ],
+   "tw": {
+    "discipline_word": [
+     "dental",
+     "medicine"
+    ]
+   },
+   "btn": [
+    "Reassign Case Log Reviewer Philip Hayes",
+    "Reject",
+    "Approve"
+   ]
+  },
+  {
+   "visit_id": "v03",
+   "entry": "v03",
+   "step": 0,
+   "persona": "admin",
+   "surface": "Form Builder > Step 1 (demo template)",
+   "tickets": [
+    "M1-1413"
+   ],
+   "reason": null,
+   "detail": "",
+   "fields": [
+    {
+     "kind": "text",
+     "label": "Name",
+     "name": "",
+     "required": true,
+     "type": "text"
+    },
+    {
+     "kind": "text",
+     "label": "Activation Date",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Make submissions confidential. Checking this box will hide who the evaluator is from admins and any evaluatees.",
+     "name": "anonymous",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "radio",
+     "label": "Automatic Alerts When evaluation is submitted by the evaluator send an email to the following people with a link to download the completed form as a PDF.",
+     "name": "submission_alert_type",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "Manual Alerts Gives evaluators the option to send an email to the selected people with a link to download the completed form as a PDF.",
+     "name": "submission_alert_type",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "No submission alert",
+     "name": "submission_alert_type",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Low Score Alerts Gives evaluators the ability to set up an email to notify selected individuals when a specified low score scenario has been triggered. Recipients of the email will be able to download and review the evaluation as a PDF immediately.",
+     "name": "alert_type_3",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Evaluatee Acknowledgement Alert (Disagree Only) When enabled, the selected users will receive an email notification whenever an evaluatee disagrees with their evaluation assessment. Requires: Enable Evaluatee Acknowledgement (in Evaluation Review Settings below) to collect responses. To send these emails, first turn on Enable Evaluatee Acknowledgement below.",
+     "name": "alert_type_4",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Overdue Evaluation Alerts Select the program administrators who should be notified and receive the Assignment Status Report if this evaluation is not completed by the due date.",
+     "name": "alert_type_5",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "No Alerts Clears every alert above. This is the default for a new evaluation.",
+     "name": "no_alerts",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Disable \"Unable to Assess\" option Hide the \"Submit as Unable to Assess\" button on evaluation forms. Evaluators will not be able to mark evaluations as \"Unable to Assess\".",
+     "name": "disable_unable_to_assess",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Require evaluator signature Evaluators will need to create a signature in their profile or draw one when submitting this evaluation.",
+     "name": "signature_required",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Post a review when this form is submitted on behalf of another user Records a review credited to the submitter and allows them to attach the original paper or PDF. Forms with a posted review do not appear in the Pending Review by Administrator queue.",
+     "name": "enable_auto_review_on_behalf_submission",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "text",
+     "label": "Select...",
+     "name": "",
+     "required": false,
+     "type": "text"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Enable Review Process - When enabled, feedback through this form will be exchanged between the evaluatee and the evaluator. The evaluation will appear under the \"For My Review\" status on the Reviews page, depending on whose turn it is to provide feedback. This process continues until one party marks the evaluation review process as complete.",
+     "name": "review_process_initiator",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "radio",
+     "label": "Evaluatee Initiates Review (Default) - The evaluatee will first see the evaluation under the \"For My Review\" view and will initiate the review process.",
+     "name": "review_initiator_evaluatee",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "radio",
+     "label": "Evaluator Initiates Review - The evaluator will first see the evaluation under the \"For My Review\" view and will initiate the review process.",
+     "name": "review_initiator_evaluator",
+     "required": false,
+     "type": "radio"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Enable Evaluatee Acknowledgement - When enabled, this setting adds an acknowledgement step where evaluatees must agree or disagree with their overall evaluation assessment and may leave optional comments (unless hidden below). Required for Evaluatee Acknowledgement Alert (Disagree Only).",
+     "name": "enable_evaluatee_acknowledgement",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Hide comment field for evaluatees - Evaluatees can still acknowledge and sign off on completed evaluations, but no comment box is shown. Earlier comments are kept.",
+     "name": "hide_evaluatee_sign_off_comment",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Hide comment field for evaluators - Evaluators can still sign off on completed evaluations, but no comment box is shown. Earlier comments are kept.",
+     "name": "hide_evaluator_sign_off_comment",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Require results to be published before evaluatee can view them When enabled, completed evaluation results will be hidden from the evaluatee until an admin publishes them. This reuses the same publish workflow used for confidential evaluations.",
+     "name": "require_publish_before_evaluatee_view",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "This is a graded evaluation form. Calculate and display the overall score. When this setting is enabled, the form will calculate and display the overall score on the interface as well as on the bottom of the exported evaluation PDF. If left unchecked, the form will not calculate or display an overall score, and the evaluation will be treated as ungraded.",
+     "name": "display_grade_score_information",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Display the potential score values next to each question so they are visible when filling out the evaluation. When enabled, the score for each individual question will be visible to the evaluator as they complete the form. If unchecked, the evaluator will only see the overall score at the bottom of the form without seeing the breakdown of individual values to the questions.",
+     "name": "display_score_values",
+     "required": false,
+     "type": "checkbox"
+    },
+    {
+     "kind": "checkbox",
+     "label": "Allow this form to be requested from non-Medtrics evaluators. When enabled, students can request an evaluation on this form from someone who doesn't have a Medtrics account, via either an email link or a shareable QR code.",
+     "name": "allow_external_request",
+     "required": false,
+     "type": "checkbox"
+    }
+   ],
+   "found": [
+    "Automatic Alerts",
+    "Manual Alerts",
+    "No submission alert"
+   ]
+  }
+ ],
+ "missing": {
+  "M1-1413": {
+   "reason": "label_not_found",
+   "detail": ""
+  }
+ }
+}

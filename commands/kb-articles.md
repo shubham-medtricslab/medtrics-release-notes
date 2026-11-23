@@ -26,6 +26,7 @@ can't place) and `kb-writer` (Sonnet, one call per writer group, all in parallel
 /kb-articles recheck kb-20261029-1755        # re-screen a finished run with the current rules and repackage (no browser)
 /kb-articles demo-data                       # list the demo records runs saved on the demo site (you delete them)
 /kb-articles demo-data done <ids>            # mark those records deleted after you removed them
+/kb-articles check-routes                    # walk every demo route in Chrome and say which ones the capture can use (no articles)
 ```
 
 Flags (combine with any mode):
@@ -77,6 +78,31 @@ ticket, what, link, date, server id, delete-before. The owner deletes them in
 the app — Claude never deletes data. Then `/kb-articles demo-data done <ids>`
 → `$KB_PY $K/kb_data.py demo-data-done --records $RUN/demo_notes.json --ids <ids> --out $RUN/demo_done.json`
 and perform those `update_note` writes, marking them deleted.
+
+## Route check: `check-routes [<surface name>]`
+
+Run it before a release of this plugin, or when captures start failing on pages
+that used to work. It drafts nothing and saves nothing on the site: every
+capturable route of the main sign-in is opened, given time to settle and probed.
+No clicks, no recordings.
+
+1. Step 00 (version check) and Step 0 items 3–4 (setup check, Claude in Chrome).
+2. Set the paths as in Step 0, then `CHK=$KB_RUNS/check-$(date +%Y%m%d-%H%M)` and
+   `$KB_PY $K/kb_heal.py plan-check --out-dir $CHK [--surface "<name>"]`,
+   which writes `routes-check.json` and `routes-check.md` there.
+3. Send the `install` actions from `routes-check.json` yourself, exactly as in
+   Step 5 item 2 (no canary: nothing is exported).
+4. Spawn ONE Task: `subagent_type: "medtrics-release-notes:kb-capturer"`,
+   `model: "haiku"`, prompt `Run folder: $CHK. Capture file:
+   $CHK/routes-check.md. Raw folder: $CHK/raw/.` (absolute paths). It replies
+   `KB_CHECK_DONE ok=<n> stop=<…>`. `stop=needs_install`: re-send the install
+   and start it again with `--from-batch`.
+5. `$KB_PY $K/kb_heal.py check-report --check $CHK/routes-check.json --raw-dir $CHK/raw`
+   prints one row per route: `ok`, page not found, still loading after the wait,
+   first click not on the page, a request the write guard blocked, or tenant
+   data on the page. Show the table, problems first. A route that is not `ok`
+   is fixed with a line in the overrides file (see Step 5 item 8) or in
+   `kb_routes.json`; nothing is changed for you here.
 
 ## Queue only: `--kb-queue <ids>`
 
@@ -551,6 +577,55 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    capture stopped; re-send `install` and resume with `--from-batch`). **Continue** — the shots already taken are kept;
    a step without one keeps its text in the article. `--retry-partial` re-runs
    them later (after a dry run, the next run saves and gets the screen).
+8. **Self-healing (0.26.0): diagnose, retry twice, fall back.** Always run this
+   after the ingest, whatever its exit code. It needs no decision from the owner.
+
+   ```bash
+   $KB_PY $K/kb_heal.py plan-retry --pass 1 --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots
+   ```
+
+   Exit 4 = nothing to retry on this pass: go on to pass 2. Exit 0 = it wrote
+   `shots/retry-1.md`, a capture file in the same format as `capture.md` for
+   only the screens whose screenshot was missed for a fixable reason (the item
+   was outside the frame, the page was still loading, the text on the page
+   differs slightly from the ticket's). Spawn the capturer exactly as in item 3
+   with `Capture file: $RUN/shots/retry-1.md` (same run folder, same raw
+   folder; log usage with `--scope retry-1`). The page scripts are still in the
+   tab; on `stop=needs_install` re-send `install` and resume with
+   `--from-batch`. Then:
+
+   ```bash
+   $KB_PY $K/kb_heal.py ingest-retry --pass 1 --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots --downloads-dir $DL
+   ```
+
+   Then run `plan-retry --pass 2` **even when pass 1 had nothing** (its looser
+   text match can find what pass 1 could not). Exit 0: capturer with
+   `retry-2.md` (`--scope retry-2`) and `ingest-retry --pass 2`; exit 4: skip
+   them. Pass 2 only takes what pass 1 left, with a longer wait (up to 20
+   seconds per screen) and a looser text match. Retries cover the main sign-in
+   (admin, faculty) and at most 12 screens per run. Then, always:
+
+   ```bash
+   $KB_PY $K/kb_heal.py finish --calls $RUN/shots/calls.json --raw-dir $RUN/shots/raw --out-dir $RUN/shots
+   ```
+
+   `finish` adds an **unringed screenshot** for a screen that loaded but whose
+   item could not be ringed (the writer may use it; the contact sheet marks it
+   "no ring"), writes what the retries proved into the overrides file, and
+   prints `shots/diagnosis.md`: one plain line per screenshot that needed
+   attention, with the real cause. **Relay those lines in Step 10; never
+   describe a missed screenshot in your own words.**
+
+   **Overrides file** — `<folder>/.medtrics-release-notes/kb_overrides.json`,
+   read by every script on top of `kb_routes.json`
+   (`$KB_PY $K/kb_overrides.py check` validates it, `show` lists it). The run
+   writes `alias` (a label as this page words it) and `quiet_cap_s` (this page
+   needs a longer wait) itself and lists each under "Learned". By hand it also
+   takes `wait_s`, `loader_sel`, and, only with `"source": "manual"`, `clicks`
+   and `read_posts`. To fix a page without a plugin release, add a line and
+   re-run the ticket with `--retry-partial`. Never write `clicks` or
+   `read_posts` yourself: they change what the capture may press or send, so
+   only the owner adds them.
 
 ### Step 6 — Write
 
@@ -618,7 +693,11 @@ $KB_PY $K/kb_package.py contact-sheet --run-dir $RUN --specs-dir $RUN/specs --ou
 Show `contact_sheet.png` (and any `contact_sheet-2.png` …) and ask: "These are
 the screenshots for this run. Reply with the numbers that are fine to send to
 clients (`all`, or `none`); anything you leave out stays as text only." Screens marked
-BLOCK never ship and can't be picked. Then:
+BLOCK never ship and can't be picked. Two marks ask for a closer look, so say
+what they mean when the sheet has them: **no ring** (the screen loaded but its
+item could not be ringed, so the picture shows the whole screen) and
+**near match: <text>** (the ring is on the closest text the page had, not the
+ticket's exact wording). Then:
 
 ```bash
 $KB_PY $K/kb_package.py confirm --run-dir $RUN --ok <numbers|all> --by "<owner>"
@@ -664,7 +743,9 @@ Perform those `update_note` writes the same way. A ticket that was never queued
 was given: done (with its files and whether screenshots are missing) or not
 done and why (code missing, not a feature, not found in Optimus, already has an
 article, or the error). Then the output folder and zip path, the counts line, the
-uncapturable and left-by-capture lists (with reasons), the
+uncapturable and left-by-capture lists (with reasons), the lines of
+`$RUN/shots/diagnosis.md` as they are (cause per screenshot, what the retries
+did, and anything under "Learned" or "Dropped"), the
 PDF warnings, the token estimate and the **estimated cost** (the table's
 "Est. cost" column per ticket and the run total — say it is an estimate that
 leaves out the main chat). If demo records were saved, list them (ticket, link,

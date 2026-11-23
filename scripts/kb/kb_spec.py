@@ -40,6 +40,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import kb_format as F                   # noqa: E402
+import kb_overrides as O                # noqa: E402
 import kb_validate as V                 # noqa: E402
 
 DEFAULT_ROUTES = HERE / "kb_routes.json"
@@ -112,7 +113,12 @@ def writer_bundle(group, inputs, shots, priors, uncapturable):
         if mine:
             L.append("Shots you may use:")
             for s in mine:
-                L.append(f"  {s['shot_id']} · label \"{s['label']}\" · {s['surface']} · {s['tenant']}")
+                if s.get("anchor") == F.SCREEN_ANCHOR:
+                    L.append(f"  {s['shot_id']} · the whole screen, nothing ringed (\"{s['label']}\") · "
+                             f"{s['surface']} · {s['tenant']}")
+                    continue
+                near = f" (the ticket calls it \"{s['label_wanted']}\")" if s.get("label_wanted") else ""
+                L.append(f"  {s['shot_id']} · label \"{s['label']}\"{near} · {s['surface']} · {s['tenant']}")
         else:
             why = uncapturable.get(tid) or "nothing verified on screen"
             L.append(f"Shots you may use: none ({why}) — use \"shot\": \"missing\" where one would help")
@@ -167,6 +173,9 @@ def _annotate(shot, number, out_path):
         k = 1440 / im.width if im.width > 1440 else 1.0
         if k != 1.0:
             im = im.resize((1440, round(im.height * k)), Image.LANCZOS)
+        if shot.get("anchor") == F.SCREEN_ANCHOR:
+            A.finalize(im.convert("RGB"), out_path)      # the settled page as it is: no ring
+            return True
         box = [round(v * k) for v in shot["dom_box"]]
         x, y, w, h = box
         if w <= 0 or h <= 0 or x + w <= 0 or y + h <= 0 or x >= im.width or y >= im.height:
@@ -204,17 +213,26 @@ def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
                 rel = f"assets/{tid}/{n:02d}.jpg"
                 if annotate:
                     (Path(out_root) / rel).parent.mkdir(parents=True, exist_ok=True)
-                    if not _annotate(shot, n, Path(out_root) / rel):
-                        step["missing_shot"] = f"screenshot {sid} showed its item off-screen"
+                    try:
+                        drawn = _annotate(shot, n, Path(out_root) / rel)
+                    except Exception as e:           # noqa: BLE001 - one bad image never stops assembly
+                        drawn, step["shot_error"] = False, f"{type(e).__name__}: {e}"[:160]
+                    if not drawn:
+                        step["missing_shot"] = (f"screenshot {sid} could not be drawn" if step.get("shot_error")
+                                                else f"screenshot {sid} showed its item off-screen")
                         steps.append(step)
                         continue
                 ev = {k: shot.get(k) for k in ("anchor", "label", "label_score", "tenant",
                                                "dom_box", "tenant_dom", "tenant_ocr", "source")}
+                for k in ("fallback", "label_match", "label_wanted"):
+                    if shot.get(k):
+                        ev[k] = shot[k]                 # shown on the contact sheet
                 ev["frame"] = Path(shot["frame"]).name
                 words = shot.get("tenant_words") or shot.get("tw")
                 if words:
                     ev["tenant_words"] = words      # shown on the contact sheet only
-                law = label_as_written(step["text"], shot["label"])
+                law = (None if shot.get("anchor") == F.SCREEN_ANCHOR
+                       else label_as_written(step["text"], shot["label"]))
                 if law:
                     ev["label_as_written"] = law
                 step.update(image=rel, evidence=ev)
@@ -316,7 +334,7 @@ def _reason_text(r):
 
 
 def cmd_assemble(a):
-    groups, routes = _load(a.groups), _load(a.routes)
+    groups, routes = _load(a.groups), O.load_routes(a.routes)
     shots = shots_by_ticket(_load(a.shots, {}))
     priors = _load(a.priors, {})
     uncap = {u["ticket"]: u["reason"] for u in groups.get("uncapturable") or []}

@@ -126,14 +126,15 @@ def provenance_rows(spec):
         ev = st.get("evidence") or (st.get("excluded") or {}).get("evidence") or {}
         label = ev.get("label")
         score = ev.get("label_score")
-        verified = f"{label} {score:.2f}" if label and score is not None else "—"
+        verified = (f"{label} {score:.2f}" if label and score is not None
+                    and ev.get("anchor") != "screen" else "—")
         rows.append([
             str(i),
             ev.get("source", "—"),
             ev.get("frame", "—"),
             (ev.get("tenant", "—") if shown
              else f"{ev['tenant']} (left out)" if ev.get("tenant") else "—"),
-            {"label_box": "label box",
+            {"label_box": "label box", "screen": "no ring",
              "click_transient": "click transient"}.get(ev.get("anchor"), "—"),
             verified,
             ev.get("tenant_confirmed_by") or "—",

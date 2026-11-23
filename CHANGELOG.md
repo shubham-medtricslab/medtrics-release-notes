@@ -5,6 +5,27 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-11-23
+
+Two runs in a row needed a plugin release for page quirks (a label below the fold, a loader still showing, button text with a name appended). This release lets the capture handle that kind of problem during the run, or with one line in a local file. Plan and decisions: `docs/plans/KB-SELF-HEALING-PLAN.md`.
+
+### Added (KB articles)
+- **Wait until quiet (`kbw`).** After the fixed settle wait, every screen waits until no loader is visible and nothing was added to or removed from the page for half a second, up to 10 seconds. The loader check also covers a "Loading…" / "Please wait…" text and a page's own `loader_sel`.
+- **Diagnosis and two retry passes (`scripts/kb/kb_heal.py`).** After the first capture, each missed screenshot gets a cause: outside the frame, covered, still loading, written differently on the page, or not found. `plan-retry` writes `retry-1.md` / `retry-2.md` for the capturer in the `capture.md` format, with only the failed screens. A screen behind clicks is reached by replaying its clicks without recording. Pass 1 scrolls, waits again and accepts a near-match text at 0.82. Pass 2 waits up to 20 seconds and accepts 0.70 or all of the label's words. Limits: 12 screens per run, 3 frames per screen, main sign-in only. A retry uses the same page scripts, click guard and write guard as the first capture.
+- **Near match.** For a label it cannot find, the probe returns the closest texts on the page. A screenshot ringed through one is marked `near match: <text>` on the contact sheet, and the article prints the text as the screen shows it.
+- **Unringed screenshot.** When nothing can be ringed on a screen that did load, the step gets the settled page without a ring (`anchor: "screen"`), marked `no ring` on the contact sheet. It ships only if the owner picks it.
+- **Overrides file (`.medtrics-release-notes/kb_overrides.json`, `scripts/kb/kb_overrides.py`).** Every script reads `kb_routes.json` with this file laid over it. Keys: `wait_s`, `quiet_cap_s`, `alias`, `loader_sel`, and by hand only (`"source": "manual"`) `clicks` and `read_posts`. `kb_overrides.py check` validates it and `show` lists it. The file is copied into each run folder, so it is in the run zip.
+- **Learning.** When a near match holds, the run writes the `alias`. When only the 20-second wait worked, it writes `quiet_cap_s`. Both are listed under "Learned" in the report. A learned alias that is not found on two later runs in a row is dropped and reported. The run never writes `clicks` or `read_posts`.
+- **Plain-word diagnosis.** `kb_heal.py finish` writes `shots/diagnosis.md`: one line per screenshot that needed attention, with the cause and what the retries did. The report relays these lines as they are.
+- **`/kb-articles check-routes [<surface>]`.** Opens every capturable route of the main sign-in, waits, and probes. It reports page not found, still loading, first click not on the page, a request the write guard blocked, or tenant data. No clicks, no recordings, nothing saved.
+- **`tools/kb_promote_overrides.py <run zip>`** (dev tool, not shipped). Shows the learned lines of a run as a diff against `kb_routes.json` and writes them with `--apply`.
+- **Replay corpus.** `tests/kb/fixtures/runs/kb-20261123-2158` is the raw data of the run that came back partial. The diagnosis must name its known causes, and a later run zip can be added the same way.
+
+### Changed (KB articles)
+- **One screen's error no longer stops the run.** An unexpected error while ingesting a screen or drawing a ring becomes that screen's reason (`internal_error`, details in `shots/errors.log`).
+- The capturer agent handles three more batch kinds in retry files (`open`, `replay`, `frames`) and the probe-only route check. It has no new tools and no new abilities.
+- The writer is told when a screenshot shows the whole screen without a ring, and when a ringed label is the on-screen wording of the ticket's term.
+
 ## [0.25.1] - 2026-11-23
 
 ### Fixed (KB articles, from run kb-20261123-2158, the 0.25.0 retry of M1-1245, M1-1459, M1-1413)

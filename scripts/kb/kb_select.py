@@ -31,6 +31,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import kb_ledger as L                    # noqa: E402
+import kb_overrides as O                 # noqa: E402
 import kb_route as R                     # noqa: E402
 
 DEFAULT_ROUTES = HERE / "kb_routes.json"
@@ -330,7 +331,7 @@ def cmd_filter(a):
 
 
 def cmd_place(a):
-    data, routes = _load(a.data), _load(a.routes)
+    data, routes = _load(a.data), O.load_routes(a.routes)
     placements, unplaced = [], []
     for i in data.get("issues") or []:
         s, how = place_issue(i, routes)
@@ -348,7 +349,7 @@ def cmd_place(a):
 
 
 def cmd_merge(a):
-    placed, routes, data = _load(a.placed), _load(a.routes), _load(a.data)
+    placed, routes, data = _load(a.placed), O.load_routes(a.routes), _load(a.data)
     raw = Path(a.answer).read_text()
     m = re.search(r"\[.*\]", raw, re.S)
     answer = json.loads(m.group(0)) if m else []
@@ -365,7 +366,7 @@ def cmd_merge(a):
 
 
 def cmd_group(a):
-    placed, routes = _load(a.placed), _load(a.routes)
+    placed, routes = _load(a.placed), O.load_routes(a.routes)
     sessions = _load(a.sessions) if a.sessions and Path(a.sessions).exists() else {}
     capture, writers, uncap = group(placed["placements"], routes, a.max, sessions)
     out = {"run_id": a.run_id, "date": a.date, "mode": a.mode,

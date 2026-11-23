@@ -137,6 +137,53 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    Downloads), `empty_export` (a zero-byte GIF) or `bad_gif` (not readable as an
    image).
 
+## Self-healing (0.26.0)
+
+The capture no longer gets one attempt per screen. Design and decisions:
+`docs/plans/KB-SELF-HEALING-PLAN.md`. Code: `scripts/kb/kb_heal.py`,
+`scripts/kb/kb_overrides.py`.
+
+1. **Quiet wait (`kbw`).** After the fixed settle wait, every visit awaits
+   `kbw`: it answers once no loader is visible and no node was added or removed
+   for 500 ms, or at the cap (10 s; a page's `quiet_cap_s`, at most 20). Then
+   `kbs`, the hover and the probe as before. Live-tested: a `javascript_tool`
+   call can stay open for the full 20 s inside a `browser_batch`.
+2. **Candidates.** For a label it cannot find, the probe returns up to three
+   close texts from the page (`c`): controls, headings and any element without
+   child elements (a radio's name is often a `<b>` inside a long `<label>`).
+3. **Diagnosis** (`kb_heal.diagnose`). Each wanted label without a screenshot
+   gets one cause: `other_frame`, `offscreen`, `covered`, `loading`,
+   `near_match`, `not_found`, or the screen's own reason (click refused, tenant
+   block, 404, needs a save).
+4. **Two retry passes.** `plan-retry --pass N` writes `retry-N.md` in the
+   capture.md format, with three more batch kinds: `open` (start page, no
+   recording), `replay` (a click without recording, to get back to a screen
+   behind clicks) and `frames` (another frame of the same screen for a second
+   label). Pass 1: scroll, wait again, near match at 0.82. Pass 2: 20 s cap,
+   near match at 0.70 or all words present. Main sign-in only, 12 screens per
+   run, 3 frames per screen. A retry can do nothing the first capture cannot:
+   same stored scripts, same click guard, same write guard.
+5. **Unringed fallback** (`finish`). A loaded, non-BLOCK screen with no shot
+   gets one with `anchor: "screen"`; gate G3 asks no bold label for it, publish
+   needs the owner's ok like `dom_box`, the contact sheet says "no ring". A
+   near-match shot carries `label_match: "near"` and `label_wanted`; its
+   `label` is the text on screen, which is what the article prints.
+6. **Overrides** (`.medtrics-release-notes/kb_overrides.json`). Every script
+   reads `kb_routes.json` through `kb_overrides.load_routes`. `finish` writes
+   `alias` after a near match held and `quiet_cap_s` after a pass-2 wait
+   worked; a learned alias not found on two later runs in a row is dropped.
+   `clicks` and `read_posts` apply only with `"source": "manual"`.
+7. **`finish` output.** `shots/diagnosis.md` (plain words, relayed as is in the
+   report), `diagnosis.json`, and a copy of the overrides file in `shots/`.
+8. **Never the end of the run.** An unexpected error while ingesting one screen
+   or drawing one ring is that screen's reason (`internal_error`,
+   `shots/errors.log`); the run goes on.
+
+`/kb-articles check-routes` (`plan-check`, `check-report`) walks every route of
+the main sign-in with navigate, wait, `kbw` and the probe only.
+`tools/kb_promote_overrides.py <run zip>` turns the learned lines of a run into
+a reviewed change to `kb_routes.json`.
+
 ## Click visits
 
 A capture_plan entry may carry `"clicks": [{"text": "View"}, {"row": true}, …]`
