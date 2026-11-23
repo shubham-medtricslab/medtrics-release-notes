@@ -571,6 +571,8 @@ var P=function(u){try{return new U(String(u),(D&&D.baseURI)||W.location.href);}c
 var note=function(m,u,s){W.__kbBlocked=(W.__kbBlocked||0)+1;var q=P(u),p=q?q.pathname:String(u||'').slice(0,60),qs=q?q.search:'';W.__kbLast=String(m).trim().toUpperCase()+' '+p;W.__kbLastQ=qs;W.__kbLastSrc=s||'';var L=W.__kbLog;if(!Array.isArray(L))L=W.__kbLog=[];L.push({n:W.__kbBlocked,m:String(m).trim().toUpperCase(),p:p,q:qs,s:s||'',t:now()});while(L.length>20)L.shift();};
 var nm=function(m){return String(m||'GET').trim().toUpperCase();};
 var get=function(m){return nm(m)==='GET';};
+var RP=__READS__;
+var rd=function(m,u){if(nm(m)!=='POST'||!RP.length)return false;var q=P(u);if(!q||q.origin!==W.location.origin||RP.indexOf(q.pathname)<0)return false;var L=W.__kbReads;if(!Array.isArray(L))L=W.__kbReads=[];if(L.length<20)L.push('POST '+q.pathname);return true;};
 var fm=function(f,s){return String((s&&s.formMethod)||(f&&f.method)||'get').trim().toLowerCase();};
 var TOK='__TOK__',cur=null,XM=new WM();
 var has=function(n,c){try{return CT?CT.call(n,c):n.contains(c);}catch(x){return false;}};
@@ -599,7 +601,7 @@ else if(i&&typeof i==='object'&&!(U&&i instanceof U)){var iu=i.url;mi=i.method;u
 else{u=String(i);i2=u;}
 var ms=String(mo||mi||'GET');
 if(mo)o2.method=ms;
-if(get(ms))return F.call(W,i2,o2);
+if(get(ms)||rd(ms,u))return F.call(W,i2,o2);
 var ly=take(nm(ms),u);
 if(!ly){note(ms,u,'fetch');return Promise.reject(new TypeError('KB_WRITE_BLOCKED'));}
 o2=OA({},o2||{});o2.method=ms;
@@ -608,7 +610,7 @@ try{pr.then(function(r){try{sv(ly,u,r.status,'');r.clone().json().then(function(
 return pr;};nf.__kb=1;try{DP(nf,'__kbA',{value:arm});}catch(x){}W.fetch=nf;}
 var X=W.XMLHttpRequest&&W.XMLHttpRequest.prototype;
 if(X&&X.open&&!X.open.__kb){var xo=X.open,xs=X.send,xa=X.addEventListener;X.open=function(m,u){XM.delete(this);var r=xo.apply(this,arguments);var q=P(u);XM.set(this,{m:String(m),u:q?q.href:String(u)});return r;};X.open.__kb=1;
-X.send=function(){var r=XM.get(this);if(r&&get(r.m))return xs.apply(this,arguments);
+X.send=function(){var r=XM.get(this);if(r&&(get(r.m)||rd(r.m,r.u)))return xs.apply(this,arguments);
 if(r){var ly=take(nm(r.m),r.u);if(ly){var x=this;try{xa.call(x,'loadend',function(){var id='';try{id=idOf(JSON.parse(x.responseText));}catch(e){}sv(ly,r.u,x.status,id);});}catch(e){}return xs.apply(this,arguments);}}
 note(r?r.m:'OPEN?',r&&r.u,'xhr');throw new Error('KB_WRITE_BLOCKED');};X.send.__kb=1;try{DP(X.send,'__kbA',{value:arm});}catch(x){}}
 var N=W.navigator;
@@ -628,17 +630,52 @@ if(D&&!D.__kbM&&W.MutationObserver){D.__kbM=1;try{new W.MutationObserver(functio
 """
 
 
-def guard_source():
-    """The write guard as one JS statement (an IIFE), lines joined by spaces."""
-    return " ".join(l.strip() for l in _GUARD_JS.strip().splitlines()).replace("__TOK__", ARM_TOKEN)
+# A route may list read-only POSTs its page needs to show its data (a list that loads by
+# POST), in kb_routes.json "read_posts": exact same-origin paths, hand-checked, never a
+# pattern. Only POST, only that exact path, no query; every other write stays blocked.
+READ_POST_RE = re.compile(r"/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]*")
+READ_POST_REFUSE = re.compile(r"(?:^|[/_\-.])(?:add|approve|assign|create|delete|destroy|edit|"
+                              r"import|reassign|reject|remove|save|send|submit|update|upload|"
+                              r"write)(?:$|[/_\-.])", re.I)
 
 
-def request_blocked(method=None, request_method=None):
-    """Python mirror of the guard's fetch/XHR rule: only GET passes. `method` is
-    init.method / the XHR method; `request_method` a Request object's method (used
-    when `method` is empty). No method at all = GET."""
-    m = method or request_method or "GET"
-    return str(m).strip().upper() != "GET"
+def read_post_ok(path):
+    """True for a path that may be listed as a read-only POST: an absolute path with no
+    query or fragment, and no write verb in it (create, save, delete, approve, ...)."""
+    p = str(path or "").strip()
+    return bool(p) and bool(READ_POST_RE.fullmatch(p)) and not READ_POST_REFUSE.search(p)
+
+
+def read_posts_for(plan, routes):
+    """The read-only POST paths for a capture plan: the "read_posts" of every
+    kb_routes.json surface the plan visits (persona + surface), valid ones only."""
+    wanted = {(c.get("persona"), c.get("surface")) for c in plan.get("capture_plan") or []}
+    out = []
+    for r in (routes or {}).get("surfaces") or []:
+        personas = [r.get("persona")] + list(r.get("also_personas") or [])
+        if any((p, r.get("surface")) in wanted for p in personas):
+            out += [str(x).strip() for x in r.get("read_posts") or [] if read_post_ok(x)]
+    return sorted(set(out))
+
+
+def guard_source(reads=()):
+    """The write guard as one JS statement (an IIFE), lines joined by spaces. `reads`
+    are the run's read-only POST paths (read_posts_for); every other write is blocked."""
+    reads = [r for r in reads or () if read_post_ok(r)]
+    return " ".join(l.strip() for l in _GUARD_JS.strip().splitlines()) \
+        .replace("__TOK__", ARM_TOKEN).replace("__READS__", json.dumps(sorted(set(reads))))
+
+
+def request_blocked(method=None, request_method=None, path=None, reads=()):
+    """Python mirror of the guard's fetch/XHR rule: only GET passes, plus a POST to a
+    listed read-only path (same origin assumed; `path` is the URL's pathname).
+    `method` is init.method / the XHR method; `request_method` a Request object's
+    method (used when `method` is empty). No method at all = GET."""
+    m = str(method or request_method or "GET").strip().upper()
+    if m == "GET":
+        return False
+    return not (m == "POST" and path is not None and read_post_ok(path)
+                and str(path) in {r for r in reads or () if read_post_ok(r)})
 
 
 def form_blocked(form_method=None, submitter_method=None):
@@ -757,9 +794,9 @@ var re2=rx('slug',true),m3;
 var STOP=__SLUG_STOP__;var isW=function(w){var c=[w];STOP.strip.forEach(function(p){if(w.indexOf(p)===0)c.push(w.slice(p.length));});if(c.some(function(x){return STOP.words.indexOf(x)>=0;}))return true;for(var i=0;i<STOP.has.length;i++){if(w.indexOf(STOP.has[i])>=0)return true;}if(c.some(function(x){return STOP.stems.concat(STOP.lead).some(function(t){return x.indexOf(t)===0;});}))return true;return w.length>=STOP.typo&&STOP.words.some(function(s){return s.length>=STOP.typo&&d1(w,s);});};
 var d1=function(a,b){if(Math.abs(a.length-b.length)>1)return false;if(a.length>b.length){var t=a;a=b;b=t;}var i=0;while(i<a.length&&a[i]===b[i])i++;return a.slice(i+(a.length===b.length?1:0))===b.slice(i+1);};
 while((m3=re2.exec(low))){if(!isW(m3[1])){add('tenant_slug',true);tws('tenant_slug',m3[1]);}}
-var nl=0;
-for(var i=0;i<low.length;i++){if(low.charCodeAt(i)>0x3FF)nl++;}
-if(nl>=__NONLATIN__)add('non_latin_script',true);
+var nl=0,nls=[],NLR=null;try{NLR=new RegExp('[^\\P{L}\\p{Script=Latin}\\p{Script=Greek}]','u');}catch(x){}
+for(var i=0;i<low.length;i++){var cc=low.charCodeAt(i);if(cc<=0x3FF)continue;var ch=low.charAt(i);if(cc>=0xD800&&cc<=0xDBFF&&i+1<low.length){ch=low.substr(i,2);i++;}if(!NLR||NLR.test(ch)){nl++;if(nls.length<5&&nls.indexOf(ch)<0)nls.push(ch);}}
+if(nl>=__NONLATIN__){add('non_latin_script',true);nls.forEach(function(c){tws('non_latin_script',c);});}
 return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),wq:String(W.__kbLastQ||''),wk:String(W.__kbLastSrc||''),bl:(Array.isArray(W.__kbLog)?W.__kbLog:[]).slice(-20),al:W.__kbAllowed||[],saved:W.__kbSaved||null,fields:fl,dlg:dlg?{t:norm(dt.length?dt[dt.length-1].innerText:'').slice(0,80),x:dx.slice(0,160),bt:bt}:null,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k},tw:tw};
 })
 """
@@ -1285,19 +1322,19 @@ def _sel_json():
     return json.dumps({"grp": GROUP_SEL, "dlg": DIALOG_SEL, "opt": OPTION_SEL})
 
 
-def click_source():
+def click_source(reads=()):
     """kbclick as one JS function expression (evaluates to a function)."""
     src = _CLICK_JS.replace("__ALLOW__", ALLOW_JS).replace("__KBA__", KBA_JS).replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()).replace("__NV__", json.dumps(list(NAMED_VERB_OK))) \
-                   .replace("__GUARD__", guard_source()).replace("__TTL__", str(ALLOW_TTL_S * 1000))
+                   .replace("__GUARD__", guard_source(reads)).replace("__TTL__", str(ALLOW_TTL_S * 1000))
     src = src.replace("__TOK__", ARM_TOKEN)
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
-def option_source():
+def option_source(reads=()):
     """kbopt as one JS function expression: args {"option": "<exact text>"} ->
     {ok,x,y,label} of the visible option in an open listbox/dropdown/menu."""
     src = _OPT_JS.replace("__KBA__", KBA_JS).replace("__TOK__", ARM_TOKEN).replace("__RX__", json.dumps(CLICK_RX)).replace("__SEL__", _sel_json()) \
-                 .replace("__GUARD__", guard_source())
+                 .replace("__GUARD__", guard_source(reads))
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
@@ -1344,9 +1381,9 @@ def use_run_token(shots_dir):
 JS_MARKER = "/*KB*/"
 
 
-def probe_source():
+def probe_source(reads=()):
     """The probe as one JS function expression (evaluates to a function)."""
-    src = _PROBE_JS.replace("__GUARD__", guard_source()) \
+    src = _PROBE_JS.replace("__GUARD__", guard_source(reads)) \
                    .replace("__FIELDS__", fields_source()) \
                    .replace("__DLG__", json.dumps(DIALOG_SEL)) \
                    .replace("__TENANT__", json.dumps(tenant_regexes())) \
@@ -1356,12 +1393,12 @@ def probe_source():
     return " ".join(l.strip() for l in src.strip().splitlines())
 
 
-def install_action():
+def install_action(reads=()):
     """javascript_tool input that stores the probe (kbp), the click guard (kbc) and the
     option picker (kbo) in sessionStorage. Sent first in the first batch of every run."""
-    text = (f"{JS_MARKER}var S={json.dumps(probe_source())};sessionStorage.setItem('{KEY}',S);"
-            f"var K={json.dumps(click_source())};sessionStorage.setItem('{KBC_KEY}',K);"
-            f"var O={json.dumps(option_source())};sessionStorage.setItem('{KBO_KEY}',O);"
+    text = (f"{JS_MARKER}var S={json.dumps(probe_source(reads))};sessionStorage.setItem('{KEY}',S);"
+            f"var K={json.dumps(click_source(reads))};sessionStorage.setItem('{KBC_KEY}',K);"
+            f"var O={json.dumps(option_source(reads))};sessionStorage.setItem('{KBO_KEY}',O);"
             f"'{KEY}:'+S.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
 
@@ -1375,12 +1412,12 @@ def install_prefix(demo=None):
     return [_act("navigate", url=demo["base_url"] + entry), _wait(int(settle_seconds(demo)))]
 
 
-def install_actions(demo=None):
+def install_actions(demo=None, reads=()):
     """The long install as a browser_batch action list. The ORCHESTRATOR sends it at the
     canary step (the model that runs a capturer cannot reproduce ~40 KB of script
     verbatim); capturer batches hold only short stubs. It starts with a navigate to the demo
     admin portal + a settle wait, then the javascript installs."""
-    return install_prefix(demo) + [{"name": "javascript_tool", "input": install_action()}]
+    return install_prefix(demo) + [{"name": "javascript_tool", "input": install_action(reads)}]
 
 
 def stub(args, key=KEY):
@@ -1559,6 +1596,7 @@ def _write_visits(data_plan, entries, args_of, gif_dir):
 
 def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link=None):
     demo = routes["demo"]
+    reads = read_posts_for(plan, routes)             # read-only POSTs a page needs to show its data
     gif_dir = f"{DL_ROOT}/{plan.get('run_id') or 'run'}"
     surface_wait = {(s.get("persona"), s.get("surface")): s.get("wait_s")
                     for s in routes.get("surfaces", []) if s.get("wait_s") is not None}
@@ -1687,7 +1725,8 @@ def build_calls(plan, inputs, routes, per_batch=3, data_plan=None, external_link
                          "return": True, "batches": [ret["batch_id"]]})
     canary_gif = f"{gif_dir}/canary.gif"
     return {"run_id": plan.get("run_id"), "base_url": base, "probe_version": PROBE_VERSION,
-            "gif_dir": gif_dir, "install": install_actions(demo), "visits": visits,
+            "gif_dir": gif_dir, "install": install_actions(demo, reads), "read_posts": reads,
+            "visits": visits,
             "entries": entries, "screens": screens, "accounts": accounts,
             "write_visits": write_visits,
             "batches": batches, "restore": restore,
@@ -1730,6 +1769,7 @@ def _accounts_md(calls):
 
 
 def capture_md(calls):
+    first = (calls.get("batches") or [{"batch_id": "b01", "visit_ids": []}])[0]
     L = ["# KB capture — instructions for the capturer", "",
          "You only drive the user's Chrome. Never type, never press keys, never drag, never click "
          "anything except the one point a `kbclick` result gives you. Never close a tab. "
@@ -1803,9 +1843,12 @@ def capture_md(calls):
     L += ["## 4. Raw file for each batch", "",
           "Write `raw/<batch_id>.json` next to this file (directory `raw/` inside the same folder) "
           "right after the batch returns, even if it failed:", "",
-          _j({"batch_id": "b01", "status": "ok", "error": None,
-              "items": [{"visit_id": "v01", "probe": "<the javascript_tool result exactly as returned>",
+          _j({"batch_id": first["batch_id"], "status": "ok", "error": None,
+              "items": [{"visit_id": first["visit_ids"][0] if first["visit_ids"] else "<visit id>",
+                         "probe": "<the javascript_tool result exactly as returned>",
                          "gif": "<filename from the export result: Downloaded \"…\">"}]}), "",
+          "Each `visit_id` is copied exactly from the batch heading (`visits …`), including any "
+          "`-s0` / `-s1` suffix — never shortened.", "",
           "`status` is one of `ok`, `expired`, `wrong_persona`, `bridge_down`, `needs_install`. `items` are in "
           "visit order, one per visit that completed both its probe and its export; a visit not "
           "reached is simply absent. Copy the probe result verbatim (object, or the text if it came "
@@ -2052,6 +2095,16 @@ def box_in_frame(box, img_w, img_h):
     return w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= img_w and y + h <= img_h
 
 
+HIDDEN_PX = 4      # a label box thinner than this (CSS px) is a hidden element, not a found label
+
+
+def label_hidden(pl):
+    """True for a probe label that matched an element nobody can see: a box under
+    HIDDEN_PX wide or tall (a 1x1 screen-reader or template node)."""
+    b = pl.get("b")
+    return bool(b) and len(b) == 4 and (b[2] < HIDDEN_PX or b[3] < HIDDEN_PX)
+
+
 def screen_form(probe):
     """What the probe saw of a form / dialog, for the screen record in shots.json (kb_data
     plans fills from it): {"fields": [...], "tw": {...}, "btn": [dialog buttons],
@@ -2064,9 +2117,15 @@ def screen_form(probe):
     dlg = probe.get("dlg") if isinstance(probe.get("dlg"), dict) else {}
     if dlg.get("bt"):
         out["btn"] = list(dlg["bt"])[:8]
-    found = [l.get("l") for l in probe.get("labels") or [] if isinstance(l, dict) and l.get("f") and l.get("l")]
+    found = [l.get("l") for l in probe.get("labels") or []
+             if isinstance(l, dict) and l.get("f") and l.get("l") and not label_hidden(l)]
     if found:
         out["found"] = found
+    tn = probe.get("tn") if isinstance(probe.get("tn"), dict) else {}
+    if tn.get("v") == "BLOCK":
+        out["tenant"] = {"v": "BLOCK", "k": list(tn.get("k") or [])[:6]}
+    if int(probe.get("wb") or 0) >= 1 and probe.get("wl"):
+        out["blocked"] = str(probe["wl"])[:120]          # e.g. "POST /api/.../logs_filter_list/"
     return out
 
 
@@ -2083,10 +2142,22 @@ def frame_problem(img_w, img_h, probe):
 DATA_RAW_PREFIX = "data-"
 
 
-def _load_raw(raw_dir):
+def item_visit_id(vid, planned, taken=()):
+    """The planned visit an item belongs to. A capturer that shortened the id
+    ("v01" for the batch's only start visit "v01-s0") is matched when exactly one
+    planned visit of that batch is `vid` + "-s<n>" and not already taken; else
+    `vid` unchanged."""
+    if not vid or not planned or vid in planned:
+        return vid
+    cands = [p for p in planned if p not in taken and re.fullmatch(re.escape(vid) + r"-s\d+", p)]
+    return cands[0] if len(cands) == 1 else vid
+
+
+def _load_raw(raw_dir, planned=None):
     """visit_id -> item, batch_id -> raw (later files / items win). The data agent's
     files (raw/data-<ticket>.json, DATA_RAW_PREFIX) only contribute items: they are
-    no batch, and a batch id never starts with "data-"."""
+    no batch, and a batch id never starts with "data-". `planned` ({batch_id:
+    [visit_ids]}) lets a shortened visit id be matched to its planned visit."""
     items, batches = {}, {}
     for f in sorted(Path(raw_dir).glob("*.json")):
         try:
@@ -2095,11 +2166,18 @@ def _load_raw(raw_dir):
             continue
         if not isinstance(r, dict):
             continue
+        bid = r.get("batch_id") or f.stem
         if not f.name.startswith(DATA_RAW_PREFIX):
-            batches[r.get("batch_id") or f.stem] = r
+            batches[bid] = r
+        mine = (planned or {}).get(bid) or []
+        taken = {it.get("visit_id") for it in r.get("items") or [] if it.get("visit_id") in mine}
         for it in r.get("items") or []:
-            if it.get("visit_id"):
-                items[it["visit_id"]] = it
+            vid = item_visit_id(it.get("visit_id"), mine, taken)
+            if vid:
+                if vid != it.get("visit_id"):
+                    it = {**it, "visit_id": vid}
+                    taken.add(vid)
+                items[vid] = it
     return items, batches
 
 
@@ -2216,7 +2294,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
         for tid in visit["tickets"]:
             for label in (visit["labels"].get(tid) or []):
                 pl = by_label.get(label)
-                if not pl or not pl.get("f") or not pl.get("b"):
+                if not pl or not pl.get("f") or not pl.get("b") or label_hidden(pl):
                     continue
                 ev = None
                 if not problem:
@@ -2239,7 +2317,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                 **(ev or {"label": label})})
         h = probe.get("h") if isinstance(probe.get("h"), dict) else None
         if visit.get("kind") in ("click", "write") and not problem and h and h.get("t") and h.get("b"):
-            have = {e["ticket"] for e in entries}
+            have = {e["ticket"] for e in entries if e["verified"]}   # an unverified match is no shot
             x, y, w, hh = h["b"]
             box = to_image_box({"x": x, "y": y, "width": w, "height": hh}, scale)
             for tid in visit["tickets"]:
@@ -2254,10 +2332,27 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
     return entries, None
 
 
+def blocked_before(visits, visit, items):
+    """"POST /path" when the screen this click starts from (same entry, step - 1) had a
+    request blocked by the write guard, e.g. a list that loads by POST; else ""."""
+    step = visit.get("step", 0)
+    if not step:
+        return ""
+    entry = visit.get("entry", visit["visit_id"])
+    for v in visits:
+        if v.get("entry", v["visit_id"]) == entry and v.get("step", 0) == step - 1:
+            pr = parse_probe((items.get(v["visit_id"]) or {}).get("probe")) or {}
+            if int(pr.get("wb") or 0) >= 1 and pr.get("wl"):
+                return str(pr["wl"])[:120]
+    return ""
+
+
 def _screens_missing(calls, screens, shots):
     """ticket -> {"reason", "detail"}: why a ticket has no (more) screenshots. The
     first failing screen in visit order wins; needs_write screens come last. A
-    ticket whose screens all loaded but shows none of its labels is label_not_found."""
+    ticket whose screens all loaded but has no verified shot is: no_labels when no
+    visit looked for any label of it; else tenant_block when one of its screens
+    failed the tenant check (detail: the rule); else label_not_found."""
     order = ([v["visit_id"] for v in calls["visits"]] + [w["visit_id"] for w in calls.get("write_visits") or []]
              + [x["visit_id"] for x in calls.get("screens") or []])
     pos = {vid: i for i, vid in enumerate(order)}
@@ -2266,12 +2361,28 @@ def _screens_missing(calls, screens, shots):
         if sc.get("reason"):
             for t in sc["tickets"]:
                 missing.setdefault(t, {"reason": sc["reason"], "detail": sc.get("detail", "")})
-    have = {s_["ticket"] for s_ in shots}
+    have = {s_["ticket"] for s_ in shots if s_.get("verified")}
+    wanted = {}
+    for v in calls["visits"] + (calls.get("write_visits") or []):
+        labels = v.get("labels") if isinstance(v.get("labels"), dict) else {}
+        for t in v.get("tickets") or []:
+            wanted[t] = wanted.get(t, False) or bool(labels.get(t) or (v.get("kind") == "write" and v.get("labels")))
+    blocked = {}
+    for sc in sorted(screens, key=lambda x: pos.get(x["visit_id"], len(pos))):
+        if not sc.get("reason") and (sc.get("tenant") or {}).get("v") == "BLOCK":
+            for t in sc["tickets"]:
+                blocked.setdefault(t, ", ".join(sc["tenant"].get("k") or []))
     for sc in screens:
         if not sc.get("reason"):
             for t in sc["tickets"]:
-                if t not in have:
-                    missing.setdefault(t, {"reason": "label_not_found", "detail": ""})
+                if t in have or t in missing:
+                    continue
+                if not wanted.get(t, True):
+                    missing[t] = {"reason": "no_labels", "detail": ""}
+                elif t in blocked:
+                    missing[t] = {"reason": "tenant_block", "detail": blocked[t]}
+                else:
+                    missing[t] = {"reason": "label_not_found", "detail": ""}
     return missing
 
 
@@ -2288,7 +2399,7 @@ def cmd_ingest(a):
         print("OCR unavailable — anchors will be dom_box (draft-only).")
     if getattr(a, "from_run_gifs", False):
         a.downloads_dir = None               # frames, boxes, OCR and the tenant screen re-run on shots/gifs/
-    items, batches = _load_raw(a.raw_dir)
+    items, batches = _load_raw(a.raw_dir, {b["batch_id"]: b["visit_ids"] for b in calls["batches"]})
     now = _dt.datetime.now().isoformat(timespec="minutes")
     batch_of = {vid: b for b in calls["batches"] for vid in b["visit_ids"]}
 
@@ -2311,6 +2422,9 @@ def cmd_ingest(a):
         it = items.get(vid)
         cr = click_reason(it.get("click_error")) if it else None
         if cr:
+            prev = blocked_before(calls["visits"], v, items)
+            if cr[0] == "click_not_found" and prev:
+                cr = ("request_blocked", prev)        # the list never loaded: the guard stopped its request
             screen.update(reason=cr[0], detail=cr[1])
             screens[vid] = screen
             settled.add(vid)

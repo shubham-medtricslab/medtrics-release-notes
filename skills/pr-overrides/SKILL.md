@@ -23,14 +23,13 @@ Mem is "connected" when the Mem MCP tools are available in the current session �
 | Pinned id | `.env` key `MEM_PR_OVERRIDES_COLLECTION_ID` (optional) — the collection's UUID |
 | Owner | The user running the command (Mem is per-user) |
 
-Resolution, once per run:
+The id is the `pr_overrides` id from `/oracle-release` Step 1 (`mem_ids.py need`, `mem-calls` rule 1):
 
-1. If `MEM_PR_OVERRIDES_COLLECTION_ID` is set and non-empty in `.env`, use it directly — no search.
-2. Else `search_collections({query: "Oracle PR Overrides"})` (or `list_collections`) and pick the entry whose title matches exactly (case-insensitive).
-3. Else `create_collection({title, description})`.
-4. Whenever the id came from step 2 or 3, print it once and suggest pinning it: `PR overrides collection: <uuid> — add MEM_PR_OVERRIDES_COLLECTION_ID=<uuid> to .env to skip the lookup next time.` Never write to `.env` yourself.
+1. `MEM_PR_OVERRIDES_COLLECTION_ID` in `.env`, when set, wins.
+2. Else the id saved in the folder's config. **No `search_collections`.**
+3. Else Step 1 resolved it from its one `list_collections` walk (and saved it), or created it with `create_collection({title, description})`.
 
-If any of this fails, treat Mem as not connected for the rest of the run.
+Never write to `.env`. If there is still no id, treat Mem as not connected for the rest of the run. Once Mem is limited (`mem-calls` rule 4), skip the dump (sweep only), and apply Step 10b picks inline.
 
 ## Note schema
 
@@ -104,7 +103,8 @@ The preview's **PR discovery** block lists the tickets that need a human (`flagg
 | Condition | Behavior |
 |---|---|
 | Mem tools absent | One-line notice; gather runs on the sweep alone; picks apply via `--pr-override-inline` |
-| `.env` has no collection id | Resolve by title, else create; print the id and suggest pinning it. If that fails, treat as not connected |
+| No saved or `.env` id | Step 1 resolves it with its one collection walk, else creates it, and saves the id. If that fails, treat as not connected |
+| Mem refuses a call (rate limit) | Mem is limited: sweep only; picks apply via `--pr-override-inline` and are not saved (`mem-calls` skill) |
 | `list_notes` fails or returns malformed data | Skip the dump (an unreadable dump file is also tolerated by the gather: no overrides plus a warning); gather runs on the sweep alone; still attempt Step 10b writes if the collection id is known |
 | Override note malformed / `PR` not an integer | Ignored; warning names the note id (in `pr_discovery.warnings` and stderr) |
 | Two notes for one ticket | Newest `Resolved at` wins; warning; user can trash the stale one |

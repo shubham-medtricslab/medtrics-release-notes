@@ -5,6 +5,38 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0] - 2026-11-23
+
+Mem rate-limited every release from Nov 17 to Nov 19 and refused reads on the 19th. This release cuts the calls a normal run makes, and keeps a refused note safe until Mem takes it.
+
+### Added
+- **Saved collection ids (`scripts/release/mem_ids.py`).** Every collection the release commands use (`release_archive`, `pod_map`, `pod_log`, `dev_directory`, `pr_overrides`, the four KB ones) is found by name once. Its id is then kept in `.medtrics-release-notes/config.json` and used directly. When something is missing, Step 1 walks `list_collections` **once** for all of them. Gone: the per-step `list_collections` walks (archive, KB, pod map), `search_collections` (developer directory, PR overrides) and pod-notify's `get_collection` check. `MEM_PR_OVERRIDES_COLLECTION_ID` in `.env` still wins.
+- **Pod Notify Log collection.** Pod-log notes (one per pod per release) now live in their own collection (`MEM_POD_LOG_COLLECTION`, default `Pod Notify Log`), so reading the pod map is one small call again. `pod_map.py route --log-notes` reads it. Log notes already in the map stay there and are read with it; setup does not move them (that would cost two calls per note). `pod_map.py old-logs` lists them for a manual move.
+- **Outbox.** A release-archive or pod-log note Mem still refuses after waiting 30s and 90s goes to `.medtrics-release-notes/outbox/`. The next `/release-slack`, `/oracle-release` or `/pod-notify` uploads it at Step 1 and deletes the file (`release_archive.py outbox add|list|done`). Pod logs waiting there count as sent, so a re-run never posts to a pod twice.
+- **Developer directory local copy (24h)** (`dev_directory.py cache get|put|apply|clear`). Most runs make no directory read. Write-backs still go to Mem at once and into the copy. `--refresh-directory` reads Mem anyway.
+- **`/release-note-setup backfill <files>`** (`release_archive.py backfill`) checks archive notes saved as markdown, for example the ones printed in chat after a failed write, and writes them to the archive collection after a yes.
+- **`mem-calls` skill**: the shared rules. A rate limit makes Mem "limited" for the run. Optional steps (developer directory, PR overrides, KB queue) then skip, and required writes wait and then go to the outbox. A rate limit never blocks or delays a Slack post. `mem_ids.py wait <s>` does the waits.
+
+### Changed (Mem call cuts)
+- **Pod reads only when they can matter.** `pod_map.py route --no-map` routes before any Mem read: when no posted ticket names a client (no Optimus link, no client in its text), no pod can be hit, so the plan is final and neither the pod map nor the pod log is read (cut A; all 15 tickets of the Nov 19 Oracle release were like this). When the map is read, `--log-unread` makes the pod log a third read only when a pod actually gets tickets (cut B). A route that still needs a read returns `needs_map` / `needs_log`, writes no plan and removes any stale one, so nothing can be posted from it.
+- A release like Nov 19 now makes **2** Mem calls on Oracle (PR overrides read + archive write) and **1** on Legacy (archive write), plus 1 when the local developer-directory copy is over 24h old. It was 7.
+
+### Fixed (Mem calls, from the review)
+- **Notes that land outside their collection.** Mem's `create_note` ignores a collection id it cannot find, without an error, so a stale saved id made loose archive and pod-log notes (and a loose pod log let a pod be posted to twice). Every `create_note` into a saved collection is now checked with `mem_ids.py landed <key> --response <file>` (no Mem call): a note that missed is moved in with `add_note_to_collection` after one lookup, and the stale id is dropped. An empty pod map from a saved id is treated as a stale id too.
+- **A missing pod log no longer costs a lookup every run.** A key the one walk did not find is remembered as `absent` for 7 days (`mem_ids.py need` lists it apart from `missing`); `/release-note-setup` passes `--recheck`. The release commands ask for `pod_map` / `pod_log` only when the pod step runs (not with `--no-pod`, never in `mr` mode).
+- **Queued notes wait for their collection.** `release_archive.py outbox list --ready-keys <keys>` lists a note whose collection id this run lacks (a pod log queued before the log collection exists) under `waiting`; it stays queued, and still counts in the pod duplicate check, instead of being uploaded loose. Step 1 reads the outbox first and asks for its keys too, so `/pod-notify` now has the `release_archive` id it needs to upload a queued archive note.
+- `oracle-release.md` and `release-slack.md` named the pod map collection as the pod log's home; they now name `MEM_POD_LOG_COLLECTION` (`Pod Notify Log`).
+
+### Fixed (KB articles, from run kb-20261123-1952)
+- **Articles dropped from packaging after a retry.** `kb_spec.py assemble --tickets <ids>` (a retry round) rewrote `assemble.json` and `failures.json` with only those tickets, so the package showed every other article as "not reached". A partial re-assemble now swaps in its tickets' rows and keeps the rest.
+- **M1-1459, "View" not found: the Case Logs list loads by POST and the write guard blocked it.** A route can now list exact read-only POST paths as `read_posts` in `kb_routes.json`; the guard lets a POST to exactly that path through (same origin, no query) and blocks every other write. A path with a write verb is ignored. The Case Logs route lists `/api/rotations/procedure_logs/logs_filter_list/`. A click that fails right after a blocked request is reported as `request_blocked` with that request, not "button not found".
+- **M1-1245, Time Off Requests "not reached".** Three causes: the capturer wrote batch b01's visit as `v01` (capture.md's example said `v01`), so ingest never matched the start screen; the tenant check counted typography above U+03FF (dashes, ellipses, curly quotes) as non-Latin script and blocked the page; and a hidden 1×1 "Delete" counted as a found label, which stopped the heading fallback and the reason. Now: the example uses the batch's real first visit id and says to copy it exactly, and a shortened id is matched to its planned visit; the non-Latin rule counts only letters from other scripts (probe JS and `qa_gif_to_shots.py` alike); labels under 4 px are not found and an unverified match never counts as a shot. A screen that fails the tenant check now says so (`tenant_block`, with the rule).
+- **M1-1413, label not found: the ticket names its labels in bold.** `kb_inputs.py` now also takes **bold** UI terms from the ticket body (not headings or "**Lead-in:**" bold). A ticket with no labels at all is reported as `no_labels`, not an empty "label not found".
+
+### Changed
+- A normal `/oracle-release` makes about 4 Mem calls plus one write per pod (was about 15–30). See the comparison in `docs/plans/MEM-CALLS-PLAN.md`.
+- Step 10b no longer re-lists the PR overrides after a pick; the dump is edited in place.
+
 ## [0.24.0] - 2026-11-16
 
 ### Added

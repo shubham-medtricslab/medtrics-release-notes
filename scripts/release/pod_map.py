@@ -4,12 +4,15 @@ pod_map.py — deterministic half of pod-notify: tell each client's pod (a Slack
 channel) which tickets in a release concern its clients.
 
 The pod map lives in ONE Mem collection ("Release Notes Pod Map" by default,
-`MEM_POD_MAP_COLLECTION` in .env), one hand-edited note per pod. Mem is only
+`MEM_POD_MAP_COLLECTION` in .env), one hand-edited note per pod. What was sent
+where (one pod-log note per pod per run) lives in a SEPARATE collection ("Pod
+Notify Log", `MEM_POD_LOG_COLLECTION`), so reading the map stays one small
+call. Log notes left in the pod map from before 0.25.0 are still read. Mem is only
 reachable through the Mem MCP (Claude-side), so this script never talks to Mem
 or Slack. The orchestrator saves the collection's `list_notes` response to a
 file, runs a subcommand, and performs the Mem / Slack calls it prints.
 
-  collection  Print the resolved collection name and description.
+  collection  Print the resolved collection names (map and log) and descriptions.
   route       Map the posted tickets to pods and render every pod's root post
               and thread replies (or, with --routing-only, the routing alone).
               Writes <out-dir>/plan.json plus the message files: one root
@@ -31,6 +34,8 @@ file, runs a subcommand, and performs the Mem / Slack calls it prints.
               pods' channels, and whether the template note exists.
   fill-ids    Emit note updates that add resolved Optimus client ids.
   template    Print the body of the "Pod template (copy me)" note.
+  old-logs    List the pod-log notes still in the pod map collection, for
+              /release-note-setup pod to move into the log collection once.
 
 Routing (route):
   - Only tickets present in the summaries file are routed (the posted set);
@@ -41,7 +46,9 @@ Routing (route):
     platform-wide" and "Internal" tickets go to no pod and are reported.
   - A client matches a pod by Optimus client id, else by normalized name.
   - A (channel id, ticket) pair already in a pod-log note is skipped unless
-    --force is given.
+    --force is given. Log notes come from --log-notes (the log collection),
+    any left in --notes, and pod-log notes waiting in the local outbox
+    (a Mem write that was refused), so a re-run never posts twice.
   - Each card carries only the client title, the client paragraph, that pod's
     own clients and the ticket link — never the internal summary, developer
     mentions or other clients' names.
@@ -93,9 +100,17 @@ ENV_KEY = "MEM_POD_MAP_COLLECTION"
 DEFAULT_COLLECTION_NAME = "Release Notes Pod Map"
 COLLECTION_DESCRIPTION = (
     "medtrics-release-notes: one note per pod (Slack channel) listing the "
-    "Optimus clients it looks after, plus one pod-log note per pod-notify run. "
-    "Read by /release-slack, /oracle-release and /pod-notify to tell each pod "
-    "which released tickets concern its clients. Edit the pod notes by hand."
+    "Optimus clients it looks after. Read by /release-slack, /oracle-release "
+    "and /pod-notify to tell each pod which released tickets concern its "
+    "clients. Edit the pod notes by hand. What was sent where is kept in the "
+    "separate Pod Notify Log collection."
+)
+LOG_ENV_KEY = "MEM_POD_LOG_COLLECTION"
+DEFAULT_LOG_COLLECTION_NAME = "Pod Notify Log"
+LOG_COLLECTION_DESCRIPTION = (
+    "medtrics-release-notes: one note per pod per pod-notify run recording "
+    "which tickets were posted to which pod channel (ts and link). Read before "
+    "every pod post so a ticket is never announced to a pod twice. Do not edit."
 )
 POD_PREFIX = "Pod: "
 LOG_PREFIX = "Pod notify: "
@@ -158,6 +173,18 @@ def resolve_collection_name(env_path=".env", environ=None):
     if from_file:
         return from_file, ".env"
     return DEFAULT_COLLECTION_NAME, "default"
+
+
+def resolve_log_collection_name(env_path=".env", environ=None):
+    """(name, source) of the pod-log collection — process env, .env, default."""
+    environ = os.environ if environ is None else environ
+    from_env = (environ.get(LOG_ENV_KEY) or "").strip()
+    if from_env:
+        return from_env, "env"
+    from_file = release_archive._read_env_file_key(env_path, LOG_ENV_KEY).strip()
+    if from_file:
+        return from_file, ".env"
+    return DEFAULT_LOG_COLLECTION_NAME, "default"
 
 
 def emit_result(payload):
@@ -318,11 +345,14 @@ def parse_log_note(note):
 class PodMap:
     """The parsed pod notes plus the client → pod indexes."""
 
-    def __init__(self, notes):
+    def __init__(self, notes, log_notes=()):
         self.pods = []
         self.warnings = []
         self.sent = {}          # (channel_id, TICKET) -> log entry
         by_channel = {}
+        for n in log_notes:     # the log collection is read for logs only
+            for entry in parse_log_note(n):
+                self.sent.setdefault((entry["channel_id"], entry["ticket"]), entry)
         for n in notes:
             for entry in parse_log_note(n):
                 self.sent.setdefault((entry["channel_id"], entry["ticket"]), entry)
@@ -508,11 +538,21 @@ def render_card(n, ticket, cap=REPLY_CAP):
 
 def cmd_collection(args):
     name, source = resolve_collection_name(args.env_path)
-    print(f"Pod map collection: \"{name}\" (from {source}).", file=sys.stderr)
+    log_name, log_source = resolve_log_collection_name(args.env_path)
+    print(f"Pod map collection: \"{name}\" (from {source}); pod log: "
+          f"\"{log_name}\" (from {log_source}).", file=sys.stderr)
     emit_result({"ok": True, "action": "collection", "collection_name": name,
                  "source": source, "collection_description": COLLECTION_DESCRIPTION,
+                 "log_collection_name": log_name, "log_source": log_source,
+                 "log_collection_description": LOG_COLLECTION_DESCRIPTION,
                  "error": None})
     return 0
+
+
+def pending_log_notes():
+    """Pod-log notes waiting in the local outbox (Mem refused the write)."""
+    return [{"content": e["content"]} for e in release_archive.outbox_entries()
+            if e.get("collection_key") == "pod_log"]
 
 
 def _load_data(path):
@@ -676,6 +716,19 @@ def _counts(plan):
                            if t["via"] == "guessed")}
 
 
+def route_gate(plan, no_map=False, log_unread=False):
+    """Whether a routing still needs a Mem read before it may be used:
+    "needs_map" — routed with no pod map (cut A) but a ticket names a client,
+    so the map decides where it goes; "needs_log" — a pod log exists but was not
+    read (cut B) and a pod gets tickets, so the duplicate check needs it; ""
+    when the plan is final (with no map and no client, no pod can be hit)."""
+    if no_map and plan["unrouted"]["unmapped_clients"]:
+        return "needs_map"
+    if log_unread and plan["pods"]:
+        return "needs_log"
+    return ""
+
+
 def cmd_route(args):
     data = _load_data(args.data)
     if args.routing_only:
@@ -688,9 +741,27 @@ def cmd_route(args):
             raise ValueError(f"summaries file not found: {sp}")
         blocks = [b for b in release_archive.parse_summaries(sp.read_text())
                   if b.get("IDENTIFIER")]
-    pod_map = PodMap(_raw_notes(args.notes))
+    pending = pending_log_notes()
+    if args.no_map and (args.notes or args.log_notes):
+        raise ValueError("--no-map routes without the pod map: pass no --notes / --log-notes")
+    if args.no_map:
+        pod_map = PodMap([], pending)
+    else:
+        pod_map = PodMap(_raw_notes(args.notes), _raw_notes(args.log_notes) + pending)
     plan = build_plan(data, blocks, pod_map, args.date, args.source,
                       args.release_link, args.force)
+    gate = route_gate(plan, no_map=args.no_map, log_unread=args.log_unread)
+    if gate:
+        # No plan file: nothing can be previewed or posted from a routing that
+        # still needs a Mem read (cut A: the map; cut B: the pod log).
+        need = {"needs_map": "the pod map", "needs_log": "the pod log"}[gate]
+        stale = Path(args.out_dir) / "plan.json"
+        if stale.is_file():
+            stale.unlink()             # a plan from an earlier run must not be posted from
+        print(f"Pod routing: needs {need} — read it and run route again.", file=sys.stderr)
+        emit_result({"ok": True, "action": "route", "status": gate, "plan": None,
+                     "pending_logs": len(pending), "error": None})
+        return 0
     plan["routing_only"] = bool(args.routing_only)
     lint_failures = 0 if args.routing_only else render_plan_files(plan, args.out_dir)
     plan_path = _write_plan(plan, args.out_dir)
@@ -700,8 +771,10 @@ def cmd_route(args):
           f"{counts['no_client']} with no client, {counts['platform_wide']} platform-wide, "
           f"{counts['internal']} internal, {counts['unmapped_clients']} unmapped client "
           f"link(s).", file=sys.stderr)
-    emit_result({"ok": True, "action": "route", "plan": plan_path,
+    emit_result({"ok": True, "action": "route", "status": "routed", "plan": plan_path,
+                 "map": "skipped" if args.no_map else "read",
                  "pod_notes": len(pod_map.pods), "lint_failures": lint_failures,
+                 "pending_logs": len(pending),
                  "channels": [{"channel_id": p["channel_id"],
                                "channel_name": p["channel_name"]} for p in plan["pods"]],
                  **counts, "warnings": plan["warnings"], "error": None})
@@ -960,10 +1033,11 @@ def render_log_note(plan, channel_id=""):
 def cmd_log(args):
     plan = _read_json(args.plan, "plan file")
     content, entries = render_log_note(plan, args.channel_id)
-    name, _src = resolve_collection_name(args.env_path)
-    writes = [{"action": "create", "collection_title": name, "content": content}] if entries else []
-    out = {"collection_title": name, "collection_description": COLLECTION_DESCRIPTION,
-           "writes": writes}
+    name, _src = resolve_log_collection_name(args.env_path)
+    writes = [{"action": "create", "collection_key": "pod_log", "collection_title": name,
+               "content": content}] if entries else []
+    out = {"collection_key": "pod_log", "collection_title": name,
+           "collection_description": LOG_COLLECTION_DESCRIPTION, "writes": writes}
     if args.out:
         Path(args.out).write_text(json.dumps(out, indent=2))
     else:
@@ -1036,6 +1110,16 @@ def cmd_fill_ids(args):
     return 0
 
 
+def cmd_old_logs(args):
+    """Pod-log notes still in the pod map collection (before 0.25.0)."""
+    old = [{"id": n.get("id") or n.get("note_id") or "", "title": _title(n)}
+           for n in _raw_notes(args.notes) if parse_log_note(n) or
+           _title(n).startswith(LOG_PREFIX)]
+    print(json.dumps({"notes": old}, indent=2))
+    emit_result({"ok": True, "action": "old-logs", "count": len(old), "error": None})
+    return 0
+
+
 def cmd_template(args):
     print(render_template(), end="")
     emit_result({"ok": True, "action": "template", "title": TEMPLATE_TITLE, "error": None})
@@ -1053,6 +1137,8 @@ def main():
     p.add_argument("--data", required=True, help="Gathered data JSON (read-only)")
     p.add_argument("--summaries", default="", help="Posted per-ticket summaries file")
     p.add_argument("--notes", default="", help="Saved Mem list_notes response of the pod map")
+    p.add_argument("--log-notes", default="",
+                   help="Saved Mem list_notes response of the pod-log collection")
     p.add_argument("--date", required=True, help="Release date (YYYY-MM-DD)")
     p.add_argument("--source", required=True, help="Calling command, e.g. /release-slack")
     p.add_argument("--release-link", default="", help="Permalink of the main release post")
@@ -1061,6 +1147,12 @@ def main():
                    help="Dry run: route every gathered ticket, render no messages")
     p.add_argument("--force", action="store_true",
                    help="Re-send tickets a pod-log note already records")
+    p.add_argument("--no-map", action="store_true",
+                   help="Route before reading the pod map: final when no ticket names a "
+                        "client, else status needs_map and no plan")
+    p.add_argument("--log-unread", action="store_true",
+                   help="A pod log exists but was not read: final when no pod gets tickets, "
+                        "else status needs_log and no plan")
 
     p = sub.add_parser("preview", help="Apply channel checks and print the preview")
     p.add_argument("--plan", required=True)
@@ -1103,12 +1195,15 @@ def main():
 
     sub.add_parser("template", help="Print the pod template note")
 
+    p = sub.add_parser("old-logs", help="List pod-log notes still in the pod map")
+    p.add_argument("--notes", default="")
+
     args = ap.parse_args()
     if args.cmd == "mark" and args.kind == "root" and not args.ts:
         ap.error("--kind root requires --ts")
     handlers = {"collection": cmd_collection, "route": cmd_route, "preview": cmd_preview,
                 "focus": cmd_focus, "drop": cmd_drop, "mark": cmd_mark, "log": cmd_log, "names": cmd_names,
-                "fill-ids": cmd_fill_ids, "template": cmd_template}
+                "fill-ids": cmd_fill_ids, "template": cmd_template, "old-logs": cmd_old_logs}
     try:
         return handlers[args.cmd](args)
     except Exception as e:   # every failure still ends in a result block

@@ -542,7 +542,9 @@ menu item); a dialog with nothing else to ring gets its title ringed.
    the reason: `expired` (sign in to the site again in Chrome), `wrong_persona`,
    `bridge_down`, `no_probe`, `not_reached` (its batch never ran), `retry` (a
    blocked or unreadable probe), `download_missing`, `empty_export`, `bad_gif`,
-   `click_refused` (with why), `click_not_found`, `tenant_row`, `needs_write`
+   `click_refused` (with why), `click_not_found`, `request_blocked` (the write
+   guard stopped the request that loads the list; add its path to that route's
+   `read_posts` only if it is a read), `tenant_row`, `needs_write`
    (behind a save: no form fill approved, or this run was the dry run),
    `write_failed` (the form fill could not finish), `page_not_found`,
    `external_link_missing` or `needs_install` (the page scripts were gone and the

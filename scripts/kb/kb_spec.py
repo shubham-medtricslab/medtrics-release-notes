@@ -60,6 +60,25 @@ def _load(path, default=None):
     return json.loads(p.read_text())
 
 
+def merge_rows(old, new, redone=None):
+    """A partial re-assemble (`--tickets`): the earlier rows with the re-run tickets'
+    rows swapped in place, new tickets appended. `redone` (default: the tickets in
+    `new`) are the tickets whose old rows are dropped even when `new` has none
+    for them (a retried ticket that now passes leaves failures.json)."""
+    old = old if isinstance(old, list) else []
+    fresh = {r["ticket"]: r for r in new}
+    gone = set(redone if redone is not None else fresh)
+    out, seen = [], set()
+    for r in old:
+        t = r.get("ticket")
+        if t in fresh:
+            out.append(fresh[t])
+            seen.add(t)
+        elif t not in gone:
+            out.append(r)
+    return out + [r for t, r in fresh.items() if t not in seen]
+
+
 def shots_by_ticket(shots):
     out = {}
     for s in (shots or {}).get("shots", []):
@@ -325,6 +344,10 @@ def cmd_assemble(a):
         missing = sum(1 for s in spec["steps"] if s.get("missing_shot"))
         results.append({"ticket": tid, "status": ("failed" if not ok else
                                                   "partial" if missing else "drafted")})
+    if a.tickets:                      # a retry round: keep every other ticket's row
+        results = merge_rows(_load(str(out_root / "assemble.json"), []), results)
+        failures = merge_rows(_load(str(out_root / "failures.json"), []), failures,
+                              redone=tickets)
     Path(a.out_dir, "assemble.json").write_text(json.dumps(results, indent=1))
     Path(a.out_dir, "failures.json").write_text(json.dumps(failures, indent=1))
     n = {s: sum(1 for r in results if r["status"] == s) for s in ("drafted", "partial", "failed")}

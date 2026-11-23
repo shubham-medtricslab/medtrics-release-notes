@@ -1,6 +1,6 @@
 ---
 name: release-archive
-description: Mem-backed release archive for the release commands — the ONLY archive of a posted release outside Slack; nothing is written to disk. ONE Mem collection (name from the `.env` key `MEM_RELEASE_ARCHIVE_COLLECTION`, default `Release Notes Archive`; created under that exact name if absent), one note per release session, recording each posted release's date, product, channel, Slack ts + permalink, its posted ticket list, AND the posted root + every thread reply verbatim. Mem must be connected before `/release-slack` or `/oracle-release` gathers anything (Step 1 preflight); the note is written after every completed post, including a resume run that finishes the remaining replies. A failed write never un-posts anything — the rendered note is printed in chat for a manual paste.
+description: Mem-backed release archive for the release commands — the ONLY archive of a posted release outside Slack; a note Mem refuses waits in a local outbox only until a later run uploads it. ONE Mem collection (name from the `.env` key `MEM_RELEASE_ARCHIVE_COLLECTION`, default `Release Notes Archive`; created under that exact name if absent), one note per release session, recording each posted release's date, product, channel, Slack ts + permalink, its posted ticket list, AND the posted root + every thread reply verbatim. Mem must be connected before `/release-slack` or `/oracle-release` gathers anything (Step 1 preflight); the note is written after every completed post, including a resume run that finishes the remaining replies. A failed write never un-posts anything. A rate-limited write waits 30s and 90s, then goes to the outbox; any other failure prints the note in chat for a manual paste.
 ---
 
 # Release Archive (Mem — the only archive)
@@ -10,7 +10,9 @@ Every `/release-slack` and `/oracle-release` post is archived in **one place: Me
 - **Trace** — *given a ticket, which release shipped it, when, and where?* A Mem search for `ORC-232` or `M1-1457` lands on the release note; the stored permalink clicks straight through to the Slack thread.
 - **Copy** — *what exactly did we post?* The posted root and every thread reply are stored verbatim under a `## Posted message` heading, so the full message text exists outside Slack.
 
-Because Mem is the only archive, **Mem is required**: both commands probe for the Mem MCP in Step 1, alongside the `.env` key check, and stop before any gathering when it is not connected. The archive step itself still runs strictly **after** the post and can never un-post or re-post anything — if the write fails, the command prints the rendered note in chat so the user can paste it into Mem by hand. Nothing is ever written to disk as a fallback.
+Because Mem is the only archive, **Mem is required**: both commands probe for the Mem MCP in Step 1, alongside the `.env` key check, and stop before any gathering when it is not connected. The archive step itself still runs strictly **after** the post and can never un-post or re-post anything.
+
+**When Mem rate-limits the write** (0.25.0), the note goes to the **outbox**, `.medtrics-release-notes/outbox/` in the run folder (ignored by git). The next `/release-slack`, `/oracle-release` or `/pod-notify` uploads it at Step 1 and deletes the file once Mem accepts it (`mem-calls` skill). The outbox is a queue, not an archive: nothing stays on disk once Mem has the note. Any other failure prints the rendered note in chat for a manual paste. Notes that were saved by hand before the outbox existed go in with `/release-note-setup backfill <files>`.
 
 ## Is Mem connected? (Step 1 preflight — hard stop)
 
@@ -35,10 +37,10 @@ This skill **deliberately differs** from `dev-directory` (hardcoded title) and `
 
 **How the name is read.** There is no generic `.env`→process-env loader in this plugin, so `scripts/release/release_archive.py` parses `.env` at CWD itself for `MEM_RELEASE_ARCHIVE_COLLECTION`, with a process-environment value taking precedence (the same pattern as `pr_overrides.py` reading `GITHUB_REPO`). It never writes to `.env`. `release_archive.py pending` **prints the resolved name on every run**, so the user always sees where notes are going.
 
-**Resolution, once per run — deterministic, via paginated `list_collections`.** Do NOT use `search_collections` for this: it is relevance-ranked and bounded, and is not guaranteed to return an exact title match for a generic name.
+**Resolution — the saved id first (0.25.0).** The id is saved in the folder's config under `mem.release_archive`, and the command reads it at Step 1 with `mem_ids.py need` (`mem-calls` rule 1). A normal run makes **no lookup call**. Only when the id is missing, or Mem says it no longer exists, does Step 1 walk `list_collections` once, for every missing key together, and apply the rule below via `mem_ids.py resolve`. Do NOT use `search_collections`: it is relevance-ranked and bounded, and is not guaranteed to return an exact title match for a generic name.
 
 1. Resolve the name (`release_archive.py pending`).
-2. `list_collections`, following `next_page` until exhausted; collect every entry whose title equals the configured name **case-insensitively**.
+2. In the one merged `list_collections` dump, collect every entry whose title equals the configured name **case-insensitively**.
 3. **Zero matches** → `create_collection({title: <name>, description})`; print once: `Release archive: created Mem collection "<name>".`
 4. **Exactly one** → use it.
 5. **More than one** → prefer the **exact-case** match; if still more than one, prefer the **oldest `created_at`**; if still ambiguous, **do not write** — print the rendered note in chat (see Failure handling) and warn with every matching id so the user can rename or trash the stray. Never create a duplicate when any match exists. (The tie-break applies identically when the name is the default.)
@@ -129,7 +131,7 @@ The notes are private to the user's Mem workspace, the same audience as the inte
 `{summaries}`, `{data}`, `{root}` and `{replies}` are the command's existing files — `/tmp/release_slack_summaries.txt`, `/tmp/release_slack_data.json`, `/tmp/release_slack_root.txt`, `/tmp/release_slack_reply_NN.txt` for `/release-slack` (product `medtrics`, channel key `SLACK_CHANNEL_INTERNAL`), and `/tmp/oracle_notes_summaries.txt`, `/tmp/oracle_notes_data.json`, `/tmp/oracle_release_root.txt`, `/tmp/oracle_release_reply_NN.txt` for `/oracle-release` (product `oracle`, channel key `SLACK_CHANNEL_ORACLE`). `<ts>` is the root `ts` and `<channel id>` the `channel` field, both from the root post's `---SLACK_UPLOAD_RESULT---` block. The step runs **after** the command's one-line post confirmation has printed.
 
 0. **Gate — the post is complete.** Run once the root **and every thread reply** have posted. That is either the normal path (all in this session) or a **resume run** — the user re-ran only the remaining replies with `--thread-ts <ts>` after a partial failure, and the last one has now posted. On a resume run, use the `ts` the user passed and the same root / reply files from `/tmp` (they are still there on the same machine). If a resume run cannot find the root or a reply file, `record` exits 1 — surface it and tell the user which file is missing; do not archive a partial transcript. Never archive while replies are still outstanding.
-1. **Resolve the collection by name** — `release_archive.py pending` for the name, then the paginated `list_collections` ladder above (exact-case → oldest `created_at` → do-not-write + warn; create if none). Keep the resolved UUID.
+1. **The collection id** — the `release_archive` id from Step 1 (saved id, or resolved / created there by the ladder above). `release_archive.py pending` only prints the name.
 2. **Permalink** — one Slack read, reusing `slack_upload.py`'s token resolution (`os.environ` → `.env`) and its read-retry (429/5xx) path; needs no scope beyond the bot token:
 
    ```bash
@@ -150,8 +152,13 @@ The notes are private to the user's Mem workspace, the same audience as the inte
    ```
 
    The stdout is the exact note body. `--date` is the value the command already computed for the root header (`date +%Y-%m-%d`) — pass it through; do not recompute. `--reply-files` takes every posted reply file in numeric order.
-4. **Write it** — `create_note({content, collection_ids: [<resolved uuid>]})`. By UUID only; never `collection_titles`. On success print `Release archive: wrote note "<title>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
-5. **If the write cannot happen** (collection unresolvable or ambiguous, `create_note` fails once and again on one immediate retry) — print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full rendered note body in a fenced block. Then finish. Never write the note to disk, never re-post to Slack.
+4. **Write it** — `create_note({content, collection_ids: [<release_archive id>]})`. By UUID only; never `collection_titles`. On success print `Release archive: wrote note "<title>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
+   - **Landed check** (`mem-calls` rule 1b): save the response, run `mem_ids.py landed release_archive --response <file>`; on `landed: false`, look the collection up once and `add_note_to_collection` (create it if it is gone). Never write the note a second time.
+5. **If the write cannot happen:**
+   - **Refused (rate limit)** → `mem_ids.py wait 30`, retry; `wait 90`, retry; then `release_archive.py outbox add --key release_archive --content-file <the rendered note file> --reason "rate limited"`, and print `Release archive: Mem is rate-limiting — note saved to the outbox; the next run uploads it.`
+   - **Any other failure** (collection ambiguous, `create_note` fails once and again on one immediate retry), or the outbox add fails → print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full rendered note body in a fenced block.
+
+   Then finish. Never re-post to Slack.
 
 ## Dedup rule
 
@@ -169,14 +176,15 @@ The notes are private to the user's Mem workspace, the same audience as the inte
 | Configured name matches more than one collection and the exact-case → oldest `created_at` tie-break still leaves >1 | Do not write; warn with every candidate id; print the rendered note for a manual paste; the user renames or trashes the stray |
 | `slack_upload.py --get-permalink` fails (`ok: false`, non-zero exit, unparseable output) | Omit the `Permalink:` line — still write the note; never construct a URL |
 | `release_archive.py record` exits 1 (bad date, empty posted set, missing message file) | Surface stderr; nothing to write — fix the input and re-run the archive step by hand |
-| `create_note` fails | One immediate retry; if it fails again, print the rendered note in chat for a manual paste |
+| `create_note` refused (rate limit) | Wait 30s, retry; wait 90s, retry; then queue it in the outbox. The next run uploads it at Step 1 |
+| `create_note` fails (not a rate limit) | One immediate retry; if it fails again, print the rendered note in chat for a manual paste |
 | Same release re-posted in a fresh session | A second note; reminder in the success line; user trashes the older one |
 
 The archive step is strictly after the post, so it can never affect delivery. The Slack post is authoritative for *what was sent*; the Mem note is the only archive of it.
 
 ## What this skill does not do
 
-- Does not write anything to disk — no markdown copy, no fallback file. The only outputs are the Mem note and, on failure, the note text in chat.
+- Does not keep anything on disk — no markdown copy. A rate-limited note waits in the outbox only until a later run uploads it; any other failure prints the note text in chat.
 - Does not gate, delay, or retry the post. It starts only after the confirmation line and cannot change the post's outcome.
 - Does not archive per ticket, and does not dedup or update-in-place — one note per session, duplicates tolerated and warned.
 - Does not compose or hand-edit note bodies — `release_archive.py` renders them so the schema stays stable.

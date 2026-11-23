@@ -717,10 +717,11 @@ return JSON.stringify({ok:true,value:now});
 })"""
 # the write guard first (like every page script), then the shared control reader, so a label the
 # probe reported is the label this script finds
-def field_script():
+def field_script(reads=()):
     """Built on demand, not at import: the guard inside it carries the run's arm token,
-    which brief loads (C.use_run_token) after this module is imported."""
-    return (_FIELD_JS.replace("__GUARD__", C.guard_source()).replace("__FIELDS__", C.fields_source())
+    which brief loads (C.use_run_token) after this module is imported, and the run's
+    read-only POST paths (calls.json "read_posts"), the same list as the probe's guard."""
+    return (_FIELD_JS.replace("__GUARD__", C.guard_source(reads)).replace("__FIELDS__", C.fields_source())
             .replace("__DLG__", json.dumps(C.DIALOG_SEL)))
 
 
@@ -730,10 +731,10 @@ FIELD_JS = field_script()                    # import-time copy, for tests and c
 FIELD_KEY = "kbf"
 
 
-def field_install_action():
+def field_install_action(reads=()):
     """javascript_tool input that stores the field script (kbf) in sessionStorage next to the probe
     (kbp), the click guard (kbc) and the option picker (kbo): each field call is then a short stub."""
-    text = (f"{C.JS_MARKER}var F={json.dumps(field_script())};sessionStorage.setItem('{FIELD_KEY}',F);"
+    text = (f"{C.JS_MARKER}var F={json.dumps(field_script(reads))};sessionStorage.setItem('{FIELD_KEY}',F);"
             f"'{FIELD_KEY}:'+F.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
 
@@ -1045,7 +1046,8 @@ def cmd_brief(a):
         base_install = C.install_prefix(routes.get("demo")) + base_install
     install_path = out.parent / "data_install.json"
     install_path.write_text(json.dumps(
-        {"install": list(base_install) + [{"name": "javascript_tool", "input": field_install_action()}]},
+        {"install": list(base_install) + [{"name": "javascript_tool",
+                                           "input": field_install_action(calls.get("read_posts") or ())}]},
         indent=1))
     print(f"data brief: {len(blocks)} form fill(s), {len(missing)} without a write visit "
           f"({len(mismatched)} start_mismatch) -> {out}")

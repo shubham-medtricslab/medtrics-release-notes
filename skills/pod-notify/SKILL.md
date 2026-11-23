@@ -21,9 +21,9 @@ It does **not** run in `/release-slack mr` mode (an MR has no Optimus ticket), o
 
 Below, `{data}` and `{summaries}` are the caller's files, `{source}` is the command (`/release-slack`, `/oracle-release`, `/pod-notify`), `{date}` is the date in the release header, `{link}` is the main post's permalink when the caller has one (Step 9b / 11b fetched it), and `P=${CLAUDE_PLUGIN_ROOT}/scripts/release`.
 
-## The pod map (Mem)
+## The pod map and the pod log (Mem)
 
-One collection, named by `MEM_POD_MAP_COLLECTION` in `.env` (default `Release Notes Pod Map`). It holds:
+Two collections. The **pod map** is named by `MEM_POD_MAP_COLLECTION` in `.env` (default `Release Notes Pod Map`) and holds the pod notes. The **pod log** is named by `MEM_POD_LOG_COLLECTION` (default `Pod Notify Log`) and holds the log notes. They are kept apart so reading the map stays one small call. Log notes written before 0.25.0 may still sit in the map; they are read from there too until `/release-note-setup pod` moves them. Every Mem call here follows the `mem-calls` skill.
 
 - **Pod notes** — written by people, one per pod. Title `Pod: #<channel name>`:
 
@@ -37,7 +37,7 @@ One collection, named by `MEM_POD_MAP_COLLECTION` in `.env` (default `Release No
   ```
 
   Client names are **exactly as Optimus spells them** (look-alikes are different clients: VinUniversity GME vs VinUniversity Medicine and Nursing, UCC vs UCCPA). `/release-note-setup pod` adds each client's Optimus id in `[…]`, so a later rename in Optimus does not break the match; a name without an id still matches by name (case, `&`/`and` and punctuation ignored). The **Channel ID** is what posts go to; the title's name is for people. A client may sit in two pods (both get its tickets — shown as a warning). A note without a valid channel id is skipped with a warning; the `Pod template (copy me)` note is never read as a pod.
-- **Pod-log notes** — written by this skill, one per run that posted. Title `Pod notify: {date} · {source}`, one line per pod: `- <channel id> · #<name> · ts <root ts> · <ticket ids>`, with the pod's root message link under it (`  - Pod post: <permalink>`). The next run skips any (channel, ticket) pair already logged, so a ticket is announced to a pod once.
+- **Pod-log notes** (in the pod log) — written by this skill, one per pod as it finishes. Title `Pod notify: {date} · {source}`, one line per pod: `- <channel id> · #<name> · ts <root ts> · <ticket ids>`, with the pod's root message link under it (`  - Pod post: <permalink>`). The next run skips any (channel, ticket) pair already logged, so a ticket is announced to a pod once.
 
 ## Which clients a ticket has
 
@@ -63,21 +63,31 @@ Never the internal summary, developer mentions, MR/PR links or another pod's cli
 
 ## Flow
 
-### 1 — Find the collection
+### 1 — The collection ids
 
-1. `python3 $P/pod_map.py collection` → the collection name.
-2. If `.medtrics-release-notes/config.json` (`python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_paths.py config`) holds `mem.pod_map`, confirm it with `get_collection`; else, or if that fails, resolve by name exactly as the `release-archive` skill does: paginated `list_collections` following `next_page`, case-insensitive exact title, prefer exact case then the oldest `created_at`; several still tied → stop with every candidate id. Never `search_collections`.
-3. **Never create it here** — only `/release-note-setup pod` does. None found → print `Pods: no pod map in Mem — run /release-note-setup pod, then /pod-notify <ids>.` and finish.
+1. `python3 $P/pod_map.py collection` → both names (for messages).
+2. The ids are `pod_map` and `pod_log` from the caller's Step 1 (`mem_ids.py need`, `mem-calls` rule 1). A standalone `/pod-notify` or `resume` runs `python3 $P/mem_ids.py need pod_map pod_log` itself (plus the outbox's keys), with the one-walk lookup only for keys under `missing`. A key under `absent` was looked for in the last 7 days and not found: no new walk. A saved id is used as it is: **no `get_collection` check**.
+3. **Never create either here** — only `/release-note-setup pod` does. No pod map → print `Pods: no pod map in Mem — run /release-note-setup pod, then /pod-notify <ids>.` and finish. No pod log yet → carry on without `--log-notes` (old log notes in the map are still read), and add `run /release-note-setup pod to create the pod log` to the report. Log writes then go to the outbox (step 6) until the pod log exists.
 
-### 2 — Read it and route
+### 2 — Route, reading Mem only when it matters
 
-`list_notes({collection_id, include_note_content: true, limit: 100})`, following `next_page` to the end; save the merged `{"notes": [{id, version, content}, …]}` verbatim to `/tmp/pod_notify/notes.json` (`mkdir -p /tmp/pod_notify`). Then:
+Routing runs up to three times, and each read happens only when `route` asks for it (0.25.0). Every `route` takes the same `{data}`, `{summaries}`, `{date}`, `{source}`, `[--release-link]` and `--out-dir /tmp/pod_notify` (call that `R`), plus `--force` when the user asked to re-send. A `route` whose `status` is `needs_map` or `needs_log` writes **no plan**, so nothing can be previewed or posted from it.
 
-```bash
-python3 $P/pod_map.py route --data {data} --summaries {summaries} \
-    --notes /tmp/pod_notify/notes.json --date {date} --source {source} \
-    [--release-link {link}] --out-dir /tmp/pod_notify
-```
+1. **Without Mem** (cut A): `python3 $P/pod_map.py route R --no-map`. It needs no Mem read because a ticket that names no client (no Optimus link and no client in its text) reaches no pod, whatever the map says.
+   - `status: routed` (no ticket names a client) → that is the final plan, with `pods: 0` and every ticket listed as no client, platform-wide or internal. Skip both reads.
+   - `status: needs_map` → go on.
+2. **Read the pod map**: `mkdir -p /tmp/pod_notify`, then `list_notes({collection_id: <pod_map id>, include_note_content: true, limit: 100})`, following `next_page`. Save the merged `{"notes": [{id, version, content}, …]}` verbatim to `/tmp/pod_notify/notes.json`.
+   - **An empty pod map is suspect.** A real one always holds the template and the pods, and Mem may answer a stale id with nothing. Run `mem_ids.py forget pod_map`, the one-walk lookup, and one more read (`mem-calls` rule 1).
+   - Then run `python3 $P/pod_map.py route R --notes /tmp/pod_notify/notes.json --log-unread`. Leave out `--log-unread` when there is no pod log yet (`pod_log` missing or `absent`).
+   - `status: routed` → final (no pod gets tickets, or there is no pod log). Skip the log read (cut B).
+   - `status: needs_log` → go on.
+3. **Read the pod log** the same way into `/tmp/pod_notify/log_notes.json`. Then run `python3 $P/pod_map.py route R --notes /tmp/pod_notify/notes.json --log-notes /tmp/pod_notify/log_notes.json`. That is the final plan.
+
+Old log notes still kept in the pod map are read with the map, as before.
+
+If Mem refuses a read, wait (`mem_ids.py wait 30`, then `wait 90`) and retry. Still refused → print `Pods: Mem is rate-limiting — pod posts skipped; run /pod-notify <ids> later.` and finish. The release stands.
+
+`route` also counts pod-log notes waiting in the local outbox (`pending_logs` in its result) as already sent, so a re-run never posts twice while Mem is down.
 
 Add `--force` only when the user asked to re-send tickets a pod already got. The `---POD_MAP_RESULT---` block carries `plan`, `channels` and the counts. With `pods: 0`, print the preview table (step 4, without `--channels`) as the report and finish — nothing to send.
 
@@ -129,7 +139,12 @@ python3 $P/pod_map.py log --plan /tmp/pod_notify/plan.json --channel-id <channel
     --out /tmp/pod_notify/log_writes.json
 ```
 
-Perform each write: `create_note({content, collection_ids: [<pod map collection id>]})`; retry once. If it still fails, print `Pods: could not write the pod log (<reason>) — paste this note into "<collection name>" so these tickets are not sent again:` and the note in a fenced block. No writes means nothing was posted to that pod.
+Perform each write: `create_note({content, collection_ids: [<pod_log id>]})`, then the landed check (`mem-calls` rule 1b: `mem_ids.py landed pod_log --response <file>`). On `landed: false` with no log collection found, the note is also queued as `pod_log` in the outbox so the next `route` still sees it.
+
+- **Refused (rate limit)**, or the pod log does not exist yet → wait (`mem_ids.py wait 30`, retry; `wait 90`, retry; skip the waits when there is no pod log). Still refused → `python3 $P/release_archive.py outbox add --writes-file /tmp/pod_notify/log_writes.json --reason "rate limited"` and say `Pods: log for <#name> saved to the outbox — the next run uploads it.` The queued log already stops a second post from this folder.
+- **Any other failure** → one immediate retry. If it still fails, print `Pods: could not write the pod log (<reason>) — paste this note into "<collection name>" so these tickets are not sent again:` and the note in a fenced block.
+
+No writes means nothing was posted to that pod.
 
 ### 7 — Report
 
@@ -156,9 +171,10 @@ Then steps 1–2 read only, with `route --data /tmp/pod_notify/dryrun_data.json 
 |---|---|
 | No pod map collection | One line naming `/release-note-setup pod`; finish |
 | Collection name ambiguous | One line with every candidate id; finish |
-| A Mem read fails | One line; finish — the release stands |
+| A Mem read fails | One line; finish — the release stands (a rate limit is waited out twice first) |
 | `pod_map.py` exits 1 | Surface its stderr in one line; finish |
 | A channel check fails | That pod is blocked, the reason is in the table |
 | A pod post fails | Stop that pod, carry on with the others; never auto-retry |
-| Pod-log write fails twice | Print the note for a manual paste |
+| Pod-log write refused (rate limit) after the waits | Queued in the outbox; uploaded by the next run; still counts as sent |
+| Pod-log write fails twice (not a rate limit) | Print the note for a manual paste |
 | User answers `n` | No Slack call, no Mem write |

@@ -1,5 +1,5 @@
 {
- "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. Optional per-surface wait_s (seconds, max 10) overrides demo.settle_s, the pause after navigate before the GIF frame is taken (slow lists). known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs. Optional per-surface clicks (Chrome capture) run after the start page when the ticket's own text gives no click path: {\"text\": exact link/tab/button text}, {\"check\": exact checkbox label} (ticks the box; never a button, never submits) or {\"row\": true}. A text click here is \"named\" (0.24.0): kbclick may press it even when it is a submit button, a plain button or a link without an address (the Case Logs filter Submit, a row's View), because the owner wrote that exact text for that page; danger words, classes and attributes and POST forms are still refused, and only GET leaves the page.",
+ "_doc": "Surface map for /kb-articles. Built 2026-10-26 from extra/kb-pipeline (tickets.json, ADMIN-URL-MAP.md, persona-capture-routes.md). url '' means the surface still needs mapping: kb_capture.py treats it as uncapturable. recipe steps run after goto: {click|dblclick: text}, {wait_for: text}, {select: [label, option]}, {wait_ms: n}. Optional per-surface wait_s (seconds, max 10) overrides demo.settle_s, the pause after navigate before the GIF frame is taken (slow lists). known_tickets seeds placement for the backlog; new tickets are placed by match.modules/url_prefixes/template_globs. Optional per-surface clicks (Chrome capture) run after the start page when the ticket's own text gives no click path: {\"text\": exact link/tab/button text}, {\"check\": exact checkbox label} (ticks the box; never a button, never submits) or {\"row\": true}. A text click here is \"named\" (0.24.0): kbclick may press it even when it is a submit button, a plain button or a link without an address (the Case Logs filter Submit, a row's View), because the owner wrote that exact text for that page; danger words, classes and attributes and POST forms are still refused, and only GET leaves the page. Optional per-surface read_posts (0.25.0): exact same-origin paths of read-only POSTs the page needs to show its data (the Case Logs list loads by POST); the write guard lets a POST to exactly that path through and blocks every other write. Hand-checked paths only, no query, no pattern; a path with a write verb (create, save, delete, approve, ...) is ignored.",
  "demo": {
   "base_url": "https://medtrics.medtricslab.com",
   "domain": "medtricslab.com",
@@ -179,6 +179,9 @@
    "persona": "admin",
    "also_personas": [],
    "url": "/cases/procedures/logs/",
+   "read_posts": [
+    "/api/rotations/procedure_logs/logs_filter_list/"
+   ],
    "recipe": [],
    "clicks": [
     {

@@ -96,6 +96,9 @@ MISSING_REASONS = {
     "tenant_row": "the first row on this screen shows real tenant data",
     "page_not_found": "the capture could not find this page in the app",
     "label_not_found": "the screen did not show the labelled item",
+    "no_labels": "the ticket names no on-screen label for the capture to find",
+    "tenant_block": "the screen showed data that failed the tenant check",
+    "request_blocked": "the capture's write guard blocked the request that loads this screen",
     "write_failed": "the form step could not be completed",
     "external_link_missing": "external link not given",
     # informational, not a failure: the screen was reached through a save that the
@@ -113,7 +116,20 @@ def missing_reason_text(code, detail=""):
     base = MISSING_REASONS.get(code)
     if not base:
         return code
-    return f"{base} ({detail})" if detail and code in ("click_refused", "click_not_found") else base
+    if detail and code == "tenant_block":
+        words = [TENANT_RULE_WORDS.get(k.strip(), k.strip()) for k in str(detail).split(",") if k.strip()]
+        return f"{base} ({', '.join(words)})" if words else base
+    return f"{base} ({detail})" if detail and code in ("click_refused", "click_not_found",
+                                                         "request_blocked") else base
+
+
+# Tenant-check rule codes -> words for a reader (tenant_block detail).
+TENANT_RULE_WORDS = {
+    "non_latin_script": "text in a non-Latin script",
+    "foreign_email_domain": "an email address outside the demo domain",
+    "known_client_name": "a real client's name",
+    "tenant_slug": "a real tenant's name",
+}
 # The article goes to Intercom as written, so the subtitle names the audience and
 # portal only: no ticket id, no "generated from", no draft state. The suffix is
 # for the CLI's draft preview render, never for the packaged article.

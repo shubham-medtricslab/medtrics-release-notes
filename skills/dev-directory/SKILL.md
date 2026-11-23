@@ -22,7 +22,9 @@ Mem is "connected" when the Mem MCP tools are available in the current session �
 | Description | Use `collection_description` from `dev_directory.py pending` output, or the constant `COLLECTION_DESCRIPTION` in the script |
 | Owner | The user running the command (Mem is per-user; each teammate builds their own directory) |
 
-Bootstrap once per run: `search_collections({query: "Release Notes Developer Directory"})` (or `list_collections`), pick the entry whose title matches exactly (case-insensitive), cache its UUID. If none matches, `create_collection({title, description})` and cache the returned id. If this fails, treat Mem as not connected for the rest of the run.
+The collection id is the `dev_directory` id the command got at Step 1 (`mem_ids.py need`, `mem-calls` rule 1). It is saved in the folder's config, so a normal run makes **no lookup call**. When it was missing, Step 1 resolved it from its one `list_collections` walk, or created it. If that failed, treat Mem as not connected for the rest of the run.
+
+**Local copy (24h).** `dev_directory.py cache` keeps the last directory dump in `.medtrics-release-notes/cache/dev_directory.json`. A run within 24h of the last read uses that copy and makes no Mem read at all. Write-backs still go to Mem straight away and are folded into the copy (`cache apply`), so the next run sees them. A hand edit in Mem shows up once the copy is older than 24h, or at once with `--refresh-directory`. Once Mem is limited (`mem-calls` rule 4), 3a uses only a fresh copy, and 3c is skipped.
 
 ## Note schema
 
@@ -54,7 +56,8 @@ Notes in the collection that do not start with `Developer: ` or lack a plausible
 
 ### 3a — Read the directory and prefill
 
-1. `list_notes({collection_id: <uuid>, include_note_content: true, limit: 100})`. Follow `next_page` until exhausted (the directory is a few dozen notes at most). Merge every page into one object `{"notes": [ {id, version, content, ...}, ... ]}` and save it **verbatim** to `/tmp/{prefix}_dev_directory.json` — keep each note's `id`, `version`, and `content`; the parser needs all three.
+0. `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py cache get --out /tmp/{prefix}_dev_directory.json`. With `fresh: true`, skip to step 2.
+1. `list_notes({collection_id: <dev_directory id>, include_note_content: true, limit: 100})`. Follow `next_page` until exhausted (the directory is a few dozen notes at most). Merge every page into one object `{"notes": [ {id, version, content, ...}, ... ]}` and save it **verbatim** to `/tmp/{prefix}_dev_directory.json` — keep each note's `id`, `version`, and `content`; the parser needs all three. Then store the copy: `dev_directory.py cache put --notes /tmp/{prefix}_dev_directory.json`.
 2. Run the deterministic prefill:
 
    ```bash
@@ -103,7 +106,8 @@ Runs right after 3b, before the analyzers — not after the preview. Skip if Mem
 | Condition | Behavior |
 |---|---|
 | Mem tools absent | One-line notice; resolver-only run |
-| `search_collections` / `create_collection` fails | Treat as not connected for this run |
+| No `dev_directory` id after Step 1 (lookup or `create_collection` failed) | Treat as not connected for this run |
+| Mem refuses a call (rate limit) | Mem is limited: use a fresh local copy if there is one, else resolver only; skip the write-back (`mem-calls` skill) |
 | `list_notes` fails or returns malformed data | Skip 3a; run the resolver for everyone; still attempt 3c only if the collection uuid is known (writes then create notes for every newly resolved dev) |
 | `dev_directory.py` exits 1 | Surface stderr, continue without the directory |
 | A `create_note` / `update_note` fails | Log it, continue with the remaining writes; the Slack post is unaffected |

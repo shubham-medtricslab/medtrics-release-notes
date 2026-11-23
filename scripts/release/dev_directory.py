@@ -22,7 +22,17 @@ two deterministic, testable halves around the orchestrator's Mem calls:
             the note's current `version`) that merges new identifiers into an
             existing note. The orchestrator performs the listed calls.
 
-Both subcommands print a machine-readable block on every exit path:
+  cache     A local copy of the directory dump, so most runs make no Mem read.
+            `cache get --out <notes.json>` writes the copy there when it is
+            under 24h old (`fresh: true`), else reports `fresh: false` and the
+            command reads Mem. `cache put --notes <notes.json>` stores a fresh
+            dump. `cache apply --writes <pending.json> --results <results.json>`
+            folds the write-backs Mem accepted into the copy (results: one
+            {id, version} or null per write, in order); without results the
+            copy is dropped. `cache clear` drops it. The copy lives in
+            `.medtrics-release-notes/cache/` in the run folder.
+
+Every subcommand prints a machine-readable block on every exit path:
 
     ---DEV_DIRECTORY_RESULT---
     {"ok", "action", ...counts..., "error"}
@@ -65,6 +75,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kb"))
+import kb_paths  # noqa: E402
+
 COLLECTION_TITLE = "Release Notes Developer Directory"
 COLLECTION_DESCRIPTION = (
     "medtrics-release-notes: one note per developer mapping name, emails, "
@@ -73,6 +86,8 @@ COLLECTION_DESCRIPTION = (
     "with every newly resolved developer. Safe to edit or delete a note by hand."
 )
 TITLE_PREFIX = "Developer: "
+CACHE_NAME = "dev_directory.json"
+CACHE_MAX_AGE_HOURS = 24
 
 FIELD_RE = re.compile(r"^\*\*(?P<key>[^*]+?):\*\*\s*(?P<value>.*)$")
 # Sanity shape only (real ids are 9–11 chars); the lint gate enforces Slack's
@@ -484,6 +499,126 @@ def cmd_pending(args):
     return 0
 
 
+def cache_path(home=None):
+    h = kb_paths.folder(home)
+    return kb_paths.config_path(h).parent / "cache" / CACHE_NAME
+
+
+def _now():
+    return _dt.datetime.now(_dt.timezone.utc)
+
+
+def cache_read(home=None, max_age_hours=CACHE_MAX_AGE_HOURS, now=None):
+    """(notes, age_hours) when the copy is fresh, else (None, age or None)."""
+    p = cache_path(home)
+    try:
+        rec = json.loads(p.read_text())
+        fetched = _dt.datetime.fromisoformat(rec["fetched_at"])
+        notes = rec["notes"]
+        if not isinstance(notes, list):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
+    age = ((now or _now()) - fetched).total_seconds() / 3600
+    if age < 0 or age >= max_age_hours:
+        return None, age
+    return notes, age
+
+
+def cache_write(notes, home=None, fetched_at=None):
+    p = cache_path(home)
+    kb_paths.self_ignoring(p.parent.parent)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"fetched_at": (fetched_at or _now()).isoformat(),
+                             "notes": notes}, indent=1, ensure_ascii=False))
+    return p
+
+
+def cache_clear(home=None):
+    p = cache_path(home)
+    if p.exists():
+        p.unlink()
+        return True
+    return False
+
+
+def cache_apply(writes, results, home=None):
+    """Fold accepted write-backs into the copy, keeping its fetched_at.
+    Returns the number applied; drops the copy when it cannot be kept true."""
+    p = cache_path(home)
+    try:
+        rec = json.loads(p.read_text())
+        notes = rec["notes"]
+        fetched = _dt.datetime.fromisoformat(rec["fetched_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+    if not isinstance(results, list) or len(results) != len(writes):
+        cache_clear(home)
+        return 0
+    applied = 0
+    for w, r in zip(writes, results):
+        if not r:
+            continue                   # Mem did not take it: the copy is still right
+        if not isinstance(r, dict) or not r.get("id"):
+            cache_clear(home)
+            return 0
+        if w.get("action") == "update":
+            hit = next((n for n in notes if n.get("id") == w.get("note_id")), None)
+            if hit is None:
+                cache_clear(home)
+                return 0
+            hit["content"] = w["content"]
+            hit["version"] = r.get("version")
+        else:
+            notes.append({"id": r["id"], "version": r.get("version"),
+                          "content": w["content"]})
+        applied += 1
+    cache_write(notes, home, fetched)
+    return applied
+
+
+def cmd_cache(args):
+    if args.action == "get":
+        if not args.out:
+            raise ValueError("cache get needs --out")
+        notes, age = cache_read(max_age_hours=args.max_age_hours)
+        if notes is not None:
+            Path(args.out).write_text(json.dumps({"notes": notes}, indent=1,
+                                                 ensure_ascii=False))
+            print(f"Developer directory: local copy, {age:.1f}h old — no Mem read.",
+                  file=sys.stderr)
+        emit_result({"ok": True, "action": "cache-get", "fresh": notes is not None,
+                     "age_hours": None if age is None else round(age, 2),
+                     "notes": len(notes or []), "error": None})
+    elif args.action == "put":
+        notes = load_notes_raw(args.notes)
+        path = cache_write(notes)
+        emit_result({"ok": True, "action": "cache-put", "notes": len(notes),
+                     "path": str(path), "error": None})
+    elif args.action == "apply":
+        writes = (json.loads(Path(args.writes).read_text()).get("writes") or []) \
+            if args.writes else []
+        results = json.loads(Path(args.results).read_text()) if args.results else None
+        applied = cache_apply(writes, results)
+        emit_result({"ok": True, "action": "cache-apply", "applied": applied,
+                     "kept": cache_path().exists(), "error": None})
+    else:
+        emit_result({"ok": True, "action": "cache-clear", "cleared": cache_clear(),
+                     "error": None})
+    return 0
+
+
+def load_notes_raw(path):
+    """The saved list_notes response as a list of note dicts ([] when empty)."""
+    p = Path(path) if path else None
+    if not p or not p.exists() or p.stat().st_size == 0:
+        return []
+    raw = json.loads(p.read_text())
+    if isinstance(raw, dict):
+        raw = raw.get("notes") or raw.get("items") or raw.get("results") or []
+    return [n for n in raw if isinstance(n, dict)] if isinstance(raw, list) else []
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Deterministic half of the Mem developer directory")
@@ -504,10 +639,21 @@ def main():
     p2.add_argument("--source", default="", help="Calling command, e.g. /oracle-release")
     p2.add_argument("--today", default="", help="Override today's date (YYYY-MM-DD)")
 
+    p3 = sub.add_parser("cache", help="Local 24h copy of the directory dump")
+    p3.add_argument("action", choices=("get", "put", "apply", "clear"))
+    p3.add_argument("--out", default="", help="get: write the copy here")
+    p3.add_argument("--notes", default="", help="put: the fresh list_notes dump")
+    p3.add_argument("--writes", default="", help="apply: the pending-writes JSON")
+    p3.add_argument("--results", default="",
+                    help="apply: JSON list, one {id, version} or null per write")
+    p3.add_argument("--max-age-hours", type=float, default=CACHE_MAX_AGE_HOURS)
+
     args = ap.parse_args()
     try:
         if args.cmd == "prefill":
             return cmd_prefill(args)
+        if args.cmd == "cache":
+            return cmd_cache(args)
         return cmd_pending(args)
     except (ValueError, OSError) as e:
         print(f"ERROR: {e}", file=sys.stderr)

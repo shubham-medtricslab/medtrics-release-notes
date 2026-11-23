@@ -18,7 +18,7 @@ Usage
 
 Requires: pillow, numpy, pytesseract + the tesseract binary.
 """
-import argparse, difflib, json, os, re, sys
+import argparse, difflib, json, os, re, sys, unicodedata
 
 import numpy as np
 from PIL import Image, ImageSequence
@@ -202,6 +202,15 @@ def slug_stop_spec():
 
 
 NONLATIN_MIN = 3
+
+
+def is_nonlatin_letter(c):
+    """A letter from a script other than Latin or Greek (Cyrillic, CJK, Arabic, ...).
+    Typography above U+03FF (en dash, ellipsis, curly quotes, bullets, arrows, icon-font
+    glyphs) is not a letter and never counts; the probe's JS uses the same rule."""
+    if ord(c) <= 0x3FF or not c.isalpha():
+        return False
+    return not unicodedata.name(c, "").startswith(("LATIN", "GREEK"))
 EMAIL_RE = re.compile(r"[\w.+-]+@([\w-]+\.[\w.-]+)")
 COURSE_CODE_RE = re.compile(r"\b[A-Z]{2,5}\d{3,5}(?:\.[A-Za-z0-9]+)*\b")
 
@@ -238,7 +247,7 @@ def screen_text(raw, demo_domain="medtrics.dev", client_names=(), allow_strings=
     if slugs:
         findings.append({"kind": "tenant_slug", "value": sorted(slugs)[:6]})
 
-    nonlatin = sum(1 for c in raw if ord(c) > 0x3FF)
+    nonlatin = sum(1 for c in raw if is_nonlatin_letter(c))
     if nonlatin >= NONLATIN_MIN:
         findings.append({"kind": "non_latin_script", "value": nonlatin})
 

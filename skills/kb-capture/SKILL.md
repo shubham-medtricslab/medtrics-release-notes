@@ -189,11 +189,23 @@ same constants.
 A refused or missing click does not stop the run: the capturer sends the abort
 (`gif_creator clear`), writes `click_error` for that visit and skips the rest
 of that entry's clicks. Ingest records the screen with its reason
-(`click_refused`, `click_not_found`, `tenant_row`), never leaves it for resume,
+(`click_refused`, `click_not_found`, `tenant_row`; a `click_not_found` right
+after the guard blocked a request on the screen before becomes
+`request_blocked` with that request), never leaves it for resume,
 and `write_gated` becomes a `needs_write` screen without a visit. Reasons reach
 the article as: `needs_write` → "This step happens after you save; no
 screenshot"; `no_screen` → no marker, a one-line note; `click_*`, `tenant_row`,
 `label_not_found` → a marker with that reason.
+
+A ticket whose screens loaded but which has no verified shot gets (0.25.0):
+`no_labels` when the capture was given no label for it, `tenant_block` (with the
+rule, e.g. "text in a non-Latin script") when one of its screens failed the tenant
+check, else `label_not_found`. A label matched on an element under 4 px wide or tall
+(a hidden node) is not found, and an unverified match no longer stops the heading
+fallback. The tenant check's non-Latin rule counts only letters from scripts other
+than Latin and Greek: dashes, ellipses, curly quotes, bullets and icon glyphs never
+count. A raw item whose `visit_id` was shortened (`v01` for the batch's only
+`v01-s0`) is matched to its planned visit.
 
 **Vue pages.** The page is Vue when `document.querySelector('[data-v-app]')`
 matches, any element has `__vue_app__`, or `window.__VUE__` is set. There the
@@ -209,7 +221,13 @@ never double-wraps; a full navigation gives a fresh window the next call patches
 It wraps `fetch`, `XMLHttpRequest.prototype.open/send`, `navigator.sendBeacon`
 and `HTMLFormElement.prototype.submit/requestSubmit`, and adds a capture-phase
 `submit` listener on `document`. Only `GET` passes (HEAD, OPTIONS and every other
-method are blocked too): `fetch` returns a rejected Promise (`KB_WRITE_BLOCKED`),
+method are blocked too), plus one exception (0.25.0): a `POST` to an exact
+same-origin path listed in that run's routes as `read_posts` in `kb_routes.json`
+(a list that loads its rows by POST, such as the Case Logs
+`/api/rotations/procedure_logs/logs_filter_list/`). The list is hand-checked, a path
+with a query or a write verb (create, save, delete, approve, ...) is ignored, and the
+run's list is in `calls.json` `read_posts`; each pass is logged in `window.__kbReads`.
+Everything else is blocked: `fetch` returns a rejected Promise (`KB_WRITE_BLOCKED`),
 `XHR.send` throws, `sendBeacon` returns `false`, a non-GET form's `submit()` /
 `requestSubmit()` does nothing (the submitter's `formmethod` wins over the form's
 method) and its `submit` event is cancelled. Each block adds 1 to

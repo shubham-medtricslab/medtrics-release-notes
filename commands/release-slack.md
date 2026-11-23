@@ -72,7 +72,7 @@ There is **no IP guard and no separate customer-facing markdown** in this pipeli
 
 - Slack root post + thread replies to the channel resolved from `SLACK_CHANNEL_INTERNAL` (default `#dream-team`, channel id `C1BCUHXT9`). Posted only after the user confirms.
 - **One Mem note for the release session** in the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`; `release-archive` skill) — date, channel, root ts, permalink, the posted ticket list, **and the posted root + every thread reply verbatim**. This is the **only** archive of the post: nothing is written to `.claude/outputs/` or anywhere else on disk. Written once the post is complete (this session, or the resume run that finishes it).
-- **In `status` or `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_MAP_COLLECTION` (default `Release Notes Pod Map`; `pod-notify` skill).
+- **In `status` or `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_LOG_COLLECTION` (default `Pod Notify Log`; `pod-notify` skill).
 - **With `--kb` only:** one queue note per newly queued feature ticket in the collection named by `MEM_KB_QUEUE_COLLECTION` (default `KB Queue`). KB article drafts are produced only if the user answers `y` at the `/kb-articles` plan preview — those drafts, files and ledger notes belong to `/kb-articles`, not to this command.
 - Working files only in `/tmp/` — the per-ticket summary blocks (`/tmp/release_slack_summaries.txt`) and the composed root / reply files (`/tmp/release_slack_root.txt`, `/tmp/release_slack_reply_NN.txt`); the archive step reads them.
 
@@ -89,7 +89,8 @@ Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
 | `SLACK_CHANNEL_INTERNAL` | channel id (`C1BCUHXT9`) or `#dream-team` | Yes |
 | `SLACK_BOT_TOKEN` | `xoxb-...` token with `chat:write` + `channels:read` scopes (`groups:read` if the channel is private) | Yes |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | Name of the Mem collection that receives the archive note for every posted release (`release-archive` skill). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. The key is optional — the **Mem MCP connection is not** (see Step 1) | optional |
-| `MEM_POD_MAP_COLLECTION` | Name of the Mem collection holding the pod map and pod log (`pod-notify` skill). Defaults to `Release Notes Pod Map`; created only by `/release-note-setup pod`. The bot also needs membership of each pod channel | optional |
+| `MEM_POD_MAP_COLLECTION` | Name of the Mem collection holding the pod map (`pod-notify` skill). Defaults to `Release Notes Pod Map`; created only by `/release-note-setup pod`. The bot also needs membership of each pod channel | optional |
+| `MEM_POD_LOG_COLLECTION` | Name of the Mem collection holding the pod log, one note per pod per release (0.25.0). Defaults to `Pod Notify Log`; created only by `/release-note-setup pod` | optional |
 | `MEM_KB_QUEUE_COLLECTION` | `--kb` only: name of the Mem collection that holds feature tickets waiting for a KB article (`kb-ledger` skill). Created under that exact name if absent; defaults to `KB Queue` | optional |
 | `MEM_KB_LEDGER_COLLECTION` | `--kb` only: name of the KB Article Ledger collection, read so tickets that already have an article are not queued (`kb-ledger` skill). Defaults to `KB Article Ledger` | optional |
 
@@ -128,6 +129,17 @@ Read `.env` from the current working directory. Verify the five required keys ab
 
 Then confirm the **Mem MCP is connected** — the release archive lives in Mem and nowhere else, so this is a precondition, not an optional extra. Follow the `release-archive` skill's preflight: if the Mem tools (`list_collections`, `create_collection`, `create_note`, …) are not available in this session, print `Mem MCP not connected — this command archives every release to Mem and will not run without it. Connect the Mem connector and re-run.` and stop before ANY Optimus, GitLab, or Slack call. This applies to `dry-run` too. Never fall back to a disk copy.
 
+**Mem ids and outbox (`mem-calls` skill — before any gathering).** First read the outbox (local), then get every collection id this run needs in one go, adding the outbox's `keys`:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py outbox list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/mem_ids.py need release_archive dev_directory [pod_map pod_log] <outbox keys>
+```
+
+Add `pod_map pod_log` only when the pod step will run (`status` or `tickets` mode without `--no-pod`). Add `kb_ledger kb_queue` with `--kb`. Keys under `absent` were looked for in the last 7 days and not found: treat them as missing, with no new walk.
+
+If `missing` is empty, these ids serve the whole run and no step looks a collection up. Otherwise walk `list_collections` **once** and run `mem_ids.py resolve`, then create what is missing except `pod_map` / `pod_log`, exactly as the `mem-calls` skill says. Then upload the outbox (`mem-calls` rule 2: `outbox list --ready-keys <the keys with ids>`; entries under `waiting` stay queued). A refused call here makes Mem *limited* for the run (`mem-calls` rule 4); carry on to gathering either way. In `dry-run`, read only: create nothing and skip the outbox upload.
+
 ### Step 2 — Gather data
 
 For `status` mode (default):
@@ -158,7 +170,13 @@ If zero tickets come back, print `No deploy-ready tickets found. Nothing to post
 
 Follow the bundled `medtrics-release-notes:dev-directory` skill for the Mem half; the Slack half is the resolver script. Three sub-steps, in order:
 
-**3a — Mem developer directory prefill (optional).** If the Mem MCP tools are available in this session, locate (or create) the single collection `Release Notes Developer Directory`, `list_notes` it with content (page through `next_page`), save the merged `{"notes": [...]}` response verbatim to `/tmp/release_slack_dev_directory.json`, and run:
+**3a — Mem developer directory prefill (optional).** Skip to 3b when Mem is limited (`mem-calls` rule 4) **and** no fresh local copy exists. First try the local copy, which costs no Mem call:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py cache get --out /tmp/release_slack_dev_directory.json
+```
+
+`fresh: true` → use it. Otherwise `list_notes({collection_id: <the dev_directory id from Step 1>, include_note_content: true, limit: 100})`, page through `next_page`, save the merged `{"notes": [...]}` response verbatim to `/tmp/release_slack_dev_directory.json`, and store the copy with `dev_directory.py cache put --notes /tmp/release_slack_dev_directory.json`. (`--refresh-directory` from the user, or `--force` on the resolver, skips the copy and reads Mem.) Then run:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py prefill \
@@ -181,7 +199,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py pending \
     --out /tmp/release_slack_dev_directory_pending.json --source /release-slack
 ```
 
-For each entry in the output's `writes`: `create` → `create_note({content, collection_ids: [<directory uuid>]})`; `update` → `update_note({note_id, content, version})`. A failed write is logged and skipped; the post is unaffected. Keep the one-line tally for the preview: `Developer directory: {N} from Mem, {M} newly stored, {K} unresolved.`
+For each entry in the output's `writes`: `create` → `create_note({content, collection_ids: [<the dev_directory id>]})`; `update` → `update_note({note_id, content, version})`. A failed write is logged and skipped; the post is unaffected. Then save one result per write, in order — the response's `{id, version}`, or `null` for a failed or skipped write — as a JSON list in `/tmp/release_slack_dev_directory_results.json`, and fold them into the local copy:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py cache apply \
+    --writes /tmp/release_slack_dev_directory_pending.json --results /tmp/release_slack_dev_directory_results.json
+```
+
+Keep the one-line tally for the preview: `Developer directory: {N} from Mem, {M} newly stored, {K} unresolved.` (say `from the local copy` instead of `from Mem` when 3a used it).
 
 The resolver (3b) resolves each developer in three tiers, stopping at the first hit:
 
@@ -438,7 +463,7 @@ After all posts succeed:
 Runs **after** the confirmation line, exactly as the `release-archive` skill describes. It writes **one Mem note for this release session** into the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`). The note carries the trace header (date, channel, root ts, permalink, the posted ticket list with client-facing titles and code links) **and the posted root plus every thread reply verbatim**. This is the **only** archive of the post — nothing is written to `.claude/outputs/` or anywhere else on disk. The step can never affect the post itself: the post has already succeeded and is authoritative.
 
 0. **Gate — the post is complete.** Run once the root **and every thread reply** have posted — either in this session, or on a **resume run** (the user re-ran only the remaining replies with `--thread-ts <ts>` after a partial failure and the last one has now posted). On a resume run use the `ts` the user passed, the resolved channel id from the reply result blocks, and the same root / reply files from `/tmp`. Never archive while replies are still outstanding.
-1. **Resolve the collection by name.** Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py pending` to get the resolved `collection_name` and `collection_description` (the script reads `MEM_RELEASE_ARCHIVE_COLLECTION` from `.env` at CWD, process env overriding; blank → `Release Notes Archive`). Then `list_collections`, following `next_page` until exhausted, and collect every entry whose title matches the name case-insensitively: none → `create_collection({title: <name>, description})` and print `Release archive: created Mem collection "<name>".`; one → use it; several → prefer the exact-case match, then the oldest `created_at`, and if still ambiguous do not write — warn with every candidate id and fall through to step 5. Never use `search_collections` for this and never pass `collection_titles` to `create_note`.
+1. **The collection id** is the `release_archive` id from Step 1. It was created there if it did not exist; no lookup happens here. Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py pending` only for the name to print. If Step 1 found the name ambiguous, go to step 5. On a resume run in a new session, run `mem_ids.py need release_archive` first, plus the one-walk lookup if it is missing. Never pass `collection_titles` to `create_note`.
 2. **Permalink** (one Slack read; omit on failure, never construct one):
 
    ```bash
@@ -460,12 +485,18 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
        --channel "$SLACK_CHANNEL_INTERNAL" \
        --channel-id <resolved channel id from the result block> \
        --ts <ts> \
-       [--permalink <url from step 2>]
+       [--permalink <url from step 2>] \
+       --out /tmp/release_slack_archive_note.txt
    ```
 
-   The stdout is the note body. The ticket list comes from the summaries file (the posted set — `REFACTOR` and malformed blocks dropped), not from the data JSON. If `record` exits 1 (a root or reply file is missing, typically on a resume run in a new `/tmp`), surface its stderr naming the file and stop — do not archive a partial transcript.
-4. **Write it:** `create_note({content, collection_ids: [<resolved collection uuid>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
-5. **If the write cannot happen** (collection unresolvable or ambiguous, or `create_note` fails once and again on one immediate retry): print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body from step 3 in a fenced block. Then finish. Never write the note to disk and never re-post to Slack.
+   The file holds the note body. The ticket list comes from the summaries file (the posted set — `REFACTOR` and malformed blocks dropped), not from the data JSON. If `record` exits 1 (a root or reply file is missing, typically on a resume run in a new `/tmp`), surface its stderr naming the file and stop — do not archive a partial transcript.
+4. **Write it:** `create_note({content, collection_ids: [<release_archive id>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
+   - **Landed check** (`mem-calls` rule 1b): save the response, run `mem_ids.py landed release_archive --response <file>`; on `landed: false`, look the collection up once and `add_note_to_collection` (create it if it is gone). Never write the note a second time.
+5. **If the write cannot happen:**
+   - **Refused (rate limit)** → wait and retry: `mem_ids.py wait 30`, retry; `wait 90`, retry. Still refused → `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py outbox add --key release_archive --content-file /tmp/release_slack_archive_note.txt --reason "rate limited"` and print `Release archive: Mem is rate-limiting — note saved to the outbox; the next run uploads it.`
+   - **Any other failure** (collection ambiguous, or `create_note` fails once and again on one immediate retry) → print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body in a fenced block. Do the same if the outbox add fails.
+
+   Then finish. Never re-post to Slack. The outbox is the only thing ever written to disk, and only until Mem accepts the note.
 
 ### Step 9b2 — Tell the client pods (pod-notify skill; `status` and `tickets` mode, on by default)
 
@@ -493,7 +524,7 @@ Follow the `kb-ledger` skill for every Mem call.
    python3 ${CLAUDE_PLUGIN_ROOT}/scripts/kb/kb_ledger.py resolve
    ```
 
-   It prints the resolved KB Queue and KB Article Ledger names (`MEM_KB_QUEUE_COLLECTION` / `MEM_KB_LEDGER_COLLECTION`, defaults `KB Queue` / `KB Article Ledger`) and each collection's description. Resolve each by name exactly as the `kb-ledger` skill describes — paginated `list_collections` following `next_page`, case-insensitive exact title match, prefer exact case then the oldest `created_at`, `create_collection` under the exact name when none matches. Then `list_notes({collection_id, include_note_content: true, limit: 100})` each one, following `next_page` to the end, and save the merged `{"notes": [{id, version, content}, …]}` verbatim to `/tmp/kb/release_ledger_notes.json` and `/tmp/kb/release_queue_notes.json` (a just-created collection is `{"notes": []}`). If a collection is ambiguous or a Mem call fails, print `KB: could not read the KB collections (<reason>) — nothing queued; run /kb-articles <ids> by hand later.` and finish.
+   It prints the resolved KB Queue and KB Article Ledger names (`MEM_KB_QUEUE_COLLECTION` / `MEM_KB_LEDGER_COLLECTION`, defaults `KB Queue` / `KB Article Ledger`). Their ids are the `kb_queue` / `kb_ledger` ids from Step 1, so no lookup happens here. If Mem is limited (`mem-calls` rule 4), print the "could not read" line below and finish. Then `list_notes({collection_id, include_note_content: true, limit: 100})` each one, following `next_page` to the end, and save the merged `{"notes": [{id, version, content}, …]}` verbatim to `/tmp/kb/release_ledger_notes.json` and `/tmp/kb/release_queue_notes.json` (a just-created collection is `{"notes": []}`). If a collection is ambiguous or a Mem call fails, print `KB: could not read the KB collections (<reason>) — nothing queued; run /kb-articles <ids> by hand later.` and finish.
 
 2. **Enqueue this release's feature tickets.**
 
@@ -537,6 +568,7 @@ Follow the `kb-ledger` skill for every Mem call.
 | Mem MCP not connected at Step 1 | **Hard stop** before any tool call — Mem is the only release archive. Print the one-line notice; no gathering, no post, no disk fallback (applies to `dry-run` too) |
 | Gather returns zero tickets | Print "Nothing to post" and stop |
 | A Mem call fails in the developer directory (Step 3) | One-line notice; skip the directory prefill / write-back; resolver-only run. Not a hard error — the directory is a cache |
+| Mem refuses any call (rate limit) | Mem is *limited* for the rest of the run (`mem-calls` skill): optional Mem steps skip, required writes wait 30s / 90s and then go to the outbox. Never blocks or delays the post |
 | Slack user resolution returns nothing for a developer | Render that developer with plain name only; continue |
 | `engineering-to-client` pass returns anything other than `CLIENT_COPY_DONE` or changes the block count | Stop, surface it, do not compose |
 | Storyteller returns `NO_INTERNAL_NOTES` | Stop, do not preview, do not post |
@@ -546,7 +578,8 @@ Follow the `kb-ledger` skill for every Mem call.
 | A thread reply fails partway | Stop; report posted vs. remaining replies and the root `ts`; resume posts only the remaining replies with `--thread-ts <ts>` — never a second top-level message |
 | Release archive (Step 9b): permalink fetch fails | Omit the `Permalink:` line; still write the note; never construct a URL |
 | Release archive (Step 9b): `release_archive.py record` exits 1 (root or reply file missing, bad date, empty posted set) | Surface stderr naming the cause; no partial archive; fix the input and re-run the archive step by hand |
-| Release archive (Step 9b): collection unresolvable or ambiguous, or `create_note` fails after one immediate retry | Print the full rendered note in chat for a manual paste into the named collection (an ambiguous name also lists every candidate id). Never a disk write, never a re-post — the Slack post already succeeded and is authoritative |
+| Release archive (Step 9b): Mem refuses the write (rate limit) after waiting 30s and 90s | Note saved to the local outbox; the next `/release-slack`, `/oracle-release` or `/pod-notify` uploads it at Step 1 and deletes the file. Never a re-post |
+| Release archive: collection ambiguous, or `create_note` fails (not a rate limit) after one immediate retry | Print the full rendered note in chat for a manual paste into the named collection (an ambiguous name also lists every candidate id). Never a re-post — the Slack post already succeeded and is authoritative |
 | Replies still outstanding after a partial failure | No archive yet; the resume run that posts the last reply archives the whole release |
 | User declines at preview | No Slack call; summaries + drafts remain on disk |
 | Pods (Step 9b2): no pod map, a Mem read fails, a channel check fails, or a pod post fails | One line per problem; a failed pod stops only that pod; never a release failure — the post and archive stand (`pod-notify` skill) |

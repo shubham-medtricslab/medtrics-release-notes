@@ -5,7 +5,8 @@ release_archive.py — deterministic half of the Mem release archive.
 After every `/release-slack` or `/oracle-release` post (including a resume run
 that finishes posting the remaining replies), the command writes ONE Mem note
 per release session into a user-named archive collection. Mem is the ONLY
-archive — nothing is written to disk. The note carries a trace header (date,
+archive. The one exception is the outbox (below): a note Mem refused stays on
+disk only until a later run uploads it. The note carries a trace header (date,
 channel, root ts, permalink, the posted ticket list) so a later Mem search for
 a ticket id (`ORC-232`, `M1-1457`) lands on the release that shipped it, AND
 the posted root + every thread reply verbatim, so the full message text is
@@ -30,6 +31,21 @@ dev_directory.py / pr_overrides.py:
             no TITLE). Never raises on a bad block — drops it and proceeds.
             The posted message files (`--root-file`, `--reply-files` in post
             order) are appended verbatim under a `## Posted message` heading.
+
+  outbox    A queue for Mem writes Mem refused (rate limit) even after the
+            waited retries — release archive notes and pod-log notes only.
+            One JSON file per note in `.medtrics-release-notes/outbox/` in the
+            run folder (self-ignoring in git). `add` queues a note (from
+            --content-file, or every write in a pod_map.py `log` --writes-file),
+            `list` prints what is waiting, `done <file>…` deletes the files
+            Mem has now accepted. Commands upload the outbox at Step 1.
+
+  backfill  Check markdown files holding archive notes (for example a note
+            printed in chat after a failed write and saved by hand) and print
+            one create per valid file. A file is valid when it parses as a
+            `Release: ` note with a YYYY-MM-DD date, a product, at least one
+            ticket and a `## Posted message` root. Text before the title line
+            and an outer ``` / ~~~ fence are stripped.
 
 Output conventions:
 
@@ -109,11 +125,16 @@ same content that is already in the internal Slack channel).
 """
 
 import argparse
+import datetime as _dt
+import hashlib
 import json
 import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "kb"))
+import kb_paths  # noqa: E402
 
 ENV_KEY = "MEM_RELEASE_ARCHIVE_COLLECTION"
 DEFAULT_COLLECTION_NAME = "Release Notes Archive"
@@ -135,6 +156,8 @@ PRODUCTS = ("medtrics", "oracle")
 NO_LINKS = {"oracle": "no PR", "medtrics": "no MR"}
 SEP = " · "
 TBC = "TBC"
+OUTBOX_DIR = "outbox"
+OUTBOX_KEYS = ("release_archive", "pod_log")
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FIELD_RE = re.compile(r"^\*\*(?P<key>[^*]+?):\*\*\s*(?P<value>.*)$")
@@ -542,6 +565,129 @@ def _parse_bullet(text):
 
 
 # --------------------------------------------------------------------------- #
+# Outbox — Mem writes Mem refused, kept only until a later run uploads them
+# --------------------------------------------------------------------------- #
+
+def outbox_dir(home=None):
+    h = kb_paths.folder(home)
+    return kb_paths.config_path(h).parent / OUTBOX_DIR
+
+
+def outbox_add(collection_key, content, reason="", home=None, now=None):
+    """Queue one note; returns the file path. Same content twice → same file."""
+    if collection_key not in OUTBOX_KEYS:
+        raise ValueError(f"outbox holds only {', '.join(OUTBOX_KEYS)} notes")
+    if not (content or "").strip():
+        raise ValueError("empty note")
+    d = outbox_dir(home)
+    kb_paths.self_ignoring(d.parent)
+    d.mkdir(parents=True, exist_ok=True)
+    now = now or _dt.datetime.now().astimezone()
+    digest = hashlib.sha1(f"{collection_key}\n{content}".encode()).hexdigest()[:10]
+    path = d / f"{now:%Y%m%dT%H%M%S}-{collection_key}-{digest}.json"
+    for old in d.glob(f"*-{collection_key}-{digest}.json"):
+        return old                         # already queued
+    path.write_text(json.dumps({"collection_key": collection_key, "content": content,
+                                "created_at": now.isoformat(timespec="seconds"),
+                                "reason": reason}, indent=1, ensure_ascii=False))
+    return path
+
+
+def outbox_entries(home=None):
+    """Every queued note, oldest first: {file, collection_key, title, content,
+    created_at, reason}. Unreadable files are skipped."""
+    d = outbox_dir(home)
+    out = []
+    if not d.is_dir():
+        return out
+    for f in sorted(d.glob("*.json")):
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(rec, dict) or rec.get("collection_key") not in OUTBOX_KEYS \
+                or not (rec.get("content") or "").strip():
+            continue
+        title = rec["content"].splitlines()[0].strip()
+        out.append({"file": str(f), "collection_key": rec["collection_key"],
+                    "title": title, "content": rec["content"],
+                    "created_at": rec.get("created_at") or "",
+                    "reason": rec.get("reason") or ""})
+    return out
+
+
+def outbox_split(entries, ready_keys=None):
+    """(ready, waiting). With `ready_keys` (a comma-separated string or list), an
+    entry whose collection id this run does not have waits: uploading it without
+    an id would make a loose note (Mem ignores an unknown collection id) and drop
+    a queued pod log from the duplicate check. None = every entry is ready."""
+    if ready_keys is None:
+        return list(entries), []
+    have = {k.strip() for k in (ready_keys.split(",") if isinstance(ready_keys, str) else ready_keys)
+            if k and k.strip()}
+    return ([e for e in entries if e["collection_key"] in have],
+            [e for e in entries if e["collection_key"] not in have])
+
+
+def outbox_done(files, home=None):
+    """Delete outbox files Mem has accepted; only files inside the outbox."""
+    d = outbox_dir(home).resolve()
+    removed = []
+    for f in files:
+        p = Path(f).resolve()
+        if p.parent != d:
+            raise ValueError(f"not an outbox file: {f}")
+        if p.exists():
+            p.unlink()
+            removed.append(str(p))
+    return removed
+
+
+# --------------------------------------------------------------------------- #
+# Backfill — archive notes saved as markdown files
+# --------------------------------------------------------------------------- #
+
+def extract_note(text):
+    """The note body from a saved file: from the `Release: ` title line on,
+    without an outer ``` / ~~~ fence. '' when there is no title line."""
+    lines = (text or "").splitlines()
+    start = next((i for i, x in enumerate(lines)
+                  if _unbreak(x).strip().startswith(TITLE_PREFIX)), None)
+    if start is None:
+        return ""
+    fenced = start > 0 and re.match(r"^\s*(`{3,}|~{3,})\S*\s*$", lines[start - 1])
+    body = lines[start:]
+    if fenced:
+        fence = fenced.group(1)
+        for j in range(len(body) - 1, -1, -1):
+            if body[j].strip() == fence:
+                body = body[:j]
+                break
+    while body and not body[-1].strip():
+        body.pop()
+    return "\n".join(body) + "\n"
+
+
+def check_backfill(text):
+    """(content, reason): content '' when the file is not a usable note."""
+    content = extract_note(text)
+    if not content:
+        return "", "no `Release: ` title line"
+    rec = parse_note(content)
+    if rec is None:
+        return "", "not an archive note"
+    if not DATE_RE.match(rec.get("date") or ""):
+        return "", "missing or bad **Date:**"
+    if rec.get("product") not in PRODUCTS:
+        return "", "missing or unknown **Product:**"
+    if not rec.get("tickets"):
+        return "", "no **Tickets:**"
+    if not (rec.get("root_text") or "").strip():
+        return "", "no `## Posted message` root"
+    return content, ""
+
+
+# --------------------------------------------------------------------------- #
 # Subcommands
 # --------------------------------------------------------------------------- #
 
@@ -607,6 +753,69 @@ def cmd_record(args):
     return 0
 
 
+def cmd_outbox(args):
+    if args.action == "add":
+        contents = []
+        if args.content_file:
+            contents.append((args.key, _read_text_file(args.content_file, "note")))
+        if args.writes_file:
+            data = json.loads(Path(args.writes_file).read_text())
+            for w in data.get("writes") or []:
+                key = w.get("collection_key") or data.get("collection_key") or args.key
+                contents.append((key, w.get("content") or ""))
+        if not contents:
+            raise ValueError("outbox add needs --content-file or --writes-file")
+        files = []
+        for key, content in contents:
+            if not key:
+                raise ValueError("--key is required with --content-file")
+            files.append(str(outbox_add(key, content, args.reason)))
+        print(json.dumps({"queued": files}, indent=2))
+        print(f"Outbox: {len(files)} note(s) waiting in {outbox_dir()} — the next "
+              f"run uploads them to Mem.", file=sys.stderr)
+        emit_result({"ok": True, "action": "outbox-add", "queued": len(files),
+                     "error": None})
+    elif args.action == "list":
+        entries = outbox_entries()
+        keys = sorted({e["collection_key"] for e in entries})
+        ready, waiting = outbox_split(entries, args.ready_keys)
+        print(json.dumps({"entries": ready, "waiting": waiting, "keys": keys},
+                         indent=2, ensure_ascii=False))
+        emit_result({"ok": True, "action": "outbox-list", "count": len(ready),
+                     "waiting": len(waiting), "keys": keys, "error": None})
+    else:
+        removed = outbox_done(args.files)
+        print(json.dumps({"removed": removed}, indent=2))
+        emit_result({"ok": True, "action": "outbox-done", "removed": len(removed),
+                     "error": None})
+    return 0
+
+
+def cmd_backfill(args):
+    writes, rejected = [], []
+    for f in args.files:
+        p = Path(f)
+        try:
+            text = p.read_text()
+        except OSError as e:
+            rejected.append({"file": f, "reason": f"unreadable ({e.strerror or e})"})
+            continue
+        content, reason = check_backfill(text)
+        if content:
+            writes.append({"file": f, "action": "create",
+                           "title": content.splitlines()[0].strip(), "content": content})
+        else:
+            rejected.append({"file": f, "reason": reason})
+    name, _ = resolve_collection_name(args.env_file)
+    print(json.dumps({"collection_name": name, "writes": writes, "rejected": rejected},
+                     indent=2, ensure_ascii=False))
+    for r in rejected:
+        print(f"Backfill: skipped {r['file']} — {r['reason']}", file=sys.stderr)
+    emit_result({"ok": True, "action": "backfill", "writes": len(writes),
+                 "rejected": len(rejected), "error": None})
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Deterministic half of the Mem release archive")
@@ -642,10 +851,31 @@ def main():
     p2.add_argument("--out", default="", help="Write the note body here "
                     "(default: stdout)")
 
+    p3 = sub.add_parser("outbox", help="Queue / list / clear Mem writes Mem refused")
+    p3.add_argument("action", choices=("add", "list", "done"))
+    p3.add_argument("files", nargs="*", help="done: the outbox files Mem accepted")
+    p3.add_argument("--key", choices=OUTBOX_KEYS, default="",
+                    help="add: the collection the note belongs to")
+    p3.add_argument("--content-file", default="", help="add: the note body")
+    p3.add_argument("--writes-file", default="",
+                    help="add: a pod_map.py log --out file (every write is queued)")
+    p3.add_argument("--reason", default="", help="add: why the write failed")
+    p3.add_argument("--ready-keys", default=None,
+                    help="list: comma-separated keys whose collection id this run has; "
+                         "entries for any other key are listed under `waiting`, never uploaded")
+
+    p4 = sub.add_parser("backfill", help="Check saved archive notes and print the writes")
+    p4.add_argument("files", nargs="+")
+    p4.add_argument("--env-file", default=".env")
+
     args = ap.parse_args()
     try:
         if args.cmd == "pending":
             return cmd_pending(args)
+        if args.cmd == "outbox":
+            return cmd_outbox(args)
+        if args.cmd == "backfill":
+            return cmd_backfill(args)
         return cmd_record(args)
     except (ValueError, OSError) as e:
         print(f"ERROR: {e}", file=sys.stderr)

@@ -130,6 +130,25 @@ def quoted(text):
     return list(dict.fromkeys(out))
 
 
+BOLD_RE = re.compile(r"(\*\*|__)(?=\S)([^*_\n]{1,48}?)(?<=\S)\1(?!\s*:)")
+HEADING_LINE_RE = re.compile(r"^\s*#")
+
+
+def bolded(text):
+    """**Bold** capitalised strings that read like labels (a ticket that names its
+    buttons in bold, not quotes). Heading lines, email lines and bold lead-ins
+    ("**Admin list:**", "**Admin list**:") are skipped."""
+    out = []
+    for line in (text or "").splitlines():
+        if HEADING_LINE_RE.match(line) or EMAIL_LINE_RE.search(line):
+            continue
+        for _, b in BOLD_RE.findall(line):
+            b = b.strip()
+            if b and b[0].isupper() and is_label(b):
+                out.append(b)
+    return list(dict.fromkeys(out))
+
+
 CODE_RE = re.compile(r"`+\s*['\"“‘]?([^`]+?)['\"”’]?\s*`+")
 DQ_RE = re.compile(r"[\"“]([^\"”`\n]+)[\"”]")
 UI_PATH_LINE_RE = re.compile(r"^\W*(?:main\s+)?UI\s+path\s*:", re.I)
@@ -164,7 +183,7 @@ def build_input(issue, summary=None, cap=CAP):
     # Acceptance-criteria quotes are mostly sample data or email copy; one only
     # counts when the diff also adds it to a template or a gettext string.
     labels = list(dict.fromkeys(checklist_labels(issue) + quoted(body)
-                                + [q for q in quoted(ac) if q in ui] + ui))
+                                + [q for q in quoted(ac) if q in ui] + ui + bolded(body)))
     rec = {"ticket": issue["identifier"], "title": issue.get("title", ""),
            "module": issue.get("module", ""),
            "client_title": (summary or {}).get("CLIENT_TITLE", ""),

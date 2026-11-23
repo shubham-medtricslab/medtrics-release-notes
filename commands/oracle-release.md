@@ -66,7 +66,7 @@ The Slack shape is **root-post-as-index**: one compact top-level message (number
 
 - Slack root post + thread replies to the channel resolved from `SLACK_CHANNEL_ORACLE` (`#pod-oracle`). Posted only after the user confirms.
 - **One Mem note for the release session** in the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`, shared with `/release-slack`; `release-archive` skill) — date, channel, root ts, permalink, the posted ORC list, **and the posted root + every thread reply verbatim**. This is the **only** archive of the post: nothing is written to `.claude/outputs/` or anywhere else on disk. Written once the post is complete (this session, or the resume run that finishes it).
-- **In `status` or `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_MAP_COLLECTION` (default `Release Notes Pod Map`; `pod-notify` skill).
+- **In `status` or `tickets` mode, without `--no-pod`:** one root post + thread per client pod that gets tickets (after its own preview and yes), and one pod-log note in the collection named by `MEM_POD_LOG_COLLECTION` (default `Pod Notify Log`; `pod-notify` skill).
 - Working files only in `/tmp/` — the per-ticket summary blocks (`/tmp/oracle_notes_summaries.txt`) and the composed root / reply files (`/tmp/oracle_release_root.txt`, `/tmp/oracle_release_reply_NN.txt`); the archive step reads them.
 
 Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
@@ -82,7 +82,8 @@ Compute the date via `date +%Y-%m-%d` in Bash — do NOT hardcode or guess.
 | `ORACLE_REPO_PATH` | Absolute path to a local `medtrics-oracle` checkout — lets analyzers read related source files for context when a diff is sparse | optional |
 | `MEM_PR_OVERRIDES_COLLECTION_ID` | UUID of the Mem collection `Oracle PR Overrides` (human ticket → PR picks). When empty, the command resolves the collection by title and prints the id to pin here | optional |
 | `MEM_RELEASE_ARCHIVE_COLLECTION` | Name of the Mem collection that receives the archive note for every posted release (`release-archive` skill). Created under that exact name if absent; defaults to `Release Notes Archive` when unset or blank. The key is optional — the **Mem MCP connection is not** (see Step 1) | optional |
-| `MEM_POD_MAP_COLLECTION` | Name of the Mem collection holding the pod map and pod log (`pod-notify` skill). Defaults to `Release Notes Pod Map`; created only by `/release-note-setup pod`. The bot also needs membership of each pod channel | optional |
+| `MEM_POD_MAP_COLLECTION` | Name of the Mem collection holding the pod map (`pod-notify` skill). Defaults to `Release Notes Pod Map`; created only by `/release-note-setup pod`. The bot also needs membership of each pod channel | optional |
+| `MEM_POD_LOG_COLLECTION` | Name of the Mem collection holding the pod log, one note per pod per release (0.25.0). Defaults to `Pod Notify Log`; created only by `/release-note-setup pod` | optional |
 | `SLACK_CHANNEL_ORACLE` | channel id (`C0123ABC`) or `#pod-oracle` | Yes |
 | `SLACK_BOT_TOKEN` | `xoxb-...` token with `chat:write` + `channels:read` scopes (`groups:read` if the channel is private and configured by name) | Yes |
 
@@ -123,14 +124,25 @@ Read `.env` from the current working directory. Verify the five required keys ab
 
 Then confirm the **Mem MCP is connected** — the release archive lives in Mem and nowhere else, so this is a precondition, not an optional extra. Follow the `release-archive` skill's preflight: if the Mem tools (`list_collections`, `create_collection`, `create_note`, …) are not available in this session, print `Mem MCP not connected — this command archives every release to Mem and will not run without it. Connect the Mem connector and re-run.` and stop before ANY Optimus, GitHub, or Slack call. This applies to `dry-run` too. Never fall back to a disk copy. (With Mem confirmed present, Step 2-pre and Step 3a will find it too; their own "not connected" branches now only cover a mid-run Mem failure.)
 
+**Mem ids and outbox (`mem-calls` skill — before any gathering).** First read the outbox (local), then get every collection id this run needs in one go, adding the outbox's `keys`:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py outbox list
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/mem_ids.py need release_archive dev_directory pr_overrides [pod_map pod_log] <outbox keys>
+```
+
+Add `pod_map pod_log` only when the pod step will run (`status` or `tickets` mode without `--no-pod`). Keys under `absent` were looked for in the last 7 days and not found: treat them as missing, with no new walk.
+
+If `missing` is empty, these ids serve the whole run and no step looks a collection up. Otherwise walk `list_collections` **once** and run `mem_ids.py resolve`, then create what is missing except `pod_map` / `pod_log`, exactly as the `mem-calls` skill says. Then upload the outbox (`mem-calls` rule 2: `outbox list --ready-keys <the keys with ids>`; entries under `waiting` stay queued). A refused call here makes Mem *limited* for the run (`mem-calls` rule 4); carry on to Step 2-pre either way. In `dry-run`, read only: create nothing and skip the outbox upload.
+
 ### Step 2-pre — PR overrides dump (Mem, optional)
 
-Follow the bundled `medtrics-release-notes:pr-overrides` skill. If the Mem MCP tools are available in this session:
+Follow the bundled `medtrics-release-notes:pr-overrides` skill. If the Mem MCP tools are available in this session and Mem is not limited (`mem-calls` rule 4):
 
-1. Resolve the `Oracle PR Overrides` collection: use `MEM_PR_OVERRIDES_COLLECTION_ID` from `.env` when set; else `search_collections` by exact title (case-insensitive); else `create_collection`. When the id did not come from `.env`, print it once with the hint to pin it (`MEM_PR_OVERRIDES_COLLECTION_ID=<uuid>`). Never write to `.env`.
+1. The collection id is the `pr_overrides` id from Step 1. `MEM_PR_OVERRIDES_COLLECTION_ID` in `.env` still wins; otherwise the id was resolved or created at Step 1 and saved. No `search_collections`. Never write to `.env`.
 2. `list_notes({collection_id, include_note_content: true, limit: 100})`, page through `next_page`, and save the merged `{"notes": [...]}` response **verbatim** (each note's `id`, `version`, `content`) to `/tmp/oracle_pr_overrides.json`.
 
-If Mem is not connected, or any of these calls fails, print `PR overrides: Mem not connected, sweep only.`, run `rm -f /tmp/oracle_pr_overrides.json` so a stale dump from an earlier session is never applied while the preview says Mem is not connected, and continue — **no hard error, no retry loop**. The gather treats a missing dump as "no overrides".
+If Mem is not connected or limited, or any of these calls fails, print `PR overrides: Mem not connected, sweep only.` (or `PR overrides: Mem is rate-limiting, sweep only.`), run `rm -f /tmp/oracle_pr_overrides.json` so a stale dump from an earlier session is never applied while the preview says Mem is not connected, and continue — **no hard error, no retry loop**. The gather treats a missing dump as "no overrides".
 
 ### Step 2 — Gather data
 
@@ -185,7 +197,13 @@ Every PR should show a nonzero file count. If a PR shows **0 files / 0 chars**, 
 
 Dev attribution's source for Oracle is the **GitHub PR author**. Step 2's gather already resolved a real email for each PR author where one is available (`mrs[].author_email`, from the PR's **commit author** — see Step 2), and each entry carries `author_name` / `author_username` (the GitHub login). Follow the bundled `medtrics-release-notes:dev-directory` skill for the Mem half; the Slack half is the resolver script. Three sub-steps, in order:
 
-**3a — Mem developer directory prefill (optional).** If the Mem MCP tools are available in this session, locate (or create) the single collection `Release Notes Developer Directory`, `list_notes` it with content (page through `next_page`), save the merged `{"notes": [...]}` response verbatim to `/tmp/oracle_release_dev_directory.json`, and run:
+**3a — Mem developer directory prefill (optional).** Skip to 3b when Mem is limited (`mem-calls` rule 4) **and** no fresh local copy exists. First try the local copy, which costs no Mem call:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py cache get --out /tmp/oracle_release_dev_directory.json
+```
+
+`fresh: true` → use it. Otherwise `list_notes({collection_id: <the dev_directory id from Step 1>, include_note_content: true, limit: 100})`, page through `next_page`, save the merged `{"notes": [...]}` response verbatim to `/tmp/oracle_release_dev_directory.json`, and store the copy with `dev_directory.py cache put --notes /tmp/oracle_release_dev_directory.json`. (`--refresh-directory` from the user, or `--force` on the resolver, skips the copy and reads Mem.) Then run:
 
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py prefill \
@@ -208,7 +226,14 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py pending \
     --out /tmp/oracle_release_dev_directory_pending.json --source /oracle-release
 ```
 
-For each entry in the output's `writes`: `create` → `create_note({content, collection_ids: [<directory uuid>]})`; `update` → `update_note({note_id, content, version})`. A failed write is logged and skipped; the post is unaffected. Keep the one-line tally for the preview: `Developer directory: {N} from Mem, {M} newly stored, {K} unresolved.`
+For each entry in the output's `writes`: `create` → `create_note({content, collection_ids: [<the dev_directory id>]})`; `update` → `update_note({note_id, content, version})`. A failed write is logged and skipped; the post is unaffected. Then save one result per write, in order — the response's `{id, version}`, or `null` for a failed or skipped write — as a JSON list in `/tmp/oracle_release_dev_directory_results.json`, and fold them into the local copy:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/dev_directory.py cache apply \
+    --writes /tmp/oracle_release_dev_directory_pending.json --results /tmp/oracle_release_dev_directory_results.json
+```
+
+Keep the one-line tally for the preview: `Developer directory: {N} from Mem, {M} newly stored, {K} unresolved.` (say `from the local copy` instead of `from Mem` when 3a used it).
 
 The resolver (3b) resolves each developer in three tiers, stopping at the first hit:
 
@@ -469,7 +494,7 @@ When the user replies with one or more `ORC-NNN → N` lines (`->` and `=` are a
 
    Parse the `---PR_OVERRIDES_RESULT---` block. On `ok: false` (ticket not `ORC-NNN`, PR not a positive integer) surface the error, write nothing, and ask the user to restate that pair.
 
-2. **Apply the write via Mem** (only when Mem is connected and the collection id is known): the single entry in `writes` is `create` → `create_note({content, collection_ids: [<collection uuid>]})`, or `update` → `update_note({note_id, content, version})` with the `version` passed verbatim (a version conflict means the note was edited during the run — skip it and say so). Then refresh the dump: re-run Step 2-pre's `list_notes`, or edit `/tmp/oracle_pr_overrides.json` in place — **replace** the entry with the same note `id` (an update) or add the new note (a create), carrying the returned `id`/`version`. Never append a second entry for an existing id.
+2. **Apply the write via Mem** (only when Mem is connected and the collection id is known): the single entry in `writes` is `create` → `create_note({content, collection_ids: [<collection uuid>]})`, or `update` → `update_note({note_id, content, version})` with the `version` passed verbatim (a version conflict means the note was edited during the run — skip it and say so). Then refresh the dump by editing `/tmp/oracle_pr_overrides.json` in place (no second `list_notes`) — **replace** the entry with the same note `id` (an update) or add the new note (a create), carrying the returned `id`/`version`. Never append a second entry for an existing id.
 
 3. **Re-run Step 2** (the gather, with `--pr-overrides /tmp/oracle_pr_overrides.json`) and then **Steps 4–9** — the override PR is fetched by number if the sweep did not carry it, marked `matched_via: manual`, the ticket's decision becomes `override`, and its diffs are analyzed like any other PR. Then show the Step 10 preview again; the ticket now appears under `Overrides applied`.
 
@@ -514,7 +539,7 @@ After all posts succeed:
 Runs **after** the confirmation line, exactly as the `release-archive` skill describes. It writes **one Mem note for this release session** into the collection named by `MEM_RELEASE_ARCHIVE_COLLECTION` (default `Release Notes Archive`; shared with `/release-slack` — the `ORC-` prefix disambiguates). The note carries the trace header (date, channel, root ts, permalink, the posted ticket list with client-facing titles and code links) **and the posted root plus every thread reply verbatim**. This is the **only** archive of the post — nothing is written to `.claude/outputs/` or anywhere else on disk. The step can never affect the post itself: the post has already succeeded and is authoritative.
 
 0. **Gate — the post is complete.** Run once the root **and every thread reply** have posted — either in this session, or on a **resume run** (the user re-ran only the remaining replies with `--thread-ts <ts>` after a partial failure and the last one has now posted). On a resume run use the `ts` the user passed, the resolved channel id from the reply result blocks, and the same root / reply files from `/tmp`. Never archive while replies are still outstanding.
-1. **Resolve the collection by name.** Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py pending` to get the resolved `collection_name` and `collection_description` (the script reads `MEM_RELEASE_ARCHIVE_COLLECTION` from `.env` at CWD, process env overriding; blank → `Release Notes Archive`). Then `list_collections`, following `next_page` until exhausted, and collect every entry whose title matches the name case-insensitively: none → `create_collection({title: <name>, description})` and print `Release archive: created Mem collection "<name>".`; one → use it; several → prefer the exact-case match, then the oldest `created_at`, and if still ambiguous do not write — warn with every candidate id and fall through to step 5. Never use `search_collections` for this and never pass `collection_titles` to `create_note`.
+1. **The collection id** is the `release_archive` id from Step 1. It was created there if it did not exist; no lookup happens here. Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py pending` only for the name to print. If Step 1 found the name ambiguous, go to step 5. On a resume run in a new session, run `mem_ids.py need release_archive` first, plus the one-walk lookup if it is missing. Never pass `collection_titles` to `create_note`.
 2. **Permalink** (one Slack read; omit on failure, never construct one):
 
    ```bash
@@ -536,12 +561,18 @@ Runs **after** the confirmation line, exactly as the `release-archive` skill des
        --channel "$SLACK_CHANNEL_ORACLE" \
        --channel-id <resolved channel id from the result block> \
        --ts <ts> \
-       [--permalink <url from step 2>]
+       [--permalink <url from step 2>] \
+       --out /tmp/oracle_release_archive_note.txt
    ```
 
-   The stdout is the note body. The ticket list comes from the summaries file (the posted set — `REFACTOR` and malformed blocks dropped), not from the data JSON. If `record` exits 1 (a root or reply file is missing, typically on a resume run in a new `/tmp`), surface its stderr naming the file and stop — do not archive a partial transcript.
-4. **Write it:** `create_note({content, collection_ids: [<resolved collection uuid>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
-5. **If the write cannot happen** (collection unresolvable or ambiguous, or `create_note` fails once and again on one immediate retry): print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body from step 3 in a fenced block. Then finish. Never write the note to disk and never re-post to Slack.
+   The file holds the note body. The ticket list comes from the summaries file (the posted set — `REFACTOR` and malformed blocks dropped), not from the data JSON. If `record` exits 1 (a root or reply file is missing, typically on a resume run in a new `/tmp`), surface its stderr naming the file and stop — do not archive a partial transcript.
+4. **Write it:** `create_note({content, collection_ids: [<release_archive id>]})`. On success print `Release archive: wrote note "<first line of the note>" to Mem collection "<name>" (ts <ts>); if this was a re-post, trash the older note in Mem.`
+   - **Landed check** (`mem-calls` rule 1b): save the response, run `mem_ids.py landed release_archive --response <file>`; on `landed: false`, look the collection up once and `add_note_to_collection` (create it if it is gone). Never write the note a second time.
+5. **If the write cannot happen:**
+   - **Refused (rate limit)** → wait and retry: `mem_ids.py wait 30`, retry; `wait 90`, retry. Still refused → `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/release/release_archive.py outbox add --key release_archive --content-file /tmp/oracle_release_archive_note.txt --reason "rate limited"` and print `Release archive: Mem is rate-limiting — note saved to the outbox; the next run uploads it.`
+   - **Any other failure** (collection ambiguous, or `create_note` fails once and again on one immediate retry) → print `Release archive: Mem write failed (<reason>). Paste the note below into the "<name>" collection by hand:` followed by the full note body in a fenced block. Do the same if the outbox add fails.
+
+   Then finish. Never re-post to Slack. The outbox is the only thing ever written to disk, and only until Mem accepts the note.
 
 ### Step 11c — Tell the client pods (pod-notify skill; `status` and `tickets` mode, on by default)
 
@@ -575,6 +606,7 @@ The skill routes each posted ticket to the pods whose clients it is linked to in
 | Mem not connected for PR overrides (Step 2-pre / 10b) | One-line notice; gather runs on the sweep alone; a preview pick applies via `--pr-override-inline` for this run only and the user is told it was not saved |
 | Mem write fails after a pick (10b) | Pick still applied for this run via `--pr-override-inline`; user told the note was not saved |
 | A Mem call fails in the developer directory (Step 3) | One-line notice; skip the directory prefill / write-back; resolver-only run. Not a hard error — the directory is a cache |
+| Mem refuses any call (rate limit) | Mem is *limited* for the rest of the run (`mem-calls` skill): optional Mem steps skip, required writes wait 30s / 90s and then go to the outbox. Never blocks or delays the post |
 | Slack user resolution returns nothing for a developer | Render that developer with plain name only; continue |
 | `engineering-to-client` pass returns anything other than `CLIENT_COPY_DONE` or changes the block count | Stop, surface it, do not guard or compose |
 | Storyteller returns `NO_INTERNAL_NOTES` | Stop, do not lint, do not preview, do not post |
@@ -585,7 +617,8 @@ The skill routes each posted ticket to the pods whose clients it is linked to in
 | A thread reply fails partway | Stop; report posted vs. remaining replies and the root `ts`; resume posts only the remaining replies with `--thread-ts <ts>` — never a second top-level message |
 | Release archive (Step 11b): permalink fetch fails | Omit the `Permalink:` line; still write the note; never construct a URL |
 | Release archive (Step 11b): `release_archive.py record` exits 1 (root or reply file missing, bad date, empty posted set) | Surface stderr naming the cause; no partial archive; fix the input and re-run the archive step by hand |
-| Release archive (Step 11b): collection unresolvable or ambiguous, or `create_note` fails after one immediate retry | Print the full rendered note in chat for a manual paste into the named collection (an ambiguous name also lists every candidate id). Never a disk write, never a re-post — the Slack post already succeeded and is authoritative |
+| Release archive (Step 11b): Mem refuses the write (rate limit) after waiting 30s and 90s | Note saved to the local outbox; the next `/release-slack`, `/oracle-release` or `/pod-notify` uploads it at Step 1 and deletes the file. Never a re-post |
+| Release archive: collection ambiguous, or `create_note` fails (not a rate limit) after one immediate retry | Print the full rendered note in chat for a manual paste into the named collection (an ambiguous name also lists every candidate id). Never a re-post — the Slack post already succeeded and is authoritative |
 | Replies still outstanding after a partial failure | No archive yet; the resume run that posts the last reply archives the whole release |
 | User declines at preview | No Slack call; summaries + drafts remain on disk |
 | Pods (Step 11c): no pod map, a Mem read fails, a channel check fails, or a pod post fails | One line per problem; a failed pod stops only that pod; never a release failure — the post and archive stand (`pod-notify` skill) |
@@ -610,7 +643,7 @@ The skill routes each posted ticket to the pods whose clients it is linked to in
 - **`clients` and `pr_links` are persisted into the data JSON in Step 4** (and `assignee_slack_id` by the Step 3 scripts) before prompt preparation — the analyzer copies them verbatim; it never reconstructs a PR URL.
 - **The Mem developer directory is optional and deterministic.** Mem calls go through the Mem MCP exactly as the `dev-directory` skill describes; all parsing, matching, and note rendering is `dev_directory.py`. Never hand-compose a directory note, never let a Mem failure stop the run.
 - **PR overrides are optional and deterministic.** The gather script applies them (`--pr-overrides` dump, `--pr-override-inline` pairs) and picks the primary PR; `pr_overrides.py` renders and parses the override notes and emits the Mem writes; the command only performs the Mem calls the `pr-overrides` skill describes. Never hand-compose an override note, never fetch a PR outside the gather script, never let a Mem failure stop the run. Read PR-discovery outcomes from `pr_discovery` in the data JSON, not from stderr.
-- **The Mem release archive is required, deterministic, and strictly post-success.** Mem's presence is checked in Step 1 (hard stop when absent); the note is written in Step 11b once the post is complete — in this session or on the resume run that finishes it — exactly as the `release-archive` skill describes. `release_archive.py record` renders the note from the summaries file plus the posted root and reply files, `slack_upload.py --get-permalink` is the only source of a permalink (omit on failure, never construct one), and the note is written by resolved collection UUID. Never hand-compose an archive note, never update-in-place, never write a copy to disk, and never let a Mem or permalink failure surface as a post failure — on a failed write, print the note in chat for a manual paste.
+- **The Mem release archive is required, deterministic, and strictly post-success.** Mem's presence is checked in Step 1 (hard stop when absent); the note is written in Step 11b once the post is complete — in this session or on the resume run that finishes it — exactly as the `release-archive` skill describes. `release_archive.py record` renders the note from the summaries file plus the posted root and reply files, `slack_upload.py --get-permalink` is the only source of a permalink (omit on failure, never construct one), and the note is written by the saved collection id (`mem_ids.py`). Never hand-compose an archive note, never update-in-place, never write a copy to disk (the outbox holds a refused note only until a later run uploads it), and never let a Mem or permalink failure surface as a post failure.
 - **Per-ticket synthesis is handled by analyzer Task agents** — one per prompt file, spawned in a single assistant message, each emitting both an EXEC_SUMMARY and an INTERNAL_SUMMARY.
 - **Client copy is finalized by the `engineering-to-client` skill in Step 6b** — one pass over the summaries file, before the IP guard. Do NOT skip it, and do NOT rewrite `For clients` text in the storyteller or by hand.
 - **Message composition is handled by the `internal-storyteller` skill** (prefix `oracle_release`, product `Oracle`). Do NOT compose the root or reply bodies directly in the command.

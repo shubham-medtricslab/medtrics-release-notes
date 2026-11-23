@@ -29,6 +29,7 @@ Ticket ids may mix products (M1-…, ORC-…, GEN-…). `MR-NNNN` ids have no Op
 | `OPTIMUS_API_KEY` | read the tickets and their client links |
 | `SLACK_BOT_TOKEN` | `chat:write`, `channels:read` (+ `groups:read` for private pods); the bot must be a member of every pod |
 | `MEM_POD_MAP_COLLECTION` | optional — the pod map's name; default `Release Notes Pod Map` |
+| `MEM_POD_LOG_COLLECTION` | optional — the pod log's name; default `Pod Notify Log` |
 
 Missing keys → list them and stop before any call. The **Mem MCP must be connected** (the pod map and the pod log live there): if its tools are absent, print `Mem MCP not connected — the pod map lives in Mem. Connect the Mem connector and re-run.` and stop.
 
@@ -53,6 +54,8 @@ Never update or reinstall the plugin yourself.
 
 ### 1 — Gather (Optimus only)
 
+First, Mem: `python3 $P/release_archive.py outbox list`, then `python3 $P/mem_ids.py need pod_map pod_log <the outbox's keys>` (the outbox may hold a release archive note, which needs the `release_archive` id), plus the one-walk lookup if anything is under `missing` (never for `absent`), then upload the outbox with `--ready-keys`, as the `mem-calls` skill describes. Skip the upload in `dry-run`. Then:
+
 ```bash
 python3 $P/gather_notes_data_optimus.py tickets <ids> --no-mrs --exact --include-description \
     --output /tmp/pod_notify_data.json
@@ -62,12 +65,13 @@ python3 $P/gather_notes_data_optimus.py tickets <ids> --no-mrs --exact --include
 
 ### 2 — Route first, so text is written only for tickets a pod gets
 
-Find and read the pod map exactly as the skill's steps 1–2 say, then:
+Get the ids as the skill's step 1 says. Then route in the skill's step 2 order, with every `route` taking `--data /tmp/pod_notify_data.json --date <today> --source /pod-notify --out-dir /tmp/pod_notify --routing-only [--force]`:
 
-```bash
-python3 $P/pod_map.py route --data /tmp/pod_notify_data.json --notes /tmp/pod_notify/notes.json \
-    --date <today> --source /pod-notify --out-dir /tmp/pod_notify --routing-only [--force]
-```
+1. `route … --no-map` first. If no ticket names a client, that plan is final and Mem is never read.
+2. On `needs_map`, read the pod map, then `route … --notes /tmp/pod_notify/notes.json --log-unread`.
+3. On `needs_log`, read the pod log, then `route … --notes … --log-notes /tmp/pod_notify/log_notes.json`.
+
+Remember which dumps were read; step 4 reuses them.
 
 - **`dry-run`:** run the skill's step 3 (channel checks) and `pod_map.py preview` on this plan, print `Pods (dry run): would post to <N> pod(s).`, and stop.
 - `pods: 0` → print the preview table as the report and stop: no pod gets anything.
@@ -121,13 +125,15 @@ python3 $P/pod_map.py route --data /tmp/pod_notify_data.json --notes /tmp/pod_no
 
 ### 4 — The pod-notify skill, steps 2–7
 
-Route again with the real text, now without `--routing-only`:
+Route again with the real text, now without `--routing-only`, using the dumps step 2 read (a pod got tickets, so the map was read, and the log too when one exists):
 
 ```bash
 python3 $P/pod_map.py route --data /tmp/pod_notify_data.json --summaries {summaries} \
-    --notes /tmp/pod_notify/notes.json --date <today> --source /pod-notify \
-    --out-dir /tmp/pod_notify [--force]
+    --notes /tmp/pod_notify/notes.json [--log-notes /tmp/pod_notify/log_notes.json] \
+    --date <today> --source /pod-notify --out-dir /tmp/pod_notify [--force]
 ```
+
+(No second Mem read. With a pod log and no `--log-notes`, add `--log-unread`: it stops with `needs_log` rather than routing without the duplicate check.)
 
 then follow the skill from step 3 (channel checks) through step 7 (report): one preview with `[y]/[n]/[e]/[a]`, posts only after `y`, the pod log, the report.
 
