@@ -5,6 +5,14 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1] - 2026-11-23
+
+### Fixed (KB articles, from run kb-20261123-2158, the 0.25.0 retry of M1-1245, M1-1459, M1-1413)
+- **Labels below the fold are scrolled into view.** The capture never scrolled. M1-1413's alert radios were on the demo template page at y=1147, but the viewport is 639 px tall, so the frame never showed them. The Case Logs "Submit" and "View" buttons had the same problem. A new stored step, `kbs`, runs before the hover that takes the GIF's last frame. It moves the page only when none of the wanted labels is in view, and then centres the first one it finds, so it never loses a shot the unscrolled page already gives. When it finds none, it scrolls the page back to the top so the heading fallback is in frame. The install stores it next to `kbp`/`kbc`/`kbo`. A tab installed by 0.25.0 answers `KB_NOPROBE` and is re-installed as usual.
+- **No more crash on an off-screen heading.** After `kbclick` scrolled the Case Logs page, the heading fallback recorded "Case Logs" at y=-450 and y=-926 as a verified shot. Assembly then crashed in Pillow while drawing the ring (`y1 must be greater than or equal to y0`). Now the heading fallback needs its box on the frame. `qa_annotate.annotate` raises `OffFrame` instead of drawing outside the frame. `kb_spec` turns such a shot into a text-only step marked "screenshot sN showed its item off-screen", so the run no longer stops.
+- **Prefix label match.** M1-1459's "Reassign Case Log Reviewer" was not found because the element's text is "Reassign Case Log Reviewer Philip Hayes". When no element's whole text is the label, the probe now takes the innermost visible element whose text starts with the label at a word boundary. This applies only to labels of 2+ words and 8+ characters, so "No" never rings "No submission alert". Such a shot carries `"label_match": "prefix"`, and OCR still checks the crop.
+- **Loading frames are dropped.** M1-1245's Requests list was captured with its spinner still showing. The probe now reports a visible loader in the viewport (`ld`: spinner, `aria-busy`, `.loading`, DataTables processing, and so on). That frame's shots are left unverified with reason `still_loading`, so they never reach the contact sheet. The report says "the screen was still loading when it was captured".
+
 ## [0.25.0] - 2026-11-23
 
 Mem rate-limited every release from Nov 17 to Nov 19 and refused reads on the 19th. This release cuts the calls a normal run makes, and keeps a refused note safe until Mem takes it.

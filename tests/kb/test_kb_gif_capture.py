@@ -32,15 +32,15 @@ def make_gif(path, w=1470, h=802, frames=3):
 class Actions(Base):
     def test_visit_order_and_options(self):
         calls, _ = self.plan_calls()
-        v = calls["batches"][0]["actions"][2:9]                   # first visit, after the entry (no install: the orchestrator sends it)
+        v = calls["batches"][0]["actions"][2:10]                   # first visit, after the entry (no install: the orchestrator sends it)
         self.assertEqual([(a["name"], a["input"].get("action")) for a in v],
                          [("gif_creator", "start_recording"), ("navigate", None),
-                          ("computer", "wait"), ("computer", "hover"),
-                          ("javascript_tool", "javascript_exec"),
+                          ("computer", "wait"), ("javascript_tool", "javascript_exec"),
+                          ("computer", "hover"), ("javascript_tool", "javascript_exec"),
                           ("gif_creator", "stop_recording"), ("gif_creator", "export")])
         self.assertEqual(v[2]["input"]["duration"], 4)           # demo.settle_s
-        self.assertEqual(v[3]["input"]["coordinate"], [1465, 740])
-        ex = v[6]["input"]
+        self.assertEqual(v[4]["input"]["coordinate"], [1465, 740])
+        ex = v[7]["input"]
         self.assertEqual((ex["download"], ex["filename"], ex["tabId"]),
                          (True, "kb-capture/r1/v01.gif", "$TAB"))
         self.assertEqual(ex["options"], {"showWatermark": False, "showProgressBar": False,

@@ -81,7 +81,8 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    `shots/capture.md`, the only file the capturer reads. Per visit, no
    screenshot:
    `gif_creator start_recording` → `navigate` → `computer wait W` →
-   `computer hover` at the cursor park → `javascript_tool` probe stub →
+   `javascript_tool` scroll stub (`kbs`) → `computer hover` at the cursor park →
+   `javascript_tool` probe stub →
    `gif_creator stop_recording` → `gif_creator export` with `download: true` and
    `filename: kb-capture/<run_id>/<visit_id>.gif`. The first batch of a persona
    opens with that persona's portal entry URL, outside any recording. Visits
@@ -90,6 +91,14 @@ $KB_PY $K/kb_capture.py ingest --calls $RUN/shots/calls.json --raw-dir $RUN/shot
    one, else `demo.settle_s` (default **4**), at most 10. Slow pages (Users >
    Groups) need 4 to 5 seconds; 2 showed "Loading…". The last frame, after the
    hover, is the settled page with no cursor.
+   **Scroll step (`kbs`, 0.25.1).** Before the hover, `kbs` looks for the
+   wanted labels: when any of them is in view, nothing moves (it never loses a
+   shot the unscrolled page gives); when none is, the first one found is
+   scrolled to the centre of its scroll container. It scrolls the page to the top
+   when no label is found, so the hover frame shows the label (or the heading
+   fallback). It produces no frame; the probe after the hover measures at the
+   same scroll position. Without it a label below the fold (M1-1413) or a page
+   left scrolled by `kbclick` (M1-1459) was never in the frame.
 3. **Export options:** `{showWatermark: false, showProgressBar: false,
    showActionLabels: false, showClickIndicators: false, showDragPaths: false,
    quality: 1}`. Frames are the viewport in CSS px (1470×802 in the test),
@@ -144,7 +153,8 @@ no clicks keeps the plain id `v01`). A click visit is a **click batch** with two
    or throws `KB_CLICK_REFUSED:<why>`, `KB_CLICK_NOTFOUND:<text>` or
    `KB_TENANT_ROW`.
 2. `act`: `computer left_click` at `"$X","$Y"` (the capturer substitutes the
-   numbers from the `pick` result), settle wait, hover at the cursor park, probe,
+   numbers from the `pick` result), settle wait, scroll stub (`kbs`), hover at
+   the cursor park, probe,
    `stop_recording`, export.
 
 `kbclick` refuses (in this order): not visible; sidebar element on a `{row}`

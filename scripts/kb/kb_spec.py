@@ -168,10 +168,17 @@ def _annotate(shot, number, out_path):
         if k != 1.0:
             im = im.resize((1440, round(im.height * k)), Image.LANCZOS)
         box = [round(v * k) for v in shot["dom_box"]]
-        img = A.annotate(im, A.anchor_from_box(box), number=number)
+        x, y, w, h = box
+        if w <= 0 or h <= 0 or x + w <= 0 or y + h <= 0 or x >= im.width or y >= im.height:
+            return False                   # wholly off the frame (M1-1459): the step goes text-only
+        try:
+            img = A.annotate(im, A.anchor_from_box(box), number=number)
+        except A.OffFrame:
+            return False
     # No watermark, no frame: whether a shot ships is decided at package time
     # (BLOCK never; the rest only after the owner confirms it on the contact sheet).
     A.finalize(img, out_path)
+    return True
 
 
 def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
@@ -197,7 +204,10 @@ def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
                 rel = f"assets/{tid}/{n:02d}.jpg"
                 if annotate:
                     (Path(out_root) / rel).parent.mkdir(parents=True, exist_ok=True)
-                    _annotate(shot, n, Path(out_root) / rel)
+                    if not _annotate(shot, n, Path(out_root) / rel):
+                        step["missing_shot"] = f"screenshot {sid} showed its item off-screen"
+                        steps.append(step)
+                        continue
                 ev = {k: shot.get(k) for k in ("anchor", "label", "label_score", "tenant",
                                                "dom_box", "tenant_dom", "tenant_ocr", "source")}
                 ev["frame"] = Path(shot["frame"]).name

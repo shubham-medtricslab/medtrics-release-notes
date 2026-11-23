@@ -852,11 +852,12 @@ class ClickPlan(Base):
         self.assertEqual([(a["name"], a["input"].get("action")) for a in b["pick"]],
                          [("gif_creator", "start_recording"), ("javascript_tool", "javascript_exec")])
         self.assertEqual([(a["name"], a["input"].get("action")) for a in b["act"]],
-                         [("computer", "left_click"), ("computer", "wait"), ("computer", "hover"),
+                         [("computer", "left_click"), ("computer", "wait"),
+                          ("javascript_tool", "javascript_exec"), ("computer", "hover"),
                           ("javascript_tool", "javascript_exec"), ("gif_creator", "stop_recording"),
                           ("gif_creator", "export")])
         self.assertEqual(b["act"][0]["input"]["coordinate"], ["$X", "$Y"])
-        self.assertEqual(b["act"][5]["input"]["filename"], "kb-capture/r1/v01-s1.gif")
+        self.assertEqual(b["act"][6]["input"]["filename"], "kb-capture/r1/v01-s1.gif")
         self.assertIn("(0,eval)(sessionStorage.getItem('kbc'))", b["pick"][1]["input"]["text"])
         row_args = json.loads(b["pick"][1]["input"]["text"].rsplit(")(", 1)[1][:-1])
         self.assertTrue(row_args["row"] and row_args["pa"]["labels"] == [] and "text" not in row_args)

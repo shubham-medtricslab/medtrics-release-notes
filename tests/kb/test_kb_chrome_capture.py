@@ -84,7 +84,7 @@ class PlanCalls(Base):
         names = [(a["name"], a["input"].get("action")) for a in b["actions"]]
         entry = [("navigate", None), ("computer", "wait")]
         visit = [("gif_creator", "start_recording"), ("navigate", None), ("computer", "wait"),
-                 ("computer", "hover"), ("javascript_tool", "javascript_exec"),
+                 ("javascript_tool", "javascript_exec"), ("computer", "hover"), ("javascript_tool", "javascript_exec"),
                  ("gif_creator", "stop_recording"), ("gif_creator", "export")]
         self.assertEqual(names, entry + visit * 3)                # no install here (0.28.1)
         self.assertNotIn(calls["install"][-1]["input"], [a["input"] for a in b["actions"]])
@@ -93,7 +93,8 @@ class PlanCalls(Base):
         acts = b["actions"]
         self.assertTrue(acts[0]["input"]["url"].endswith("/?portal_change=administration"))
         self.assertEqual(acts[1]["input"]["duration"], 2)
-        self.assertEqual(acts[5]["input"]["coordinate"], [1465, 740])
+        self.assertEqual(acts[6]["input"]["coordinate"], [1465, 740])
+        self.assertIn("(0,eval)(sessionStorage.getItem('kbs'))", acts[5]["input"]["text"])   # 0.25.1
         self.assertEqual(acts[3]["input"]["url"], "https://medtrics.medtricslab.com/users/")
         self.assertNotIn("screenshot", [a["input"].get("action") for a in acts])
 
@@ -118,7 +119,7 @@ class PlanCalls(Base):
         self.assertEqual((a["portal"], a["login"], a["domain"], a["v"]),
                          ("Admin", "/users/login/", "medtricslab.com", calls["probe_version"]))
         self.assertEqual(calls["visits"][4]["args"]["portal"], "Personal")
-        stub = calls["batches"][0]["actions"][6]["input"]["text"]
+        stub = calls["batches"][0]["actions"][7]["input"]["text"]
         self.assertTrue(stub.endswith(")(" + json.dumps(a) + ")"))
         self.assertIn("KB_NOPROBE", stub)
         self.assertIn("(0,eval)(sessionStorage.getItem('kbp'))", stub)

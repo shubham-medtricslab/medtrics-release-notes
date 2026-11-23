@@ -178,6 +178,10 @@ def _clear(bx, by, r, box):
     return (bx - nx) ** 2 + (by - ny) ** 2 > (r + 3) ** 2
 
 
+class OffFrame(ValueError):
+    """annotate() was given an anchor with no part inside the frame."""
+
+
 def annotate(frame, click, number=None, caption=None, pad=F.RING_PAD_PX):
     """Ring the anchor, number it, and (GIF path only) caption the shot. The KB
     renderer prints the caption under the image, so the KB path passes no
@@ -195,6 +199,10 @@ def annotate(frame, click, number=None, caption=None, pad=F.RING_PAD_PX):
         m = 5
         box = [max(m, x - rw), max(m, y - rh),
                min(img.width - 1 - m, x + rw), min(img.height - 1 - m, y + rh)]
+        if box[2] <= box[0] or box[3] <= box[1]:
+            # The anchor lies outside the frame (a page captured scrolled: M1-1459's
+            # heading at y=-926). There is nothing to ring; drawing crashed Pillow.
+            raise OffFrame(f"anchor ({x}, {y}) is outside the {img.width}x{img.height} frame")
         d.rounded_rectangle(box, radius=F.RING_RADIUS_PX, outline=ACCENT,
                             width=F.RING_WIDTH_PX)
         d.rounded_rectangle([box[0] - 3, box[1] - 3, box[2] + 3, box[3] + 3],

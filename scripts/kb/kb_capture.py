@@ -724,6 +724,76 @@ def fields_source():
     return " ".join(l.strip() for l in _FIELDS_JS.strip().splitlines())
 
 
+# The label finder shared by the probe (kbp) and the scroll step (kbs). An element whose
+# whole text is the label wins; failing that, the innermost visible element whose text
+# STARTS with a label of 2+ words / 8+ chars at a word boundary (pm: a prefix match), e.g.
+# M1-1459's modal toggle "Reassign Case Log Reviewer Philip Hayes". Short labels ("No",
+# "View") never prefix-match: "No" would ring "No submission alert".
+_FIND_JS = r"""
+var kbFind=function(l,all,vis,inSb,norm){
+var want=norm(l);
+var pick=function(m){m=m.filter(function(e){return !m.some(function(o){return o!==e&&e.contains(o);});});var ns=m.filter(function(e){return !inSb(e);});return ns[0]||m[0]||null;};
+var e=pick(all.filter(function(e){return String(e.textContent||'').indexOf(l)>=0&&norm(e.innerText)===want&&vis(e);}));
+if(e)return {e:e,pm:false};
+if(want.length<__PM_MIN__||want.split(' ').length<2)return null;
+e=pick(all.filter(function(e){if(String(e.textContent||'').indexOf(l)<0||!vis(e))return false;var t=norm(e.innerText);return t.length>want.length&&t.length<=want.length+__PM_EXTRA__&&t.indexOf(want)===0&&/[^A-Za-z0-9]/.test(t.charAt(want.length));}));
+return e?{e:e,pm:true}:null;
+};
+"""
+PREFIX_MIN_CHARS = 8          # a label shorter than this (or one word) never prefix-matches
+PREFIX_MAX_EXTRA = 80         # ... nor an element with more than this much text after it
+
+# A visible loader in the viewport means the frame shows a page still loading (M1-1245's
+# Requests list): its shots are dropped as still_loading instead of reaching the sheet.
+# The app's own loader is `h3.loader-txt` ("please wait… spinning up the hamster..."), so any
+# class TOKEN starting with loader / spinner counts ("uploader" does not).
+LOADER_SEL = ("[class^=loader],[class*=' loader'],[class^=spinner],[class*=' spinner'],"
+              ".loading,.fa-spin,[aria-busy=true],"
+              ".dataTables_processing,.blockUI.blockOverlay,.vld-overlay,.el-loading-mask")
+
+
+def find_source():
+    return " ".join(l.strip() for l in _FIND_JS.strip().splitlines()) \
+        .replace("__PM_MIN__", str(PREFIX_MIN_CHARS)).replace("__PM_EXTRA__", str(PREFIX_MAX_EXTRA))
+
+
+# kbs: run before the hover that makes the GIF's last frame. It moves the page only when
+# NO wanted label is in view (1x1 hidden matches do not count), so it never loses a shot
+# 0.25.0 took: the sidebar "Logs" on the Case Logs start page keeps its shot although
+# "Submit" is below the fold, and the Time Off "Requests" tab stays although a "Time Off"
+# card sits lower. With none in view, the first found label is scrolled to the centre
+# of its scroll container; with no label found, scrolls the page back to the top so the
+# heading fallback is on screen. Without it, a label below the fold (M1-1413's alert
+# radios at y=1147 in a 639 px viewport) or a page left scrolled by kbclick (M1-1459's
+# heading at y=-926) was never in the frame.
+_SCROLL_JS = r"""
+(function(a){
+var D=document,W=window;
+var norm=function(s){return String(s||'').replace(/\s+/g,' ').trim();};
+var vis=function(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
+var inSb=function(e){try{return !!e.closest(a.side);}catch(x){return false;}};
+__FIND__
+var all=Array.prototype.slice.call(D.body.querySelectorAll('*'));
+var iw=W.innerWidth,ih=W.innerHeight;
+var inV=function(e){var r=e.getBoundingClientRect();return r.top>=0&&r.left>=0&&r.bottom<=ih&&r.right<=iw;};
+var fs=[];
+(a.labels||[]).forEach(function(l){var fd=kbFind(l,all,vis,inSb,norm);if(!fd)return;var r=fd.e.getBoundingClientRect();if(r.width<__HID__||r.height<__HID__)return;fs.push({l:l,e:fd.e});});
+if(!fs.length){if(W.scrollY>0)W.scrollTo(0,0);return {s:'top',y:Math.round(W.scrollY)};}
+var seen=fs.filter(function(f){return inV(f.e);})[0];
+if(seen)return {s:'in_view',l:seen.l};
+var hit=fs[0];
+hit.e.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+return {s:'scrolled',l:hit.l,y:Math.round(W.scrollY)};
+})
+"""
+
+
+def scroll_source():
+    """kbs as one JS function expression: args {"labels": [...], "side": "<sel>"}."""
+    src = _SCROLL_JS.replace("__FIND__", find_source()).replace("__HID__", str(HIDDEN_PX))
+    return " ".join(l.strip() for l in src.strip().splitlines())
+
+
 # Plain JS, no comments, every statement ends with ';' (lines are joined with
 # spaces). __TENANT__ and __NONLATIN__ are filled from the Python side.
 # The tenant screen reads body.innerText, which lists every option of a closed
@@ -762,17 +832,19 @@ if(dlg){Array.prototype.forEach.call(dlg.querySelectorAll('button,[role=button],
 var dx=dlg?norm(dlg.innerText):'';
 W.__kbSeen=dlg?(norm(dt.length?dt[dt.length-1].innerText:'')+' '+dx).toLowerCase().slice(0,600):'';
 var fl=kfList(dlg||D,a.side).map(function(x){return x.d;});
+__FIND__
 var labels=a.labels.map(function(l){
-var want=norm(l);
-var m=all.filter(function(e){return String(e.textContent||'').indexOf(l)>=0&&norm(e.innerText)===want&&vis(e);});
-m=m.filter(function(e){return !m.some(function(o){return o!==e&&e.contains(o);});});
-var ns=m.filter(function(e){return !inSb(e);});
-var e=ns[0]||m[0];
-if(!e)return {l:l,f:false,t:'',b:null,iv:false,oc:false,sb:false};
+var fd=kbFind(l,all,vis,inSb,norm);
+if(!fd)return {l:l,f:false,t:'',b:null,iv:false,oc:false,sb:false};
+var e=fd.e;
 var r=e.getBoundingClientRect();
 var t=D.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-return {l:l,f:true,t:norm(e.innerText),b:[rd(r.left),rd(r.top),rd(r.width),rd(r.height)],iv:r.left>=0&&r.top>=0&&r.right<=iw&&r.bottom<=ih,oc:t?!(t===e||e.contains(t)||t.contains(e)):false,sb:inSb(e)};
+var o={l:l,f:true,t:norm(e.innerText),b:[rd(r.left),rd(r.top),rd(r.width),rd(r.height)],iv:r.left>=0&&r.top>=0&&r.right<=iw&&r.bottom<=ih,oc:t?!(t===e||e.contains(t)||t.contains(e)):false,sb:inSb(e)};
+if(fd.pm)o.pm=true;
+return o;
 });
+var LDS=Array.prototype.slice.call(D.querySelectorAll(__LOADER__)).filter(function(e){var r=e.getBoundingClientRect();if(!(r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<ih&&r.left<iw))return false;var cs=W.getComputedStyle(e);return cs.visibility!=='hidden'&&+cs.opacity>0;});
+var ld=LDS.length?String(LDS[0].className&&LDS[0].className.baseVal!==undefined?LDS[0].className.baseVal:LDS[0].className||LDS[0].tagName).slice(0,60):'';
 var T=__TENANT__;
 var rx=function(k,g){return new RegExp(T[k][0],T[k][1]+(g?'g':''));};
 var raw=String(D.body.innerText||'');
@@ -797,7 +869,7 @@ while((m3=re2.exec(low))){if(!isW(m3[1])){add('tenant_slug',true);tws('tenant_sl
 var nl=0,nls=[],NLR=null;try{NLR=new RegExp('[^\\P{L}\\p{Script=Latin}\\p{Script=Greek}]','u');}catch(x){}
 for(var i=0;i<low.length;i++){var cc=low.charCodeAt(i);if(cc<=0x3FF)continue;var ch=low.charAt(i);if(cc>=0xD800&&cc<=0xDBFF&&i+1<low.length){ch=low.substr(i,2);i++;}if(!NLR||NLR.test(ch)){nl++;if(nls.length<5&&nls.indexOf(ch)<0)nls.push(ch);}}
 if(nl>=__NONLATIN__){add('non_latin_script',true);nls.forEach(function(c){tws('non_latin_script',c);});}
-return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),wq:String(W.__kbLastQ||''),wk:String(W.__kbLastSrc||''),bl:(Array.isArray(W.__kbLog)?W.__kbLog:[]).slice(-20),al:W.__kbAllowed||[],saved:W.__kbSaved||null,fields:fl,dlg:dlg?{t:norm(dt.length?dt[dt.length-1].innerText:'').slice(0,80),x:dx.slice(0,160),bt:bt}:null,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k},tw:tw};
+return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),wq:String(W.__kbLastQ||''),wk:String(W.__kbLastSrc||''),bl:(Array.isArray(W.__kbLog)?W.__kbLog:[]).slice(-20),al:W.__kbAllowed||[],saved:W.__kbSaved||null,fields:fl,dlg:dlg?{t:norm(dt.length?dt[dt.length-1].innerText:'').slice(0,80),x:dx.slice(0,160),bt:bt}:null,ld:ld,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k},tw:tw};
 })
 """
 
@@ -847,6 +919,7 @@ OPTION_SEL = ("[role=listbox] [role=option],.multiselect__content li,.dropdown-m
 _CLICK_RE = {k: re.compile(v, re.I if k != "tog" else 0) for k, v in CLICK_RX.items()}
 KBC_KEY = "kbc"
 KBO_KEY = "kbo"
+KBS_KEY = "kbs"
 KBC_ERRORS = {"KB_CLICK_REFUSED": "click_refused", "KB_CLICK_NOTFOUND": "click_not_found",
               "KB_TENANT_ROW": "tenant_row"}
 
@@ -1385,6 +1458,8 @@ def probe_source(reads=()):
     """The probe as one JS function expression (evaluates to a function)."""
     src = _PROBE_JS.replace("__GUARD__", guard_source(reads)) \
                    .replace("__FIELDS__", fields_source()) \
+                   .replace("__FIND__", find_source()) \
+                   .replace("__LOADER__", json.dumps(LOADER_SEL)) \
                    .replace("__DLG__", json.dumps(DIALOG_SEL)) \
                    .replace("__TENANT__", json.dumps(tenant_regexes())) \
                    .replace("__NF__", json.dumps(NF_SOURCE)) \
@@ -1394,11 +1469,12 @@ def probe_source(reads=()):
 
 
 def install_action(reads=()):
-    """javascript_tool input that stores the probe (kbp), the click guard (kbc) and the
-    option picker (kbo) in sessionStorage. Sent first in the first batch of every run."""
+    """javascript_tool input that stores the probe (kbp), the click guard (kbc), the
+    option picker (kbo) and the scroll step (kbs) in sessionStorage. Sent first in the first batch of every run."""
     text = (f"{JS_MARKER}var S={json.dumps(probe_source(reads))};sessionStorage.setItem('{KEY}',S);"
             f"var K={json.dumps(click_source(reads))};sessionStorage.setItem('{KBC_KEY}',K);"
             f"var O={json.dumps(option_source(reads))};sessionStorage.setItem('{KBO_KEY}',O);"
+            f"var Z={json.dumps(scroll_source())};sessionStorage.setItem('{KBS_KEY}',Z);"
             f"'{KEY}:'+S.length")
     return {"action": "javascript_exec", "tabId": "$TAB", "text": text}
 
@@ -1454,12 +1530,20 @@ def _park(demo):
     return demo.get("cursor_park") or [1465, 740]
 
 
+def _scroll(visit):
+    """kbs before the hover: the label the shot needs is in the last frame (no frame itself)."""
+    args = visit.get("args") or {}
+    return _act("javascript_tool", action="javascript_exec",
+                text=stub({"labels": list(args.get("labels") or []), "side": args.get("side", "")}, KBS_KEY))
+
+
 def visit_actions(base_url, visit, demo):
     """One recording per visit, no screenshot: the exported GIF's last frame is
     the settled page. The probe (javascript_tool) produces no frame."""
     return [_act("gif_creator", action="start_recording"),
             _act("navigate", url=base_url + visit["url"]),
             _wait(settle_seconds(demo, visit.get("wait_s"))),
+            _scroll(visit),
             _act("computer", action="hover", coordinate=list(_park(demo))),
             _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
             _act("gif_creator", action="stop_recording"),
@@ -1476,6 +1560,7 @@ def click_visit_actions(visit, demo):
                  text=stub(visit["click_args"], KBC_KEY))]
     act = [_act("computer", action="left_click", coordinate=["$X", "$Y"]),
            _wait(settle_seconds(demo, visit.get("wait_s"))),
+           _scroll(visit),
            _act("computer", action="hover", coordinate=list(_park(demo))),
            _act("javascript_tool", action="javascript_exec", text=stub(visit["args"])),
            _act("gif_creator", action="stop_recording"),
@@ -1794,9 +1879,11 @@ def capture_md(calls):
          "and starts you again with `--from-batch <batch_id>`.", ""]
     L += [f"## 3. Batches ({len(calls['batches'])})", "",
           "For each batch, in order, follow its heading. Visits are `gif_creator` recordings: "
-          "start_recording, navigate, wait, hover, probe, stop_recording, export. There are no "
+          "start_recording, navigate, wait, scroll, hover, probe, stop_recording, export. There are no "
           "screenshots: never call `computer` with `screenshot`, and you never receive a page "
-          "image. The probe result is the `javascript_tool` result. The `export` result says "
+          "image. The scroll step is a short `javascript_tool` call before the hover; its small "
+          "result (`{\"s\":…}`) is not kept. The probe result is the `javascript_tool` result "
+          "AFTER the hover. The `export` result says "
           "`Downloaded \"<filename>\"`; that filename is the visit's `gif`.", "",
           "**Visit batches** (`actions`): call `browser_batch` with exactly the `actions` array.", "",
           "**Click batches** (`pick` and `act`) open the next screen by one click and are sent in two "
@@ -2126,6 +2213,8 @@ def screen_form(probe):
         out["tenant"] = {"v": "BLOCK", "k": list(tn.get("k") or [])[:6]}
     if int(probe.get("wb") or 0) >= 1 and probe.get("wl"):
         out["blocked"] = str(probe["wl"])[:120]          # e.g. "POST /api/.../logs_filter_list/"
+    if probe.get("ld"):
+        out["loading"] = str(probe["ld"])[:60]           # a loader was on screen: shots dropped
     return out
 
 
@@ -2279,6 +2368,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
     with Image.open(dest) as im:
         im.load()
         problem = frame_problem(im.width, im.height, probe)
+        loading = bool(probe.get("ld"))              # a spinner on screen: nothing here ships
         scale = im.width / probe["iw"]
         tn = probe.get("tn") or {}
         tenant_dom = tn.get("v") if tn.get("v") in ("CLEAR", "REVIEW", "BLOCK") else None
@@ -2297,7 +2387,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                 if not pl or not pl.get("f") or not pl.get("b") or label_hidden(pl):
                     continue
                 ev = None
-                if not problem:
+                if not problem and not loading:
                     x, y, w, h = pl["b"]
                     box = to_image_box({"x": x, "y": y, "width": w, "height": h}, scale)
                     if pl.get("oc") or not pl.get("iv") or not box_in_frame(box, im.width, im.height):
@@ -2307,19 +2397,27 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                             crop = Q.verify_crop(im, box, [label])[0] if use_ocr else None
                         except Exception:          # an OCR failure is a miss, never a crash
                             crop = {"verdict": "MISS", "score": 0.0}
-                        ev = shot_evidence(label, pl.get("t", ""), box, crop, False,
+                        dom_t = str(pl.get("t") or "")
+                        if pl.get("pm") and " ".join(dom_t.split()).startswith(" ".join(label.split())):
+                            dom_t = label          # the probe's prefix match: the DOM text starts with it
+                        ev = shot_evidence(label, dom_t, box, crop, False,
                                            tenant_dom, tenant_ocr)
                 entries.append({"ticket": tid, "persona": visit["persona"],
                                 "surface": visit["surface"], "frame": str(dest),
                                 "verified": ev is not None, "source": source,
                                 "visit_id": visit["visit_id"], "sidebar": bool(pl.get("sb")),
                                 "frame_source": frame_source,
+                                **({"label_match": "prefix"} if pl.get("pm") else {}),
+                                **({"reason": "still_loading"} if loading and not problem else {}),
                                 **(ev or {"label": label})})
         h = probe.get("h") if isinstance(probe.get("h"), dict) else None
-        if visit.get("kind") in ("click", "write") and not problem and h and h.get("t") and h.get("b"):
+        if visit.get("kind") in ("click", "write") and not problem and not loading \
+                and h and h.get("t") and h.get("b"):
             have = {e["ticket"] for e in entries if e["verified"]}   # an unverified match is no shot
             x, y, w, hh = h["b"]
             box = to_image_box({"x": x, "y": y, "width": w, "height": hh}, scale)
+            if not box_in_frame(box, im.width, im.height):
+                have = set(visit["tickets"])   # heading scrolled off (M1-1459: y=-926): no ring to draw
             for tid in visit["tickets"]:
                 if tid in have or not (visit["labels"].get(tid) or []):
                     continue                  # a label was found, or this ticket wants no shot here
@@ -2352,7 +2450,8 @@ def _screens_missing(calls, screens, shots):
     first failing screen in visit order wins; needs_write screens come last. A
     ticket whose screens all loaded but has no verified shot is: no_labels when no
     visit looked for any label of it; else tenant_block when one of its screens
-    failed the tenant check (detail: the rule); else label_not_found."""
+    failed the tenant check (detail: the rule); else still_loading when one of its
+    screens showed a loader (detail: its class); else label_not_found."""
     order = ([v["visit_id"] for v in calls["visits"]] + [w["visit_id"] for w in calls.get("write_visits") or []]
              + [x["visit_id"] for x in calls.get("screens") or []])
     pos = {vid: i for i, vid in enumerate(order)}
@@ -2372,6 +2471,11 @@ def _screens_missing(calls, screens, shots):
         if not sc.get("reason") and (sc.get("tenant") or {}).get("v") == "BLOCK":
             for t in sc["tickets"]:
                 blocked.setdefault(t, ", ".join(sc["tenant"].get("k") or []))
+    loading = {}
+    for sc in sorted(screens, key=lambda x: pos.get(x["visit_id"], len(pos))):
+        if not sc.get("reason") and sc.get("loading"):
+            for t in sc["tickets"]:
+                loading.setdefault(t, str(sc["loading"]))
     for sc in screens:
         if not sc.get("reason"):
             for t in sc["tickets"]:
@@ -2381,6 +2485,8 @@ def _screens_missing(calls, screens, shots):
                     missing[t] = {"reason": "no_labels", "detail": ""}
                 elif t in blocked:
                     missing[t] = {"reason": "tenant_block", "detail": blocked[t]}
+                elif t in loading:
+                    missing[t] = {"reason": "still_loading", "detail": loading[t]}
                 else:
                     missing[t] = {"reason": "label_not_found", "detail": ""}
     return missing
