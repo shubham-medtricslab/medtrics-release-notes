@@ -179,6 +179,31 @@ The capture no longer gets one attempt per screen. Design and decisions:
    or drawing one ring is that screen's reason (`internal_error`,
    `shots/errors.log`); the run goes on.
 
+9. **0.26.1, from the first Cowork run.**
+   - Download names are letters, digits, hyphens and underscores only
+     (`gif_name_ok`); a retry screen is `<visit>-r<pass><a|b|c>`. Chrome
+     answers "Invalid filename" to `~`.
+   - `verify_crop` reads an element a second time after a miss (`tight_text`:
+     the element's own box, inverted when dark, 3x, white margin, `--psm 6`).
+     The padded crop reads nothing from a small white-on-dark button.
+   - An OCR miss on a label the probe reports as in view, uncovered and exact
+     (no prefix match) keeps the ring as `dom_box` with `"ocr": "miss"`; the
+     sheet says "not OCR-checked". Only on a visit that navigates (`start`, or
+     a retry with `nav`), where `frame_under_recorded` can catch a stale frame;
+     on a click screen OCR stays the only pixel check, so a miss drops the
+     ring. Cause `unreadable` (in frame, no ring) is not retried.
+   - `frame_under_recorded`: a navigating visit with `sy > 0` in the probe and
+     a one-frame GIF holds the page before the scroll. Nothing on it is
+     ringed; cause `under_recorded` is retried as a whole screen in both
+     passes. Click visits are not judged (their start scroll is unknown).
+   - `kb_package.debug_files` copies the diagnosis, shot list, raw probes,
+     retry plans and overrides into `_debug/` of the output zip, without page
+     scripts and with a private (external) start address replaced by
+     `[external link]`.
+   - `_load_raw` skips the raw files of batches a plan does not own, and
+     `item_visit_id` repairs a shortened `-s<n>` / `-r<pass><a|b|c>` id.
+   - `plan-retry` exits 4 for a pass whose `retry-N.json` already has results.
+
 `/kb-articles check-routes` (`plan-check`, `check-report`) walks every route of
 the main sign-in with navigate, wait, `kbw` and the probe only.
 `tools/kb_promote_overrides.py <run zip>` turns the learned lines of a run into

@@ -181,7 +181,8 @@ def resume_plan(plan, done_keys):
     return {**plan, "capture_plan": left}
 
 
-def shot_evidence(label, dom_text, box, crop_result, occluded, tenant_dom, tenant_ocr):
+def shot_evidence(label, dom_text, box, crop_result, occluded, tenant_dom, tenant_ocr,
+                  allow_unread=True):
     """Evidence for one candidate label, or None when it can't anchor a ring.
 
     OCR present: label_box when the crop scores ≥ the floor.
@@ -189,16 +190,20 @@ def shot_evidence(label, dom_text, box, crop_result, occluded, tenant_dom, tenan
                  and nothing covers the element."""
     if occluded:
         return None
-    if crop_result is not None:
-        if crop_result["verdict"] == "MISS":
-            return None
+    dom_exact = (dom_text or "").strip().lower() == label.strip().lower()
+    extra = {}
+    if crop_result is not None and crop_result["verdict"] != "MISS":
         anchor, score = "label_box", crop_result["score"]
     else:
-        if (dom_text or "").strip().lower() != label.strip().lower():
+        if not dom_exact or (crop_result is not None and not allow_unread):
             return None
         anchor, score = "dom_box", 1.0
+        if crop_result is not None:
+            # OCR could not read it, but the page says the element is on screen, uncovered
+            # and carries exactly this text: keep the ring, marked for the owner (0.26.1).
+            extra = {"ocr": "miss"}
     verdicts = [v for v in (tenant_dom, tenant_ocr) if v]
-    return {"anchor": anchor, "label": label, "label_score": score,
+    return {"anchor": anchor, "label": label, "label_score": score, **extra,
             "dom_box": list(box), "tenant": Q.worst(*verdicts) if verdicts else "REVIEW",
             "tenant_dom": tenant_dom, "tenant_ocr": tenant_ocr}
 
@@ -939,7 +944,7 @@ while((m3=re2.exec(low))){if(!isW(m3[1])){add('tenant_slug',true);tws('tenant_sl
 var nl=0,nls=[],NLR=null;try{NLR=new RegExp('[^\\P{L}\\p{Script=Latin}\\p{Script=Greek}]','u');}catch(x){}
 for(var i=0;i<low.length;i++){var cc=low.charCodeAt(i);if(cc<=0x3FF)continue;var ch=low.charAt(i);if(cc>=0xD800&&cc<=0xDBFF&&i+1<low.length){ch=low.substr(i,2);i++;}if(!NLR||NLR.test(ch)){nl++;if(nls.length<5&&nls.indexOf(ch)<0)nls.push(ch);}}
 if(nl>=__NONLATIN__){add('non_latin_script',true);nls.forEach(function(c){tws('non_latin_script',c);});}
-return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),wq:String(W.__kbLastQ||''),wk:String(W.__kbLastSrc||''),bl:(Array.isArray(W.__kbLog)?W.__kbLog:[]).slice(-20),al:W.__kbAllowed||[],saved:W.__kbSaved||null,fields:fl,dlg:dlg?{t:norm(dt.length?dt[dt.length-1].innerText:'').slice(0,80),x:dx.slice(0,160),bt:bt}:null,ld:ld,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k},tw:tw};
+return {v:a.v,u:location.pathname+location.search,iw:iw,ih:ih,sy:Math.round(W.scrollY||0),dpr:W.devicePixelRatio,nf:nf,labels:labels,h:ht?hb(ht):null,wb:W.__kbBlocked||0,wl:String(W.__kbLast||''),wq:String(W.__kbLastQ||''),wk:String(W.__kbLastSrc||''),bl:(Array.isArray(W.__kbLog)?W.__kbLog:[]).slice(-20),al:W.__kbAllowed||[],saved:W.__kbSaved||null,fields:fl,dlg:dlg?{t:norm(dt.length?dt[dt.length-1].innerText:'').slice(0,80),x:dx.slice(0,160),bt:bt}:null,ld:ld,tn:{v:hard?'BLOCK':(k.length?'REVIEW':'CLEAR'),k:k},tw:tw};
 })
 """
 
@@ -1996,6 +2001,12 @@ def capture_md(calls):
           "`javascript_tool` result AFTER the hover. The `export` result says "
           "`Downloaded \"<filename>\"`; that filename is the visit's `gif`.", "",
           "**Visit batches** (`actions`): call `browser_batch` with exactly the `actions` array.", "",
+          *((["**This file also has other kinds of batch** ("
+              + ", ".join(sorted({b["kind"] for b in calls["batches"]} & {"open", "replay", "frames"}))
+              + "). Each is named in its batch heading and explained right under that heading: "
+              "`open` and `frames` are sent like a visit batch, `replay` like a click batch; "
+              "`open` and `replay` record nothing, so their raw file has an empty `items` list.", ""])
+            if {b.get("kind") for b in calls["batches"]} & {"open", "replay", "frames"} else []),
           "**Click batches** (`pick` and `act`) open the next screen by one click and are sent in two "
           "calls:", "",
           "1. Send `pick` with `browser_batch`. Its last result is the `kbclick` result, an object "
@@ -2034,9 +2045,11 @@ def capture_md(calls):
             L += [f"### {b['batch_id']} — {b['persona']} — replay click {b['step']} of entry {b['entry']} "
                   f"(\"{b.get('what', '')}\", no recording)", "",
                   "A click batch without a recording: send `pick`, substitute, send `act`. If `pick` "
-                  "fails with a `KB_CLICK_*` or `KB_TENANT_ROW` error: do not send `act`, write this "
-                  "batch's raw file with an empty `items` list and the error text in `error`, and skip "
-                  "every later batch of this entry.", "",
+                  "fails with a `KB_CLICK_*` or `KB_TENANT_ROW` error, this batch's own rule replaces "
+                  "section 3 step 4 (there is no visit here, so no `click_error` item, and nothing is "
+                  "being recorded, so no abort): do not send `act`, write this batch's raw file with an "
+                  "empty `items` list and the error text in `error`, and skip every later batch of this "
+                  "entry.", "",
                   "`pick`:", "", _j(b["pick"]), "", "`act` (substitute `$X`, `$Y`):", "", _j(b["act"]), "",
                   f"Then write `raw/{b['batch_id']}.json` with an empty `items` list and continue.", ""]
             continue
@@ -2067,7 +2080,7 @@ def capture_md(calls):
                          "probe": "<the javascript_tool result exactly as returned>",
                          "gif": "<filename from the export result: Downloaded \"…\">"}]}), "",
           "Each `visit_id` is copied exactly from the batch heading (`visits …`), including any "
-          "`-s0` / `-s1` suffix — never shortened.", "",
+          "`-s0` / `-s1` suffix and any `-r1a` / `-r2b` retry suffix — never shortened.", "",
           "`status` is one of `ok`, `expired`, `wrong_persona`, `bridge_down`, `needs_install`. `items` are in "
           "visit order, one per visit that completed both its probe and its export; a visit not "
           "reached is simply absent. Copy the probe result verbatim (object, or the text if it came "
@@ -2120,6 +2133,9 @@ def cmd_plan_calls(a):
         elif data_plan.get("approved_sha256") != data_plan_sha256(data_plan):
             data_plan, note = None, " (data plan changed after approval: no write visits)"
     calls = build_calls(plan, inputs, routes, a.per_batch, data_plan, a.external_link)
+    bad = [v["gif"] for v in calls["visits"] + calls["write_visits"] if not gif_name_ok(v["gif"])]
+    if bad or not gif_name_ok(calls["canary"]["gif"]):
+        raise KeyError(f"unsafe download name(s): {', '.join(bad) or calls['canary']['gif']}")
     (out_dir / "calls.json").write_text(json.dumps(calls, indent=1))
     (out_dir / "capture.md").write_text(capture_md(calls))
     skipped = sum(1 for c in plan["capture_plan"] if not c.get("url") or c.get("skip_reason"))
@@ -2370,7 +2386,8 @@ def item_visit_id(vid, planned, taken=()):
     `vid` unchanged."""
     if not vid or not planned or vid in planned:
         return vid
-    cands = [p for p in planned if p not in taken and re.fullmatch(re.escape(vid) + r"-s\d+", p)]
+    cands = [p for p in planned if p not in taken and p != vid
+             and re.fullmatch(re.escape(vid) + r"(-s\d+)?(-r\d[a-c])?", p)]
     return cands[0] if len(cands) == 1 else vid
 
 
@@ -2390,6 +2407,8 @@ def _load_raw(raw_dir, planned=None):
         bid = r.get("batch_id") or f.stem
         if not f.name.startswith(DATA_RAW_PREFIX):
             batches[bid] = r
+            if planned is not None and bid not in planned:
+                continue      # another plan's batch (a retry file's): its items are not this plan's visits
         mine = (planned or {}).get(bid) or []
         taken = {it.get("visit_id") for it in r.get("items") or [] if it.get("visit_id") in mine}
         for it in r.get("items") or []:
@@ -2501,6 +2520,9 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
         im.load()
         problem = frame_problem(im.width, im.height, probe)
         loading = bool(probe.get("ld"))              # a spinner on screen: nothing here ships
+        under = frame_source == "gif" and frame_under_recorded(visit, probe, out_dir)
+        why_not = "still_loading" if loading else "under_recorded" if under else ""
+        loading = loading or under                   # either way no box of this frame can be trusted
         scale = im.width / probe["iw"]
         tn = probe.get("tn") or {}
         tenant_dom = tn.get("v") if tn.get("v") in ("CLEAR", "REVIEW", "BLOCK") else None
@@ -2533,8 +2555,14 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                         dom_t = str(pl.get("t") or "")
                         if pl.get("pm") and " ".join(dom_t.split()).startswith(" ".join(label.split())):
                             dom_t = label          # the probe's prefix match: the DOM text starts with it
+                        # An OCR miss keeps its ring only when OCR was not the last line of
+                        # defence: the element's text is exactly the label (no prefix match)
+                        # and the frame is one frame_under_recorded can judge (a visit that
+                        # navigates). On a click screen a stale frame would go unnoticed.
+                        unread_ok = not pl.get("pm") and (frame_source != "gif" or visit.get("kind") == "start"
+                                                          or bool(visit.get("nav")))
                         ev = shot_evidence(label, dom_t, box, crop, False,
-                                           tenant_dom, tenant_ocr)
+                                           tenant_dom, tenant_ocr, allow_unread=unread_ok)
                 entries.append({"ticket": tid, "persona": visit["persona"],
                                 "surface": visit["surface"], "frame": str(dest),
                                 "verified": ev is not None, "source": source,
@@ -2543,7 +2571,7 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                 **({"label_match": "prefix"} if pl.get("pm") else {}),
                                 **({"label_match": "near", "label_wanted": near[label]} if label in near else {}),
                                 **({"retry": visit["retry"], "of": visit.get("of")} if visit.get("retry") else {}),
-                                **({"reason": "still_loading"} if loading and not problem else {}),
+                                **({"reason": why_not} if loading and not problem else {}),
                                 **(ev or {"label": label})})
         h = probe.get("h") if isinstance(probe.get("h"), dict) else None
         if visit.get("kind") in ("click", "write") and not problem and not loading \
@@ -2563,6 +2591,45 @@ def ingest_visit(visit, item, calls, demo, out_dir, use_ocr, now,
                                 "visit_id": visit["visit_id"], "sidebar": False,
                                 "frame_source": frame_source, "fallback": "heading", **ev})
     return entries, None
+
+
+GIF_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*\.gif")
+
+
+def gif_name_ok(name):
+    """A download name Chrome accepts: folders and a file of letters, digits, hyphens and
+    underscores (the QA plugin's rule). Chrome answered "Invalid filename" to the "~" the
+    0.26.0 retry names carried, so no retry screenshot was ever saved."""
+    return bool(GIF_NAME_RE.fullmatch(str(name or "")))
+
+
+def gif_frames(gif_path):
+    """Number of frames in a GIF, 0 when it cannot be read."""
+    from PIL import Image
+    try:
+        with Image.open(gif_path) as im:
+            return int(getattr(im, "n_frames", 1))
+    except (OSError, SyntaxError, EOFError, ValueError):
+        return 0
+
+
+def frame_under_recorded(visit, probe, out_dir):
+    """True when the visit's GIF cannot hold the settled page (0.26.1; the idea is the QA
+    plugin's verify_gif_completeness). The recorder keeps one frame per navigate / wait /
+    hover and drops a frame equal to the one before it. A visit that navigates starts at
+    the top of the page, so when the probe says the page was scrolled (sy > 0) the frame
+    after the scroll must be a second frame. A single frame is then the page BEFORE the
+    scroll: every box the probe measured would be drawn in the wrong place."""
+    if not (visit.get("kind") == "start" or visit.get("nav")):
+        return False
+    gif = Path(out_dir) / "gifs" / f"{visit['visit_id']}.gif"
+    if not gif.is_file() or not isinstance(probe, dict):
+        return False
+    try:
+        scrolled = float(probe.get("sy") or 0) > 0
+    except (TypeError, ValueError):
+        scrolled = False
+    return scrolled and gif_frames(gif) < 2
 
 
 def safe_ingest_visit(visit, item, calls, demo, out_dir, *rest):
@@ -2621,6 +2688,7 @@ def _screens_missing(calls, screens, shots):
         if not sc.get("reason") and (sc.get("tenant") or {}).get("v") == "BLOCK":
             for t in sc["tickets"]:
                 blocked.setdefault(t, ", ".join(sc["tenant"].get("k") or []))
+    under = {t for sc in screens if not sc.get("reason") and sc.get("under_recorded") for t in sc["tickets"]}
     loading = {}
     for sc in sorted(screens, key=lambda x: pos.get(x["visit_id"], len(pos))):
         if not sc.get("reason") and sc.get("loading"):
@@ -2637,6 +2705,8 @@ def _screens_missing(calls, screens, shots):
                     missing[t] = {"reason": "tenant_block", "detail": blocked[t]}
                 elif t in loading:
                     missing[t] = {"reason": "still_loading", "detail": loading[t]}
+                elif t in under:
+                    missing[t] = {"reason": "under_recorded", "detail": ""}
                 else:
                     missing[t] = {"reason": "label_not_found", "detail": ""}
     return missing
@@ -2704,6 +2774,8 @@ def cmd_ingest(a):
                 ingested.add(vid)
                 settled.add(vid)
                 screen.update(screen_form(pr or {}))
+                if frame_under_recorded(v, pr, out_dir):
+                    screen["under_recorded"] = True
                 screens[vid] = screen
                 new += entries
                 continue

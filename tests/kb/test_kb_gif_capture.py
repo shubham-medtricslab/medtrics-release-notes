@@ -384,7 +384,9 @@ class OffScreenLabelDoesNotCrashOcr(IngestGif):
         C.Q.verify_crop = boom
         entries, reason = self.ingest_one([lab("Groups")])
         self.assertIsNone(reason)
-        self.assertEqual([(e["label"], e["verified"]) for e in entries], [("Groups", False)])
+        # 0.26.1: still no crash; the page vouches for the label, so the ring stays, owner-confirmed
+        self.assertEqual([(e["label"], e["verified"], e.get("anchor"), e.get("ocr")) for e in entries],
+                         [("Groups", True, "dom_box", "miss")])
 
 
 if __name__ == "__main__":

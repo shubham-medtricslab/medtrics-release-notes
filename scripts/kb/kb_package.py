@@ -268,12 +268,78 @@ def package(run_dir, groups, specs_dir, out_root, failed_after_retry=(), date=No
     (Path(run_dir) / "run.json").write_text(json.dumps(run, indent=1, ensure_ascii=False))
     (out / "RUN-SUMMARY.md").write_text(summary_md(run, rows, groups, pdf_report, pdf_note, usage, reasons))
 
+    debug_files(run_dir, out)
     zpath = out / f"kb-articles-{run_id}.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(out.rglob("*")):
             if f.is_file() and f != zpath:
                 z.write(f, f.relative_to(out).as_posix())
     return run, out, pdf_note
+
+
+DEBUG_DIR = "_debug"
+DEBUG_FILES = ("diagnosis.md", "diagnosis.json", "shots.json", "resume.json", "errors.log",
+               "kb_overrides.json", "retry-1.json", "retry-2.json")
+
+
+def debug_files(run_dir, out):
+    """Copy what explains a capture into <out>/_debug/ so it travels in the output zip
+    (0.26.1): the diagnosis, the shot list, the raw probe results, the retry plans and
+    the overrides file. Text only: no frames, no GIFs. calls.json goes without its
+    install text (the page scripts, ~50 KB, are in the plugin). The folder is internal:
+    probe results quote demo-site text. A failure here never stops packaging."""
+    shots = Path(run_dir) / "shots"
+    dst = Path(out) / DEBUG_DIR
+    try:
+        if not shots.is_dir():
+            return []
+        calls = json.loads((shots / "calls.json").read_text()) if (shots / "calls.json").is_file() else {}
+        secrets = private_strings(calls)
+
+        def put(src, rel):
+            text = src.read_text(errors="replace")
+            if src.suffix == ".json":
+                try:
+                    d = json.loads(text)
+                    if isinstance(d, dict) and d.get("install"):
+                        d["install"] = []                   # the page scripts (~50 KB) are in the plugin
+                        text = json.dumps(d, indent=1)
+                except ValueError:
+                    pass
+            for sec in secrets:                             # the emailed evaluator link never leaves the run folder
+                text = text.replace(sec, EXTERNAL_MARK).replace(json.dumps(sec)[1:-1], EXTERNAL_MARK)
+            (dst / rel).parent.mkdir(parents=True, exist_ok=True)
+            (dst / rel).write_text(text)
+            done.append(rel)
+
+        done = []
+        for name in DEBUG_FILES + ("calls.json",):
+            if (shots / name).is_file():
+                put(shots / name, name)
+        for f in sorted((shots / "raw").glob("*.json")) if (shots / "raw").is_dir() else []:
+            put(f, f"raw/{f.name}")
+        return done
+    except (OSError, ValueError):
+        return []
+
+
+EXTERNAL_MARK = "[external link]"
+
+
+def private_strings(calls):
+    """Every form of a private (external evaluator) start address in a plan: the address,
+    its path alone and each path segment long enough to be a token. Longest first, so
+    the whole address is replaced before its parts."""
+    out = set()
+    for v in (calls.get("visits") or []) + (calls.get("write_visits") or []) + (calls.get("retry_visits") or []):
+        if not v.get("private") or not v.get("url"):
+            continue
+        url = str(v["url"])
+        path, _, query = url.partition("?")
+        out.update({url, path})
+        out.update(seg for seg in path.split("/") if len(seg) >= 12)
+        out.update(p_ for p_ in query.split("&") if len(p_) >= 8)
+    return sorted((x for x in out if len(x) >= 8), key=len, reverse=True)
 
 
 DONE_STATUSES = ("drafted", "partial")
@@ -453,6 +519,8 @@ def candidates(specs_dir):
                 flag = ("no ring" if ev.get("anchor") == F.SCREEN_ANCHOR
                         else f"near match: {ev.get('label')}" if ev.get("label_match") == "near"
                         else "")
+                if ev.get("ocr") == "miss":             # ring placed from the page, text not read back
+                    flag = (flag + " · " if flag else "") + "not OCR-checked"
                 items.append({"n": len(items) + 1, "ticket": tid, "step": i, "image": st["image"],
                               "flag": flag,
                               "tenant": ev.get("tenant") or "unscreened",

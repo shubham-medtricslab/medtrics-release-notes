@@ -399,16 +399,20 @@ def prior_line(priors):
 
 
 # ── writes ───────────────────────────────────────────────────────────────────
-def ledger_writes(records, ledger, force=False):
+def ledger_writes(records, ledger, force=False, retry_partial=False):
     """create for a ticket with no note; update (with its version) when --force
-    re-drafted a ticket that already has one."""
+    re-drafted a ticket that already has one, or when --retry-partial re-drafted one
+    whose note says `partial` (0.26.1: the re-draft was skipped here, so the note kept
+    the old screenshot count unless --force was added by hand)."""
     writes = []
     for rec in records:
         content = render_ledger_note(rec)
         have = ledger.get(rec["ticket"].upper())
         if have and have.get("note_id"):
-            if not force and have.get("status") in DONE:
-                continue
+            if not force and have.get("status") in DONE \
+                    and not (retry_partial and have.get("status") == "partial"
+                             and rec.get("status") != "failed"):
+                continue        # a failed re-draft keeps the partial note: its article still exists
             if have.get("published_as") and not rec.get("published_as"):
                 rec = {**rec, "published_as": have["published_as"]}
                 content = render_ledger_note(rec)
@@ -657,7 +661,8 @@ def cmd_match(a):
 def cmd_writes(a):
     run = json.loads(Path(a.run).read_text())
     ledger = ledger_index(load_dump(a.ledger_notes))
-    writes = ledger_writes(run.get("records") or [], ledger, force=a.force)
+    writes = ledger_writes(run.get("records") or [], ledger, force=a.force,
+                           retry_partial=getattr(a, "retry_partial", False))
     writes.append({"action": "create", "collection": "ledger",
                    "title": f"{RUN_PREFIX}{run['date']}{SEP}{run['run_id']}",
                    "content": render_run_note(run)})
@@ -774,6 +779,7 @@ def main(argv=None):
     s.add_argument("--out", required=True)
     s = sub.add_parser("writes"); s.add_argument("--run", required=True)
     s.add_argument("--ledger-notes"); s.add_argument("--force", action="store_true")
+    s.add_argument("--retry-partial", action="store_true")
     s.add_argument("--out", required=True)
     s = sub.add_parser("seed-legacy"); s.add_argument("--tickets", required=True)
     s.add_argument("--articles", nargs="+", required=True)

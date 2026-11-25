@@ -293,20 +293,54 @@ def verify_crop(img, box, labels, pad=12, cutoff=LABEL_CUTOFF):
                      min(img.width, x + w + pad), min(img.height, y + h + pad)))
     crop = crop.resize((crop.width * 2, crop.height * 2))
     hay = re.sub(r"\s+", " ", pytesseract.image_to_string(crop)).lower()
-    toks = hay.split()
-    out = []
-    for label in labels:
-        l = label.lower().strip()
-        if l and l in hay:
-            out.append({"label": label, "verdict": "EXACT", "score": 1.0})
-            continue
-        n = len(l.split())
-        best = 0.0
-        for i in range(max(0, len(toks) - n + 1)):
-            best = max(best, difflib.SequenceMatcher(None, l, " ".join(toks[i:i + n])).ratio())
-        out.append({"label": label, "verdict": "FUZZY" if best >= cutoff else "MISS",
-                    "score": round(best, 3)})
+    out = [_score(label, hay, cutoff) for label in labels]
+    if any(r["verdict"] == "MISS" for r in out):
+        # The padded crop reads nothing from a small white-on-dark button ("View",
+        # "Submit": run kb-20261124-2041). Read the element alone, the way OCR likes it.
+        hay2 = tight_text(img, box)
+        for i, label in enumerate(labels):
+            if out[i]["verdict"] == "MISS" and hay2:
+                r = _score(label, hay2, cutoff)
+                if r["verdict"] != "MISS":
+                    out[i] = {**r, "read": "tight"}
     return out
+
+
+def _score(label, hay, cutoff):
+    l = label.lower().strip()
+    if l and l in hay:
+        return {"label": label, "verdict": "EXACT", "score": 1.0}
+    toks = hay.split()
+    n = len(l.split())
+    best = 0.0
+    for i in range(max(0, len(toks) - n + 1)):
+        best = max(best, difflib.SequenceMatcher(None, l, " ".join(toks[i:i + n])).ratio())
+    return {"label": label, "verdict": "FUZZY" if best >= cutoff else "MISS", "score": round(best, 3)}
+
+
+TIGHT_SCALE = 3          # enlarge the element this much for the second read
+TIGHT_BORDER = 10        # white margin (px before scaling) around it
+
+
+def tight_text(img, box):
+    """Second OCR read of one element: its own box only (1 px inside the edge), dark-on-
+    light (inverted when the element is dark), stretched to full contrast, enlarged and
+    given a white margin, read as one block. "" when it cannot be read."""
+    import pytesseract
+    from PIL import Image, ImageOps, ImageStat
+    x, y, w, h = box
+    try:
+        c = img.crop((max(0, x + 1), max(0, y + 1), min(img.width, x + w - 1), min(img.height, y + h - 1)))
+        if c.width < 4 or c.height < 4:
+            return ""
+        c = ImageOps.grayscale(c)
+        if ImageStat.Stat(c).mean[0] < 128:
+            c = ImageOps.invert(c)
+        c = ImageOps.autocontrast(c.resize((c.width * TIGHT_SCALE, c.height * TIGHT_SCALE), Image.LANCZOS))
+        c = ImageOps.expand(c, border=TIGHT_BORDER * TIGHT_SCALE, fill=255)
+        return re.sub(r"\s+", " ", pytesseract.image_to_string(c, config="--psm 6")).lower()
+    except Exception:                       # noqa: BLE001 - a failed second read is just a miss
+        return ""
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

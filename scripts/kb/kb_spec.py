@@ -224,7 +224,7 @@ def build_spec(prose, shots, meta, missing_reason, out_root, annotate=True):
                         continue
                 ev = {k: shot.get(k) for k in ("anchor", "label", "label_score", "tenant",
                                                "dom_box", "tenant_dom", "tenant_ocr", "source")}
-                for k in ("fallback", "label_match", "label_wanted"):
+                for k in ("fallback", "label_match", "label_wanted", "ocr"):
                     if shot.get(k):
                         ev[k] = shot[k]                 # shown on the contact sheet
                 ev["frame"] = Path(shot["frame"]).name

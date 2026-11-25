@@ -48,18 +48,22 @@ Q = C.Q
 MAX_RETRY_SCREENS = 12        # per run; the rest are reported with their diagnosis
 MAX_TARGETS = 3               # frames per screen in one retry pass
 NEAR_FLOOR = {1: 0.82, 2: 0.70}
-RETRYABLE = {1: ("other_frame", "offscreen", "covered", "loading", "near_match"),
-             2: ("loading", "near_match")}
+RETRYABLE = {1: ("other_frame", "offscreen", "covered", "loading", "under_recorded", "near_match"),
+             2: ("loading", "under_recorded", "near_match")}
+WHOLE_SCREEN = ("loading", "under_recorded")      # retried as the whole screen, all its labels
 CAUSES = {
     "other_frame": "was on the page but outside the screenshot",
     "offscreen": "was on the page but outside the visible part",
     "covered": "was on the page but something lay over it",
     "loading": "the page was still loading",
+    "under_recorded": "the recording missed the final state of the screen",
+    "unreadable": "was on screen, but the text check could not read it there",
     "near_match": "was not on the page under that exact text",
     "not_found": "was not found on the page",
 }
 REMEDY = {"other_frame": "took a separate screenshot of it", "offscreen": "scrolled to it",
           "covered": "moved it to the middle of the screen", "loading": "waited longer",
+          "under_recorded": "recorded the screen again",
           "near_match": "used the closest text on the page"}
 
 
@@ -95,26 +99,29 @@ def _probe(items, vid):
 
 def _latest(calls, items, vid):
     """(visit id, probe) of the newest look at a screen: its last whole-screen retry
-    (cause "loading") that came back, else the first capture."""
+    (cause loading / under_recorded) that came back, else the first capture."""
     for rv in reversed(calls.get("retry_visits") or []):
-        if rv.get("of") == vid and rv.get("cause") == "loading":
+        if rv.get("of") == vid and rv.get("cause") in WHOLE_SCREEN:
             pr = _probe(items, rv["visit_id"])
             if pr is not None:
                 return rv["visit_id"], pr
     return vid, _probe(items, vid)
 
 
-def diagnose(calls, items, manifest, pass_n=1, tried=()):
+def diagnose(calls, items, manifest, pass_n=1, tried=(), out_dir=None):
     """One row per (visit, ticket, label) that has no screenshot, plus one row per
     captured (visit, ticket). Row: {visit_id, ticket, persona, surface, entry, step, label,
     cause, retry (this pass can help), fallback (an unringed shot is allowed), target,
     wanted, detail}. `tried` = {(visit_id, ticket, target)} of earlier passes."""
     shots = manifest.get("shots") or []
     screens = {x.get("visit_id"): x for x in manifest.get("screens") or []}
+    by_id = {x["visit_id"]: x for x in (calls.get("visits") or []) + (calls.get("retry_visits") or [])}
     rows = []
     for v in calls.get("visits") or []:
         vid = v["visit_id"]
-        sc, pr = screens.get(vid), _latest(calls, items, vid)[1]
+        used, pr = _latest(calls, items, vid)
+        sc = screens.get(vid)
+        under = bool(out_dir and pr is not None and C.frame_under_recorded(by_id.get(used, v), pr, out_dir))
         for t in v.get("tickets") or []:
             labels = list((v.get("labels") or {}).get(t) or [])
             if not labels:
@@ -131,6 +138,25 @@ def diagnose(calls, items, manifest, pass_n=1, tried=()):
             if sc is None or (sc.get("reason") and sc["reason"] != "needs_write"):
                 row((sc or {}).get("reason") or "not_reached", detail=(sc or {}).get("detail", ""))
                 continue
+            if out_dir:
+                # A retry frame aimed at one label that was itself under-recorded (these
+                # retries always scroll, so they are the likeliest to be): the label is
+                # recorded again in the next pass instead of being written off as tried.
+                for rv in calls.get("retry_visits") or []:
+                    if (rv.get("of") != vid or t not in (rv.get("tickets") or [])
+                            or rv.get("cause") in WHOLE_SCREEN or int(rv.get("retry") or 0) >= pass_n):
+                        continue
+                    rp = _probe(items, rv["visit_id"])
+                    tg = ((rv.get("labels") or {}).get(t) or [""])[0]
+                    if (rp is not None and tg and C.frame_under_recorded(rv, rp, out_dir)
+                            and not any(tg in (s.get("label"), s.get("label_wanted")) for s in ringed)
+                            and not any(x.get("of") == vid and int(x.get("retry") or 0) > int(rv["retry"])
+                                        and tg in ((x.get("labels") or {}).get(t) or [])
+                                        for x in calls.get("retry_visits") or [])):
+                        wanted = (rv.get("near") or {}).get(tg)
+                        row("under_recorded", wanted or tg, retry="under_recorded" in RETRYABLE.get(pass_n, ()),
+                            fallback=True, target=tg, detail="the retry recording",
+                            **({"wanted": wanted} if wanted else {}))
             if pr is None:
                 row("no_probe")
                 continue
@@ -155,9 +181,18 @@ def diagnose(calls, items, manifest, pass_n=1, tried=()):
                 row("loading", retry="loading" in RETRYABLE.get(pass_n, ()), fallback=False, target="",
                     detail=str(pr["ld"])[:60])
                 continue
+            if under:
+                row("under_recorded", retry="under_recorded" in RETRYABLE.get(pass_n, ()),
+                    fallback=True, target="")
+                continue
             if found:
                 l = found[0]
-                cause = "covered" if by[l].get("iv") and by[l].get("oc") else "offscreen"
+                if by[l].get("iv") and not by[l].get("oc"):
+                    # in the frame and uncovered, yet no ring: the text check failed on it.
+                    # Scrolling or waiting again cannot help, so it is not retried.
+                    row("unreadable", l, fallback=True, target=l, detail=_where(by[l], pr))
+                    continue
+                cause = "covered" if by[l].get("iv") else "offscreen"
                 row(cause, l, retry=can(cause, l), fallback=True, target=l, detail=_where(by[l], pr))
                 continue
             used = {x[2] for x in tried if x[0] == vid and x[1] == t}
@@ -237,7 +272,7 @@ def build_retry(calls, demo, rows, pass_n):
         flat = []
         for ls in tgt["labels"].values():
             flat += [l for l in ls if l not in flat]
-        rid = f"{v['visit_id']}~r{pass_n}{'abc'[i]}"
+        rid = f"{v['visit_id']}-r{pass_n}{'abc'[i]}"       # letters, digits, hyphens only: Chrome refused "~"
         rv = {"visit_id": rid, "of": v["visit_id"], "entry": v.get("entry", v["visit_id"]),
               "step": v.get("step", 0), "kind": "retry", "retry": pass_n, "cause": tgt["cause"],
               "persona": v["persona"], "surface": v["surface"], "url": v["url"],
@@ -246,6 +281,8 @@ def build_retry(calls, demo, rows, pass_n):
               "quiet": {**(v.get("quiet") or {}), "cap_s": cap}}
         if tgt["near"]:
             rv["near"] = dict(tgt["near"])
+        if i == 0 and not rv["step"]:
+            rv["nav"] = True                    # this frame's batch navigates: it starts at the top
         for k in ("wait_s", "click", "click_args"):
             if k in v:
                 rv[k] = v[k]
@@ -303,7 +340,7 @@ def build_retry(calls, demo, rows, pass_n):
             "batches": batches, "rows": done_rows, "skipped": skipped,
             "accounts": ([{"account": "main", "personas": personas,
                            "batches": [b["batch_id"] for b in batches]}] if batches else []),
-            "install": calls.get("install") or [], "abort": calls.get("abort") or [],
+            "install": [], "abort": calls.get("abort") or [],
             "restore": calls.get("restore") or [], "entries": calls.get("entries") or {},
             "screens": [], "write_visits": []}
 
@@ -331,10 +368,20 @@ def _load(calls_path, raw_dir, out_dir, extra_calls=()):
 def cmd_plan_retry(a):
     out_dir = Path(a.out_dir)
     C.use_run_token(out_dir)
+    done = out_dir / f"retry-{a.pass_n}.json"
+    if done.exists() and (json.loads(done.read_text()).get("results") is not None):
+        # planning it again would overwrite its results and reuse its screen names
+        print(f"retry pass {a.pass_n}: already captured and ingested; not planned again")
+        emit({"ok": True, "action": "plan-retry", "pass": a.pass_n, "screens": 0, "batches": 0,
+              "skipped": 0, "already_done": True})
+        return 4
     calls, items, manifest, _ = _load(a.calls, a.raw_dir, out_dir)
     demo = O.load_routes(a.routes)["demo"]
-    rows = worth_retrying(diagnose(calls, items, manifest, a.pass_n, _tried(out_dir, a.pass_n)))
+    rows = worth_retrying(diagnose(calls, items, manifest, a.pass_n, _tried(out_dir, a.pass_n), out_dir))
     plan = build_retry(calls, demo, rows, a.pass_n)
+    bad = [v["gif"] for v in plan["visits"] if not C.gif_name_ok(v["gif"])]
+    if bad:                                     # never hand Chrome a name it will refuse
+        raise KeyError(f"unsafe download name(s): {', '.join(bad)}")
     (out_dir / f"retry-{a.pass_n}.json").write_text(json.dumps(plan, indent=1))
     if not plan["batches"]:
         print(f"retry pass {a.pass_n}: nothing to retry")
@@ -380,7 +427,9 @@ def cmd_ingest_retry(a):
         pr = C.parse_probe(it.get("probe")) or {}
         ok = any(e["verified"] for e in entries)
         results[rv["visit_id"]] = {"ok": ok, "reason": reason or ("" if ok else
-                                   "still_loading" if pr.get("ld") else "label_not_found")}
+                                   "still_loading" if pr.get("ld") else
+                                   "under_recorded" if C.frame_under_recorded(rv, pr, out_dir)
+                                   else "label_not_found")}
         for e in entries:
             n += 1
             kept.append({"shot_id": f"s{n}", **e})
@@ -493,44 +542,62 @@ def learn(calls, items, manifest, plans, home, run_id, today):
 
 def diagnosis_lines(rows, plans, manifest):
     """Plain words, one line per label that needed attention."""
-    hist = {}
+    shots = manifest.get("shots") or []
+
+    def subject(r):
+        if r["cause"] in WHOLE_SCREEN and not r.get("target"):
+            return CAUSES[r["cause"]]                      # a clause of its own: "the page was still loading"
+        what = f"\"{r.get('wanted') or r.get('label') or r.get('target')}\""
+        if r["cause"] in WHOLE_SCREEN:
+            return f"{what}: {CAUSES[r['cause']]}"
+        return f"{what} {CAUSES.get(r['cause'], r['cause'])}"
+
+    def unringed_kept(r):
+        return any(s.get("fallback") == "unringed" and s.get("verified") and s.get("ticket") == r["ticket"]
+                   and r["visit_id"] in (s.get("visit_id"), s.get("of")) for s in shots)
+
+    head = lambda r: f"{r['ticket']} · {r['surface']} (screen {r['visit_id']}): "       # noqa: E731
+    key = lambda r: (r["visit_id"], r["ticket"], r.get("wanted") or r.get("label") or "")   # noqa: E731
+    L, seen, told = [], set(), set()
+    last = {}
+    for plan in plans:
+        for r in plan.get("rows") or []:
+            last[key(r)] = plan.get("pass")
     for plan in plans:
         res = plan.get("results") or {}
         for r in plan.get("rows") or []:
-            hist.setdefault((r["visit_id"], r["ticket"]), []).append(
-                (plan.get("pass"), r, (res.get(r.get("retry_visit")) or {}).get("ok")))
-    shots = manifest.get("shots") or []
-    L, seen = [], set()
-    for key, tries in hist.items():
-        for n, r, ok in tries:
-            what = f"\"{r.get('wanted') or r.get('label') or r.get('target')}\"" if (r.get("label") or r.get("target")) else "the screen"
-            line = (f"{r['ticket']} · {r['surface']} (screen {r['visit_id']}): {what} "
-                    f"{CAUSES.get(r['cause'], r['cause'])}"
-                    + (f" ({r['detail']})" if r.get("detail") else "")
-                    + f"; retry {n} {REMEDY.get(r['cause'], 'tried again')}"
-                    + (f" (\"{r['target']}\")" if r["cause"] == "near_match" else "")
-                    + ("; captured." if ok else "; still no screenshot."))
+            ok = (res.get(r.get("retry_visit")) or {}).get("ok")
+            told.add(key(r))
+            if ok:
+                end = "; captured."
+            elif last[key(r)] != plan.get("pass"):
+                end = "; still no screenshot."
+            else:
+                end = ("; no ring, so an unringed screenshot was kept for you to judge." if unringed_kept(r)
+                       else "; still no screenshot.")
+            line = (head(r) + subject(r) + (f" ({r['detail']})" if r.get("detail") else "")
+                    + f"; retry {plan.get('pass')} {REMEDY.get(r['cause'], 'tried again')}"
+                    + (f" (\"{r['target']}\")" if r["cause"] == "near_match" else "") + end)
             if line not in seen:
                 seen.add(line)
                 L.append(line)
     for r in rows:
-        if r["cause"] in ("captured",) or (r["visit_id"], r["ticket"]) in hist:
+        if r["cause"] == "captured" or key(r) in told:
             continue
         got = [s for s in shots if s.get("verified") and s.get("ticket") == r["ticket"]
                and r["visit_id"] in (s.get("visit_id"), s.get("of"))]
         if r["cause"] in CAUSES:
-            what = f"\"{r['label']}\"" if r.get("label") else "the screen"
             tail = ("an unringed screenshot was kept for you to judge."
                     if any(s.get("fallback") == "unringed" for s in got)
-                    else "the page heading was ringed instead." if got else "no screenshot.")
+                    else "the page heading was ringed instead." if any(s.get("fallback") == "heading" for s in got)
+                    else "another item on this screen was captured." if got else "no screenshot.")
             extra = {"needs_signin": " Not retried: it needs another sign-in.",
-                     "limit": f" Not retried: over the limit of {MAX_RETRY_SCREENS} screens per run."}.get(r.get("skipped"), "")
-            line = (f"{r['ticket']} · {r['surface']} (screen {r['visit_id']}): {what} "
-                    f"{CAUSES[r['cause']]}" + (f" ({r['detail']})" if r.get("detail") else "")
-                    + f"; {tail}{extra}")
+                     "limit": f" Not retried: over the limit of {MAX_RETRY_SCREENS} screens per run "
+                              f"or {MAX_TARGETS} items per screen."}.get(r.get("skipped"), "")
+            line = head(r) + subject(r) + (f" ({r['detail']})" if r.get("detail") else "") + f"; {tail}{extra}"
         else:
-            line = (f"{r['ticket']} · {r['surface']} (screen {r['visit_id']}): "
-                    f"{F.missing_reason_text(r['cause'], r.get('detail', ''))}; not something a retry can fix.")
+            line = (head(r) + f"{F.missing_reason_text(r['cause'], r.get('detail', ''))}; "
+                    "not something a retry can fix.")
         if line not in seen:
             seen.add(line)
             L.append(line)
@@ -543,11 +610,11 @@ def cmd_finish(a):
     calls, items, manifest, mp = _load(a.calls, a.raw_dir, out_dir, plans)
     demo = O.load_routes(a.routes)["demo"]
     now = _dt.datetime.now().isoformat(timespec="minutes")
-    rows = diagnose(calls, items, manifest, pass_n=3)        # pass 3: nothing is retryable any more
-    skipped = {(r["visit_id"], r["ticket"], r.get("target", "")): r.get("skipped")
+    rows = diagnose(calls, items, manifest, pass_n=3, out_dir=out_dir)   # pass 3: nothing is retryable any more
+    skipped = {(r["visit_id"], r["ticket"], r.get("wanted") or r.get("label") or ""): r.get("skipped")
                for p in plans for r in p.get("skipped") or []}
     for r in rows:
-        r["skipped"] = skipped.get((r["visit_id"], r["ticket"], r.get("target", "")))
+        r["skipped"] = skipped.get((r["visit_id"], r["ticket"], r.get("wanted") or r.get("label") or ""))
     added = []
     try:
         added = unringed(calls, items, manifest, rows, demo, out_dir,

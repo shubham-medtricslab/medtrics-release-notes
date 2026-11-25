@@ -173,11 +173,11 @@ class Replay(Tmp):
         self.assertEqual((rc, res["screens"], res["first_batch"]), (0, 3, "r1b01"))
         plan = json.loads((shots / "retry-1.json").read_text())
         self.assertEqual([(b["batch_id"], b["kind"], b["visit_ids"]) for b in plan["batches"]],
-                         [("r1b01", "visits", ["v02-s0~r1a"]), ("r1b02", "replay", []),
-                          ("r1b03", "click", ["v02-s2~r1a"]), ("r1b04", "visits", ["v03~r1a"])])
+                         [("r1b01", "visits", ["v02-s0-r1a"]), ("r1b02", "replay", []),
+                          ("r1b03", "click", ["v02-s2-r1a"]), ("r1b04", "visits", ["v03-r1a"])])
         rv = {v["visit_id"]: v for v in plan["visits"]}
-        self.assertEqual(rv["v03~r1a"]["labels"], {"M1-1413": ["Automatic Alerts"]})
-        self.assertEqual((rv["v03~r1a"]["kind"], rv["v03~r1a"]["of"], rv["v03~r1a"]["retry"]), ("retry", "v03", 1))
+        self.assertEqual(rv["v03-r1a"]["labels"], {"M1-1413": ["Automatic Alerts"]})
+        self.assertEqual((rv["v03-r1a"]["kind"], rv["v03-r1a"]["of"], rv["v03-r1a"]["retry"]), ("retry", "v03", 1))
         replay = plan["batches"][1]
         self.assertEqual([a["name"] for a in replay["pick"]], ["javascript_tool"])          # no recording
         self.assertEqual([a["input"].get("action") for a in replay["act"]], ["left_click", "wait", "javascript_exec"])
@@ -188,7 +188,7 @@ class Replay(Tmp):
         md = (shots / "retry-1.md").read_text()
         self.assertIn("# KB capture, retry pass 1", md)
         self.assertIn("replay click 1 of entry v02 (\"Submit\", no recording)", md)
-        self.assertIn('"visit_id": "v02-s0~r1a"', md)                                       # the raw example
+        self.assertIn('"visit_id": "v02-s0-r1a"', md)                                       # the raw example
         calls = json.loads((shots / "calls.json").read_text())
         self.assertEqual(len(calls["retry_visits"]), 3)                                    # cleanup knows their GIFs
 

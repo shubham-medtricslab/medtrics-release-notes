@@ -336,8 +336,13 @@ class Capture(unittest.TestCase):
         ev = C.shot_evidence("Save", "Save", (1, 2, 3, 4), {"verdict": "FUZZY", "score": 0.9},
                              False, "CLEAR", "REVIEW")
         self.assertEqual((ev["anchor"], ev["tenant"]), ("label_box", "REVIEW"))
-        self.assertIsNone(C.shot_evidence("Save", "Save", (1, 2, 3, 4),
+        # 0.26.1: an OCR miss on a label the page shows exactly keeps its ring, owner-confirmed
+        ev = C.shot_evidence("Save", "Save", (1, 2, 3, 4), {"verdict": "MISS", "score": 0.4}, False, "CLEAR", None)
+        self.assertEqual((ev["anchor"], ev["ocr"]), ("dom_box", "miss"))
+        self.assertIsNone(C.shot_evidence("Save", "Save draft", (1, 2, 3, 4),
                                           {"verdict": "MISS", "score": 0.4}, False, "CLEAR", None))
+        self.assertIsNone(C.shot_evidence("Save", "Save", (1, 2, 3, 4),
+                                          {"verdict": "MISS", "score": 0.4}, True, "CLEAR", None))
 
 
 class Login(unittest.TestCase):

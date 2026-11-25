@@ -97,6 +97,7 @@ MISSING_REASONS = {
     "page_not_found": "the capture could not find this page in the app",
     "label_not_found": "the screen did not show the labelled item",
     "still_loading": "the screen was still loading when it was captured",
+    "under_recorded": "the recording missed the final state of the screen",
     "no_labels": "the ticket names no on-screen label for the capture to find",
     "tenant_block": "the screen showed data that failed the tenant check",
     "request_blocked": "the capture's write guard blocked the request that loads this screen",

@@ -693,11 +693,13 @@ $KB_PY $K/kb_package.py contact-sheet --run-dir $RUN --specs-dir $RUN/specs --ou
 Show `contact_sheet.png` (and any `contact_sheet-2.png` …) and ask: "These are
 the screenshots for this run. Reply with the numbers that are fine to send to
 clients (`all`, or `none`); anything you leave out stays as text only." Screens marked
-BLOCK never ship and can't be picked. Two marks ask for a closer look, so say
+BLOCK never ship and can't be picked. Three marks ask for a closer look, so say
 what they mean when the sheet has them: **no ring** (the screen loaded but its
-item could not be ringed, so the picture shows the whole screen) and
+item could not be ringed, so the picture shows the whole screen),
 **near match: <text>** (the ring is on the closest text the page had, not the
-ticket's exact wording). Then:
+ticket's exact wording) and **not OCR-checked** (the ring was placed from the
+page's own layout because the text could not be read back from the picture;
+check that it sits on the right item). Then:
 
 ```bash
 $KB_PY $K/kb_package.py confirm --run-dir $RUN --ok <numbers|all> --by "<owner>"
@@ -711,7 +713,10 @@ This renders every article as the client copy (`<title>.docx` + Intercom .md +
 PDF): no draft marks, no "Generated from" line, no missing-screenshot markers —
 a step without a confirmed screenshot keeps its text only. It verifies each PDF
 and writes the provenance sidecars, `RUN-SUMMARY.md`, `$RUN/run.json` and the
-zip. Prices for the estimated cost: Haiku $0.10 / $0.50, Sonnet $2 / $10, Opus
+zip. The zip also gets a `_debug/` folder (diagnosis, shot list, probe
+results, retry plans, overrides file; no images): it is what a developer needs
+when a screenshot is missing, and it quotes demo-site text, so the zip stays
+internal. Prices for the estimated cost: Haiku $0.10 / $0.50, Sonnet $2 / $10, Opus
 $4 / $20 per million input / output tokens, with an assumed 85 % input share;
 the main chat's own tokens are not included.
 
@@ -719,8 +724,12 @@ the main chat's own tokens are not included.
 
 ```bash
 $KB_PY $K/kb_ledger.py writes --run $RUN/run.json --ledger-notes $RUN/ledger_notes.json \
-    --out $RUN/ledger_writes.json [--force]
+    --out $RUN/ledger_writes.json [--force] [--retry-partial]
 ```
+
+Pass `--retry-partial` here whenever the run was started with it: the re-drafted
+ticket's note is then updated. Without it a note already marked `partial` is
+left as it was. Never add `--force` yourself to get around that.
 
 Perform the writes per the `kb-ledger` skill (create / update by version; one
 retry; manual-paste fallback). Failed tickets get a `failed` note so the next run

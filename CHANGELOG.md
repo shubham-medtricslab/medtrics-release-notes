@@ -5,6 +5,25 @@ All notable changes to `medtrics-release-notes` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] - 2026-11-25
+
+### Fixed (KB articles, from run kb-20261124-2041, 0.26.0 in Cowork)
+- **Retry screenshots were never saved.** Retry recordings were named `<screen>~r1a.gif`, and Chrome answers "Invalid filename" to a `~`. Names are now letters, digits, hyphens and underscores only (`<screen>-r1a.gif`), following the QA automation plugin's rule. `plan-calls` and `plan-retry` refuse to write a name outside that rule.
+- **Small white-on-dark buttons lost their ring.** With OCR on, the text check read nothing from "View", "Submit" and the "Logs" breadcrumb, so their rings were dropped although they were on screen. After a miss the check now reads the element a second way: its own box only, inverted when dark, enlarged, with a white margin. On frames of the same pages this read 9 of 9 labels.
+- **A ring the page vouches for is kept.** If OCR still cannot read a label, but the page reports the element as visible, uncovered and carrying exactly that text (not a starts-with match), the ring stays and the contact sheet marks it `not OCR-checked`. It ships only if the owner picks it, as in a run without OCR. This applies only to a screen reached by navigation, where a stale frame would be noticed (see under-recorded screens). On a screen reached by a click, an OCR miss still drops the ring and the step gets the unringed screenshot.
+- **Wrong diagnosis line.** An item that was in the frame but failed the text check was reported as "outside the visible part". It is now reported as "was on screen, but the text check could not read it there", and is not retried, because scrolling again cannot help.
+- **`--retry-partial` and the Mem note.** `kb_ledger.py writes` skipped a re-drafted ticket whose note said `partial`, so the run needed `--force`. `writes --retry-partial` now updates that note. The command passes it whenever the run was started with it. A re-draft that fails leaves the `partial` note as it is.
+
+### Fixed (found by an independent check of this build)
+- **A shortened retry screen name** (`v01` for `v01-r1a`) is matched to its planned screen, and a first capture never reads a retry file's results.
+- **A retry pass that was already ingested is not planned again**, so its results are not overwritten.
+- **Diagnosis wording.** Whole-screen causes read as a sentence, a failed retry says when an unringed screenshot was kept, and an item over the limit of 3 per screen gets its own line.
+- **Retry files** list their extra batch kinds (`open`, `replay`, `frames`) before the first batch, and state what to write when a replayed click is refused.
+
+### Added (KB articles)
+- **Under-recorded screens.** The recorder keeps one frame per navigate, wait and hover, and drops a frame equal to the one before. When a screen was scrolled after loading but its GIF holds a single frame, that frame is the page before the scroll. Such a screen is marked `under_recorded`, nothing on it is ringed, and both retry passes record it again. A retry frame that is itself under-recorded is recorded again in pass 2. If it never records properly, the step gets the unringed screenshot. The probe now reports the scroll position (`sy`). The idea comes from the QA automation plugin's frame-count check.
+- **`_debug/` in the output zip.** The diagnosis, the shot list, the raw probe results, the retry plans and the overrides file travel with the articles: text only, no frames or GIFs, and no page scripts. An emailed external-evaluator link is replaced with `[external link]` in every file. The folder quotes demo-site text, so the zip stays internal.
+
 ## [0.26.0] - 2026-11-23
 
 Two runs in a row needed a plugin release for page quirks (a label below the fold, a loader still showing, button text with a name appended). This release lets the capture handle that kind of problem during the run, or with one line in a local file. Plan and decisions: `docs/plans/KB-SELF-HEALING-PLAN.md`.
